@@ -263,7 +263,23 @@ object IpOptimizer {
         }
 
         val ipList = getIpList(context, forceRefresh)
-        val best = speedTest(ipList, 443) ?: ipList.firstOrNull() ?: FALLBACK_IP_LIST.first()
+
+        // 阶段一：原有的纯 TCP 测速排序，逻辑完全不变
+        val rankedByLatency = speedTestRanked(ipList, 443)
+        val fastest = rankedByLatency.firstOrNull() ?: ipList.firstOrNull() ?: FALLBACK_IP_LIST.first()
+
+        // 阶段二（新增，最小化改动）：只对"测速最快的这一个"做一次真实验证，
+        // 不并发、不批量、只此一次，行为上等同于用户正常打开一次网页，
+        // 避免像之前那样对多个陌生 IP 发起密集连接触发风控。
+        // 如果这一个验证失败（1034），退而求其次换下一个候选，最多再试 1 次，到此为止不再继续。
+        val best = withContext(Dispatchers.IO) {
+            if (validateSingleIp(fastest)) {
+                fastest
+            } else {
+                val second = rankedByLatency.getOrNull(1)
+                if (second != null && validateSingleIp(second)) second else fastest
+            }
+        }
 
         prefs.edit()
             .putString(KEY_LAST_BEST_IP, best)
@@ -340,7 +356,7 @@ object IpOptimizer {
 
     // -------------------- 并发测速优选 --------------------
 
-    private suspend fun speedTest(ipList: List<String>, port: Int): String? =
+    private suspend fun speedTestRanked(ipList: List<String>, port: Int): List<String> =
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
                 val deferredResults = ipList.map { ip ->
@@ -351,9 +367,9 @@ object IpOptimizer {
                 }
                 deferredResults.awaitAll()
                     .filter { it.second >= 0 }
-                    .minByOrNull { it.second }
-                    ?.first
-            }
+                    .sortedBy { it.second }
+                    .map { it.first }
+            } ?: emptyList()
         }
 
     private fun measureTcpConnectLatency(ip: String, port: Int): Long {
@@ -365,6 +381,55 @@ object IpOptimizer {
             System.currentTimeMillis() - start
         } catch (e: Exception) {
             -1L
+        }
+    }
+
+    // -------------------- 单 IP 真实验证（新增，仅验证最终候选，不做批量） --------------------
+
+    private const val TARGET_DOMAIN_FOR_VALIDATION = "derpibooru.org"
+
+    private fun validateSingleIp(ip: String): Boolean {
+        var rawSocket: java.net.Socket? = null
+        var sslSocket: javax.net.ssl.SSLSocket? = null
+        return try {
+            rawSocket = java.net.Socket()
+            rawSocket.connect(InetSocketAddress(ip, 443), 4000)
+            rawSocket.soTimeout = 4000
+
+            val factory = javax.net.ssl.SSLSocketFactory.getDefault() as javax.net.ssl.SSLSocketFactory
+            sslSocket = factory.createSocket(rawSocket, TARGET_DOMAIN_FOR_VALIDATION, 443, true) as javax.net.ssl.SSLSocket
+            sslSocket.soTimeout = 4000
+            sslSocket.startHandshake()
+
+            val out = sslSocket.outputStream
+            val request = "GET / HTTP/1.1\r\n" +
+                    "Host: $TARGET_DOMAIN_FOR_VALIDATION\r\n" +
+                    "User-Agent: Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36\r\n" +
+                    "Connection: close\r\n\r\n"
+            out.write(request.toByteArray(Charsets.UTF_8))
+            out.flush()
+
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(sslSocket.inputStream))
+            val statusLine = reader.readLine() ?: return false
+            val statusCode = statusLine.split(" ").getOrNull(1)?.toIntOrNull() ?: return false
+
+            // 读完响应体再关闭，避免半截断开的异常流量特征
+            try {
+                val buffer = CharArray(2048)
+                var totalRead = 0
+                while (totalRead < 65536) {
+                    val n = reader.read(buffer)
+                    if (n == -1) break
+                    totalRead += n
+                }
+            } catch (_: Exception) {}
+
+            statusCode != 530
+        } catch (e: Exception) {
+            false
+        } finally {
+            try { sslSocket?.close() } catch (_: Exception) {}
+            try { rawSocket?.close() } catch (_: Exception) {}
         }
     }
 }
