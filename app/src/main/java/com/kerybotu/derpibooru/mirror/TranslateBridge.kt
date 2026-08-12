@@ -40,7 +40,7 @@ class TranslateBridge(
     }
 
     // 填入你部署好的 Cloudflare Worker 地址
-    private val workerProxyUrl = "https://这里填你的Worker地址.work.net/"
+    private val workerProxyUrl = "https://googlefyapi.495666.xyz/"
 
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
