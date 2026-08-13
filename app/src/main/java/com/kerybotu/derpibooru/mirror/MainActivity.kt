@@ -31,11 +31,14 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
+import com.kerybotu.derpibooru.mirror.rules.StaticRuleManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.Executor
 
 class MainActivity : AppCompatActivity() {
@@ -46,6 +49,18 @@ class MainActivity : AppCompatActivity() {
 
         private val ZOOM_LEVELS = listOf(80, 100, 120, 150, 175)
         private val ZOOM_LABELS = arrayOf("小", "标准", "大", "较大", "特大")
+
+        // 动态内容（评论、帖子描述等）扫描范围，实时调用 API 翻译。
+        // TODO: 请对照 derpibooru.org 真实页面 DOM 结构核实这些选择器是否准确。
+        private val DYNAMIC_SELECTORS = listOf(
+            ".comment",
+            ".comment_body",
+            ".image-description",
+            "[itemprop=\"description\"]"
+        )
+
+        private const val TRANSLATE_PREFS = "translate_prefs"
+        private const val KEY_AUTO_STATIC_TRANSLATE = "auto_static_translate"
     }
 
     private lateinit var toolbar: Toolbar
@@ -56,8 +71,8 @@ class MainActivity : AppCompatActivity() {
     private var proxyServer: LocalProxyServer? = null
     private var translateBridge: TranslateBridge? = null
     private var currentBestIp: String = ""
-    private var isTranslated = false
     private var translateScriptCache: String? = null
+    private var translateInjected = false
 
     private val activityJob = Job()
     private val activityScope = CoroutineScope(Dispatchers.Main + activityJob)
@@ -105,16 +120,46 @@ class MainActivity : AppCompatActivity() {
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
+        webView.settings.databaseEnabled = true
+        webView.settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
 
         translateBridge = TranslateBridge(webView)
         webView.addJavascriptInterface(translateBridge!!, "AndroidTranslator")
 
+        activityScope.launch(Dispatchers.IO) {
+            if (translateScriptCache == null) {
+                translateScriptCache = assets.open("translate.js").bufferedReader().use { it.readText() }
+            }
+        }
+
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                translateInjected = false
+
+                // 如果设备不支持 onPageCommitVisible（API < 23），则短延迟后注入。
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                    webView.postDelayed({
+                        injectTranslateScriptEarlyOnce()
+                    }, 80)
+                }
+            }
+
+            override fun onPageCommitVisible(view: WebView, url: String?) {
+                super.onPageCommitVisible(view, url)
+                // 页面内容首次可见时注入，比 DOMContentLoaded 更早，确保脚本在目标文档中执行。
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    injectTranslateScriptEarlyOnce()
+                }
+            }
+
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
-                injectTranslateScript()
-                isTranslated = false
-                CookieManager.getInstance().flush() // 每次加载完成，落盘一次 Cookie
+                // 兜底：如果由于某些原因还未注入，则在这里补一次。
+                if (!translateInjected) {
+                    injectTranslateScriptEarlyOnce()
+                }
+                CookieManager.getInstance().flush()
             }
         }
 
@@ -129,7 +174,6 @@ class MainActivity : AppCompatActivity() {
                 fileChooserCallback = filePathCallback
 
                 val intent = fileChooserParams.createIntent().apply {
-                    // 允许多选，配合系统文件选择器
                     putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 }
                 return try {
@@ -152,6 +196,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 启动时异步同步静态翻译规则（不阻塞页面加载）
+        activityScope.launch {
+            StaticRuleManager.syncIfNeeded(applicationContext)
+        }
+
         startOptimizeAndLoad(forceRefresh = false)
     }
 
@@ -160,13 +209,12 @@ class MainActivity : AppCompatActivity() {
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
-        // WebView 默认已开启持久化存储（写入设备磁盘），这里只需确保开关打开 + 定期 flush 即可，
-        // 不需要手动读写 Cookie 文件，系统会在多次启动之间自动保留登录态。
+        // WebView 默认已开启持久化存储（写入设备磁盘），这里只需确保开关打开 + 定期 flush 即可。
     }
 
     override fun onPause() {
         super.onPause()
-        CookieManager.getInstance().flush() // 切后台时强制落盘，防止被系统强杀导致 Cookie 丢失
+        CookieManager.getInstance().flush()
     }
 
     override fun onStop() {
@@ -253,7 +301,7 @@ class MainActivity : AppCompatActivity() {
         return when (item.itemId) {
             R.id.action_font_size -> { showFontSizeDialog(); true }
             R.id.action_refresh -> { webView.reload(); true }
-            R.id.action_translate -> { toggleTranslate(); true }
+            R.id.action_translate -> { showTranslateSubmenu(); true }
             R.id.action_copy_link -> { copyCurrentLink(); true }
             R.id.action_settings -> { showSettingsDialog(); true }
             else -> super.onOptionsItemSelected(item)
@@ -286,40 +334,85 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "链接已复制", Toast.LENGTH_SHORT).show()
     }
 
-    // -------------------- 整页翻译 --------------------
-    private fun injectTranslateScript() {
+    // -------------------- 翻译：静态规则注入 + 动态内容扫描配置 --------------------
+    private fun injectTranslateScriptEarlyOnce() {
+        if (translateInjected) return
+        translateInjected = true
+
         try {
             val script = translateScriptCache ?: assets.open("translate.js")
                 .bufferedReader().use { it.readText() }
                 .also { translateScriptCache = it }
-            webView.evaluateJavascript(script) { result ->
-                //Toast.makeText(this, "翻译脚本已注入", Toast.LENGTH_SHORT).show()
-            }
+
+            val rulesPayload = StaticRuleManager.getRulesPayloadJson(applicationContext)
+            val selectorsJson = JSONArray(DYNAMIC_SELECTORS).toString()
+            val autoEnabled = isAutoStaticTranslateEnabled()
+
+            val initScript = """
+                (function() {
+                    window.__setStaticRules && window.__setStaticRules(${JSONObject.quote(rulesPayload)});
+                    window.__setDynamicSelectors && window.__setDynamicSelectors(${JSONObject.quote(selectorsJson)});
+                    window.__bootstrapAutoStatic && window.__bootstrapAutoStatic($autoEnabled);
+                })();
+            """.trimIndent()
+
+            webView.evaluateJavascript(script + "\n" + initScript, null)
         } catch (e: Exception) {
             Toast.makeText(this, "翻译脚本加载失败：${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    private fun toggleTranslate() {
-        if (isTranslated) {
-            webView.evaluateJavascript(
-                "window.__pageTranslator ? 'OK' : 'MISSING';"
-            ) { result ->
-                Toast.makeText(this, "撤销翻译: $result", Toast.LENGTH_SHORT).show()
-            }
-            webView.evaluateJavascript("window.__pageTranslator && window.__pageTranslator.revert();", null)
-            isTranslated = false
-        } else {
-            webView.evaluateJavascript(
-                "window.__pageTranslator ? 'OK' : 'MISSING';"
-            ) { result ->
-                Toast.makeText(this, "翻译脚本状态: $result", Toast.LENGTH_LONG).show()
-            }
-            webView.evaluateJavascript("window.__pageTranslator && window.__pageTranslator.run();", null)
-            isTranslated = true
-        }
+    private fun isAutoStaticTranslateEnabled(): Boolean {
+        return getSharedPreferences(TRANSLATE_PREFS, MODE_PRIVATE)
+            .getBoolean(KEY_AUTO_STATIC_TRANSLATE, false)
     }
 
+    private fun showTranslateSubmenu() {
+        val prefs = getSharedPreferences(TRANSLATE_PREFS, MODE_PRIVATE)
+        val autoEnabled = prefs.getBoolean(KEY_AUTO_STATIC_TRANSLATE, false)
+
+        val options = arrayOf(
+            "翻译评论/动态内容",
+            "恢复动态内容原文",
+            if (autoEnabled) "关闭全站本地静态翻译" else "开启全站本地静态翻译",
+            "立即更新翻译规则"
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("翻译")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> webView.evaluateJavascript(
+                        "window.__pageTranslator && window.__pageTranslator.runDynamic();", null
+                    )
+                    1 -> webView.evaluateJavascript(
+                        "window.__pageTranslator && window.__pageTranslator.revertDynamic();", null
+                    )
+                    2 -> {
+                        val newVal = !autoEnabled
+                        prefs.edit().putBoolean(KEY_AUTO_STATIC_TRANSLATE, newVal).apply()
+                        if (newVal) {
+                            webView.evaluateJavascript(
+                                "window.__pageTranslator && window.__pageTranslator.runStatic();", null
+                            )
+                            Toast.makeText(this, "已开启：进入页面自动本地翻译静态内容", Toast.LENGTH_SHORT).show()
+                        } else {
+                            webView.evaluateJavascript(
+                                "window.__pageTranslator && window.__pageTranslator.stopStaticWatch();", null
+                            )
+                            Toast.makeText(this, "静态翻译已关闭，刷新页面后完全生效", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    3 -> activityScope.launch {
+                        StaticRuleManager.syncIfNeeded(applicationContext, force = true)
+                        Toast.makeText(this@MainActivity, "翻译规则已更新", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .show()
+    }
+
+    // -------------------- 设置面板 --------------------
     private fun showSettingsDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_settings, null)
         val ipText = view.findViewById<TextView>(R.id.settings_current_ip)
