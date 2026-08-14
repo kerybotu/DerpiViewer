@@ -18,7 +18,11 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +35,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
+import com.kerybotu.derpibooru.mirror.rules.DynamicSelectorManager
 import com.kerybotu.derpibooru.mirror.rules.StaticRuleManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,21 +49,6 @@ import java.util.concurrent.Executor
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        private const val TARGET_DOMAIN = "derpibooru.org"
-        private const val START_URL = "https://derpibooru.org"
-
-        private val ZOOM_LEVELS = listOf(80, 100, 120, 150, 175)
-        private val ZOOM_LABELS = arrayOf("小", "标准", "大", "较大", "特大")
-
-        // 动态内容（评论、帖子描述等）扫描范围，实时调用 API 翻译。
-        // TODO: 请对照 derpibooru.org 真实页面 DOM 结构核实这些选择器是否准确。
-        private val DYNAMIC_SELECTORS = listOf(
-            ".comment",
-            ".comment_body",
-            ".image-description",
-            "[itemprop=\"description\"]"
-        )
-
         private const val TRANSLATE_PREFS = "translate_prefs"
         private const val KEY_AUTO_STATIC_TRANSLATE = "auto_static_translate"
     }
@@ -102,6 +92,10 @@ class MainActivity : AppCompatActivity() {
             callback.onReceiveValue(uris)
         }
 
+    // ---------- 动态获取当前站点域名和起始 URL ----------
+    private fun currentTargetDomain(): String = AppSettings.getTargetDomain(applicationContext)
+    private fun currentStartUrl(): String = AppSettings.getStartUrl(applicationContext)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -126,9 +120,11 @@ class MainActivity : AppCompatActivity() {
         translateBridge = TranslateBridge(webView)
         webView.addJavascriptInterface(translateBridge!!, "AndroidTranslator")
 
+        // 预加载翻译脚本到内存，减少首次注入时的文件读取延迟
         activityScope.launch(Dispatchers.IO) {
             if (translateScriptCache == null) {
-                translateScriptCache = assets.open("translate.js").bufferedReader().use { it.readText() }
+                translateScriptCache = assets.open("translate.js")
+                    .bufferedReader().use { it.readText() }
             }
         }
 
@@ -136,8 +132,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 translateInjected = false
-
-                // 如果设备不支持 onPageCommitVisible（API < 23），则短延迟后注入。
+                // API < 23 不支持 onPageCommitVisible，短延迟注入兜底
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
                     webView.postDelayed({
                         injectTranslateScriptEarlyOnce()
@@ -147,7 +142,6 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageCommitVisible(view: WebView, url: String?) {
                 super.onPageCommitVisible(view, url)
-                // 页面内容首次可见时注入，比 DOMContentLoaded 更早，确保脚本在目标文档中执行。
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     injectTranslateScriptEarlyOnce()
                 }
@@ -155,7 +149,6 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
-                // 兜底：如果由于某些原因还未注入，则在这里补一次。
                 if (!translateInjected) {
                     injectTranslateScriptEarlyOnce()
                 }
@@ -163,7 +156,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 文件上传：网页 <input type="file"> 触发时会走这里
+        // 文件上传
         webView.webChromeClient = object : WebChromeClient() {
             override fun onShowFileChooser(
                 view: WebView,
@@ -196,9 +189,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 启动时异步同步静态翻译规则（不阻塞页面加载）
+        // 启动时同步静态规则和动态选择器
         activityScope.launch {
             StaticRuleManager.syncIfNeeded(applicationContext)
+        }
+        activityScope.launch {
+            DynamicSelectorManager.syncIfNeeded(applicationContext)
         }
 
         startOptimizeAndLoad(forceRefresh = false)
@@ -209,7 +205,6 @@ class MainActivity : AppCompatActivity() {
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
-        // WebView 默认已开启持久化存储（写入设备磁盘），这里只需确保开关打开 + 定期 flush 即可。
     }
 
     override fun onPause() {
@@ -252,11 +247,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // -------------------- IP 优选 + 开屏加载态 --------------------
+    // -------------------- IP 优选 + 手动 IP 支持 + 加载 --------------------
     private fun startOptimizeAndLoad(forceRefresh: Boolean) {
         loadingOverlay.visibility = View.VISIBLE
-        loadingText.text = "正在优选IP"
 
+        val manualIp = AppSettings.getManualIp(applicationContext)
+        if (manualIp != null) {
+            // 手动 IP 优先
+            loadingText.text = "准备就绪"
+            currentBestIp = manualIp
+            activityScope.launch {
+                delay(250)
+                loadingOverlay.visibility = View.GONE
+                if (proxyServer == null) {
+                    setupProxyAndLoad(manualIp)
+                } else {
+                    proxyServer?.updateTargetDomain(currentTargetDomain())
+                    proxyServer?.updateTargetIp(manualIp)
+                    webView.reload()
+                }
+            }
+            return
+        }
+
+        loadingText.text = "正在优选IP"
         activityScope.launch {
             val result = IpOptimizer.getBestIpSmart(applicationContext, forceRefresh)
             currentBestIp = result.ip
@@ -268,6 +282,7 @@ class MainActivity : AppCompatActivity() {
             if (proxyServer == null) {
                 setupProxyAndLoad(currentBestIp)
             } else {
+                proxyServer?.updateTargetDomain(currentTargetDomain())
                 proxyServer?.updateTargetIp(currentBestIp)
                 webView.reload()
             }
@@ -276,7 +291,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupProxyAndLoad(ip: String) {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
-            proxyServer = LocalProxyServer(TARGET_DOMAIN, ip).apply { start() }
+            proxyServer = LocalProxyServer(currentTargetDomain(), ip).apply { start() }
 
             val proxyConfig = ProxyConfig.Builder()
                 .addProxyRule("127.0.0.1:${proxyServer!!.port}")
@@ -284,10 +299,10 @@ class MainActivity : AppCompatActivity() {
 
             val executor = Executor { command -> command.run() }
             ProxyController.getInstance().setProxyOverride(proxyConfig, executor) {
-                webView.loadUrl(START_URL)
+                webView.loadUrl(currentStartUrl())
             }
         } else {
-            webView.loadUrl(START_URL)
+            webView.loadUrl(currentStartUrl())
         }
     }
 
@@ -310,12 +325,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun showFontSizeDialog() {
         val currentZoom = webView.settings.textZoom
-        val checkedIndex = ZOOM_LEVELS.indexOf(currentZoom).let { if (it == -1) 1 else it }
+        val checkedIndex = listOf(80, 100, 120, 150, 175)
+            .indexOf(currentZoom).let { if (it == -1) 1 else it }
 
         AlertDialog.Builder(this)
             .setTitle("字体大小")
-            .setSingleChoiceItems(ZOOM_LABELS, checkedIndex) { dialog, which ->
-                webView.settings.textZoom = ZOOM_LEVELS[which]
+            .setSingleChoiceItems(arrayOf("小", "标准", "大", "较大", "特大"), checkedIndex) { dialog, which ->
+                webView.settings.textZoom = listOf(80, 100, 120, 150, 175)[which]
                 dialog.dismiss()
             }
             .setNegativeButton("取消", null)
@@ -334,7 +350,7 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "链接已复制", Toast.LENGTH_SHORT).show()
     }
 
-    // -------------------- 翻译：静态规则注入 + 动态内容扫描配置 --------------------
+    // -------------------- 翻译注入 --------------------
     private fun injectTranslateScriptEarlyOnce() {
         if (translateInjected) return
         translateInjected = true
@@ -345,7 +361,7 @@ class MainActivity : AppCompatActivity() {
                 .also { translateScriptCache = it }
 
             val rulesPayload = StaticRuleManager.getRulesPayloadJson(applicationContext)
-            val selectorsJson = JSONArray(DYNAMIC_SELECTORS).toString()
+            val selectorsJson = DynamicSelectorManager.getSelectorsJson(applicationContext)
             val autoEnabled = isAutoStaticTranslateEnabled()
 
             val initScript = """
@@ -405,6 +421,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     3 -> activityScope.launch {
                         StaticRuleManager.syncIfNeeded(applicationContext, force = true)
+                        DynamicSelectorManager.syncIfNeeded(applicationContext, force = true)
                         Toast.makeText(this@MainActivity, "翻译规则已更新", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -416,7 +433,8 @@ class MainActivity : AppCompatActivity() {
     private fun showSettingsDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_settings, null)
         val ipText = view.findViewById<TextView>(R.id.settings_current_ip)
-        val refreshBtn = view.findViewById<android.widget.Button>(R.id.settings_refresh_btn)
+        val refreshBtn = view.findViewById<Button>(R.id.settings_refresh_btn)
+        val advancedBtn = view.findViewById<Button>(R.id.settings_advanced_btn)
 
         ipText.text = "当前节点 IP：${currentBestIp.ifBlank { "获取中..." }}"
 
@@ -428,6 +446,100 @@ class MainActivity : AppCompatActivity() {
         refreshBtn.setOnClickListener {
             dialog.dismiss()
             startOptimizeAndLoad(forceRefresh = true)
+        }
+
+        advancedBtn.setOnClickListener {
+            dialog.dismiss()
+            showAdvancedSettingsDialog()
+        }
+
+        dialog.show()
+    }
+
+    private fun showAdvancedSettingsDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_advanced_settings, null)
+        val siteRadioGroup = view.findViewById<RadioGroup>(R.id.site_radio_group)
+        val radioDerpibooru = view.findViewById<RadioButton>(R.id.radio_derpibooru)
+        val radioTrixiebooru = view.findViewById<RadioButton>(R.id.radio_trixiebooru)
+        val manualIpInput = view.findViewById<EditText>(R.id.manual_ip_input)
+        val manualIpSaveBtn = view.findViewById<Button>(R.id.manual_ip_save_btn)
+        val manualIpClearBtn = view.findViewById<Button>(R.id.manual_ip_clear_btn)
+        val cacheSizeText = view.findViewById<TextView>(R.id.cache_size_text)
+        val clearCacheBtn = view.findViewById<Button>(R.id.clear_cache_btn)
+
+        // 初始化站点选择
+        when (AppSettings.getSelectedSite(applicationContext)) {
+            AppSettings.Site.DERPIBOORU -> radioDerpibooru.isChecked = true
+            AppSettings.Site.TRIXIEBOORU -> radioTrixiebooru.isChecked = true
+        }
+
+        manualIpInput.setText(AppSettings.getManualIp(applicationContext) ?: "")
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("高级设置")
+            .setView(view)
+            .setPositiveButton("关闭", null)
+            .create()
+
+        siteRadioGroup.setOnCheckedChangeListener { _, checkedId ->
+            val newSite = if (checkedId == R.id.radio_trixiebooru) {
+                AppSettings.Site.TRIXIEBOORU
+            } else {
+                AppSettings.Site.DERPIBOORU
+            }
+            if (newSite != AppSettings.getSelectedSite(applicationContext)) {
+                AppSettings.setSelectedSite(applicationContext, newSite)
+                Toast.makeText(this, "已切换到 ${newSite.displayName}，正在重新加载", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                startOptimizeAndLoad(forceRefresh = false)
+            }
+        }
+
+        manualIpSaveBtn.setOnClickListener {
+            val ip = manualIpInput.text.toString().trim()
+            if (ip.isBlank()) {
+                Toast.makeText(this, "请输入 IP 地址", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (!AppSettings.isValidIpFormat(ip)) {
+                Toast.makeText(this, "IP 格式不正确", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            AppSettings.setManualIp(applicationContext, ip)
+            Toast.makeText(this, "已保存，正在使用该 IP 重新加载", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+            startOptimizeAndLoad(forceRefresh = false)
+        }
+
+        manualIpClearBtn.setOnClickListener {
+            AppSettings.setManualIp(applicationContext, null)
+            manualIpInput.setText("")
+            Toast.makeText(this, "已恢复自动优选", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+            startOptimizeAndLoad(forceRefresh = true)
+        }
+
+        // 异步计算当前缓存大小
+        activityScope.launch {
+            val size = CacheManager.calculateCacheSize(applicationContext)
+            cacheSizeText.text = "当前缓存：${CacheManager.formatSize(size)}"
+        }
+
+        clearCacheBtn.setOnClickListener {
+            clearCacheBtn.isEnabled = false
+            activityScope.launch {
+                val freed = CacheManager.clearCache(applicationContext, webView)
+                cacheSizeText.text = "当前缓存：0 B"
+                clearCacheBtn.isEnabled = true
+                Toast.makeText(
+                    this@MainActivity,
+                    "已清除缓存，释放 ${CacheManager.formatSize(freed)}",
+                    Toast.LENGTH_SHORT
+                ).show()
+                // 重新同步翻译规则和动态选择器
+                StaticRuleManager.syncIfNeeded(applicationContext, force = true)
+                DynamicSelectorManager.syncIfNeeded(applicationContext, force = true)
+            }
         }
 
         dialog.show()

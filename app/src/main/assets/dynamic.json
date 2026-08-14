@@ -1,10 +1,6 @@
 [
-  ".comment",
-  ".comment_body",
-  ".image-description",
-  "[itemprop=\"description\"]",
   ".communication__body__text",
-  ".profile-info",
-  ".forum-topic-title",
-  ".block__header--title"
+  ".table--communication-list__name a",
+  ".block__content .paragraph",
+  ".profile-about .paragraph"
 ]

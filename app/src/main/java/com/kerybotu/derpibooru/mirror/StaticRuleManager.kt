@@ -9,17 +9,6 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * 静态 HTML 片段翻译规则管理器。
- *
- * 优先级：远程规则 > 本地内置规则（assets/translation_rules.json）。
- * 远程规则通过 Worker 代理的"清单文件"机制实现可扩展：
- * 清单里列出若干条实际规则文件地址，App 逐一拉取合并，
- * 后续新增规则来源只需编辑 GitHub 清单，无需改动 App 代码或 Worker。
- *
- * 合并规则：同一个 fragmentA 出现在多处时，后加载的覆盖先加载的，
- * 顺序为：本地内置 → 清单里 ruleUrls 按数组顺序依次覆盖。
- */
 object StaticRuleManager {
 
     private const val TAG = "StaticRuleManager"
@@ -30,8 +19,11 @@ object StaticRuleManager {
     private const val KEY_LAST_SYNC_TIME = "last_sync_time"
     private const val SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000L
 
-    private const val MANIFEST_URL = "https://googlefyapi.495666.xyz/dict/manifest"
-    private const val PROXY_BASE = "https://googlefyapi.495666.xyz/dict/proxy?url="
+    // 清单地址本身就已经是走 Worker 镜像的完整地址，清单内 ruleUrls 里列出的
+    // 也应该是同样走 Worker 镜像域名的完整地址（不是 raw.githubusercontent.com），
+    // 直接原样请求即可，不需要再做任何前缀替换/查询参数拼接。
+    private const val MANIFEST_URL =
+        "https://derpiboorumobileiupdate.495648.xyz/kerybotu/DerpibooruMobileDataBase/refs/heads/main/sources.json"
 
     data class Rule(val fragmentA: String, val fragmentB: String)
 
@@ -65,14 +57,14 @@ object StaticRuleManager {
                         for (i in 0 until ruleUrls.length()) {
                             val ruleUrl = ruleUrls.optString(i, "")
                             if (ruleUrl.isBlank()) continue
-                            val proxiedUrl = PROXY_BASE + java.net.URLEncoder.encode(ruleUrl, "UTF-8")
-                            val rulesArray = fetchJsonArray(proxiedUrl)
+                            // 清单里的地址已经是走 Worker 镜像的完整地址，直接请求
+                            val rulesArray = fetchJsonArray(ruleUrl)
                             rulesArray?.let { arr ->
                                 for (j in 0 until arr.length()) {
                                     val obj = arr.optJSONObject(j) ?: continue
                                     val a = obj.optString("fragmentA", "")
                                     val b = obj.optString("fragmentB", "")
-                                    if (a.isNotBlank()) merged[a] = b // 远程覆盖本地/更早的远程
+                                    if (a.isNotBlank()) merged[a] = b
                                 }
                             }
                         }
@@ -172,7 +164,6 @@ object StaticRuleManager {
         }
     }
 
-    /** 供 JS 侧消费：规则 JSON 数组 + 应用范围的根选择器 */
     fun getRulesPayloadJson(context: Context): String {
         if (cachedRules == null) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

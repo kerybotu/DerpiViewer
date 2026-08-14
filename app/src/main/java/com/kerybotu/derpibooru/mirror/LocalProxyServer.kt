@@ -6,16 +6,18 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
 
-/**
- * 极简本地 HTTP/HTTPS 透明转发代理。
- * - HTTPS（CONNECT）：目标是 targetDomain 时，把 TCP 连接指向 preferredIp，
- *   之后原样转发字节流，不解析 TLS 内容，保证浏览器指纹/Cookie/POST body 完全原生。
- * - preferredIp 支持运行时热更新（手动重新优选后调用 updateTargetIp 即可，无需重启代理）。
- */
 class LocalProxyServer(
-    private val targetDomain: String,
+    targetDomain: String,
     preferredIp: String
 ) {
+    @Volatile
+    var targetDomain: String = targetDomain
+        private set
+
+    fun updateTargetDomain(newDomain: String) {
+        targetDomain = newDomain
+    }
+
     @Volatile
     var preferredIp: String = preferredIp
         private set
@@ -78,7 +80,6 @@ class LocalProxyServer(
         clientOut: java.io.OutputStream,
         client: Socket
     ) {
-        // CONNECT derpibooru.org:443 HTTP/1.1
         val hostPort = requestLine.substringAfter("CONNECT ").substringBefore(" ")
         val host = hostPort.substringBefore(":")
         val portNum = hostPort.substringAfter(":", "443").toIntOrNull() ?: 443

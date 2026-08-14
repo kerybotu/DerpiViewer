@@ -5164,6 +5164,418 @@
     "fragmentB": "<span class=\"field-help-button\"><i class=\"fa-regular fa-question-circle\"></i> 帮助</span>"
   },
   {
+    "fragmentA": "<h1>Notification Area</h1>",
+    "fragmentB": "<h1>通知区域</h1>"
+  },
+  {
+    "fragmentA": "<span class=\"block__header__title\">New replies in topics</span>",
+    "fragmentB": "<span class=\"block__header__title\">主题中的新回复</span>"
+  },
+  {
+    "fragmentA": "<span class=\"block__header__title\">New replies on images</span>",
+    "fragmentB": "<span class=\"block__header__title\">图片上的新回复</span>"
+  },
+  {
+    "fragmentA": "<div> <strong><a href=\"{{1}}\">{{2}}</a></strong>  posted a new reply in <strong><a href=\"{{3}}\">{{4}}</a></strong> <time datetime=\"{{5}}\">{{6}}</time> </div>",
+    "fragmentB": "<div> <strong><a href=\"{{1}}\">{{2}}</a></strong> 在 <strong><a href=\"{{3}}\">{{4}}</a></strong> 中发布了新回复 <time datetime=\"{{5}}\">{{6}}</time> </div>"
+  },
+  {
+    "fragmentA": "<div> <strong>{{1}}</strong>  commented on <strong><a href=\"{{2}}\">{{3}}</a></strong> <time datetime=\"{{4}}\">{{5}}</time> </div>",
+    "fragmentB": "<div> <strong>{{1}}</strong> 评论了 <strong><a href=\"{{2}}\">{{3}}</a></strong> <time datetime=\"{{4}}\">{{5}}</time> </div>"
+  },
+  {
+    "fragmentA": "<a class=\"button button--separate-right\" data-click-hideparent=\".notification\" data-method=\"post\" data-remote=\"true\" href=\"{{1}}\" title=\"Delete\"><i class=\"fa fa-trash\"></i></a>",
+    "fragmentB": "<a class=\"button button--separate-right\" data-click-hideparent=\".notification\" data-method=\"post\" data-remote=\"true\" href=\"{{1}}\" title=\"删除\"><i class=\"fa fa-trash\"></i></a>"
+  },
+  {
+    "fragmentA": "<a class=\"button\" data-click-hideparent=\".notification\" data-method=\"delete\" data-remote=\"true\" href=\"{{1}}\" title=\"Unsubscribe\"><i class=\"fa fa-bell-slash\"></i></a>",
+    "fragmentB": "<a class=\"button\" data-click-hideparent=\".notification\" data-method=\"delete\" data-remote=\"true\" href=\"{{1}}\" title=\"取消订阅\"><i class=\"fa fa-bell-slash\"></i></a>"
+  },
+  {
+    "fragmentA": "<a href=\"{{1}}\">View category ({{2}})</a>",
+    "fragmentB": "<a href=\"{{1}}\">查看分类（{{2}}）</a>"
+  },
+  {
+    "fragmentA": "<p>To get notifications on new comments and forum posts, click the 'Subscribe' button in the bar at the top of an image or forum topic. You'll get notifications here for any new posts or comments. </p>",
+    "fragmentB": "<p>要获取新评论和论坛帖子的通知，请点击图片或论坛主题顶部栏中的“订阅”按钮。您将在此处收到任何新帖子或评论的通知。</p>"
+  },
+  {
+    "fragmentA": "<h1>My Conversations</h1>",
+    "fragmentB": "<h1>我的对话</h1>"
+  },
+  {
+    "fragmentA": "<a href=\"/conversations/new\"><i class=\"fa fa-paper-plane\"></i> Create New Conversation </a>",
+    "fragmentB": "<a href=\"/conversations/new\"><i class=\"fa fa-paper-plane\"></i> 创建新对话 </a>"
+  },
+  {
+    "fragmentA": "<th class=\"table--communication-list__name\">Conversation</th>",
+    "fragmentB": "<th class=\"table--communication-list__name\">对话</th>"
+  },
+  {
+    "fragmentA": "<th class=\"table--communication-list__stats\">With</th>",
+    "fragmentB": "<th class=\"table--communication-list__stats\">对方</th>"
+  },
+  {
+    "fragmentA": "<th class=\"table--communication-list__options\">Options</th>",
+    "fragmentB": "<th class=\"table--communication-list__options\">操作</th>"
+  },
+  {
+    "fragmentA": "<tr class=\"\"><td class=\"table--communication-list__name\"><a href=\"{{1}}\">{{2}}</a> <div class=\"small-text hide-mobile\">{{3}} messages; started <time datetime=\"{{4}}\">{{5}}</time>, last message <time datetime=\"{{6}}\">{{7}}</time></div></td><td class=\"table--communication-list__stats\"> <strong><a href=\"{{8}}\">{{9}}</a></strong> </td><td class=\"table--communication-list__options\"><a href=\"{{10}}\">Last message</a> • <a data-confirm=\"Are you really, really sure?\" data-method=\"post\" href=\"{{11}}\">Hide</a> </td></tr>",
+    "fragmentB": "<tr class=\"\"><td class=\"table--communication-list__name\"><a href=\"{{1}}\">{{2}}</a> <div class=\"small-text hide-mobile\">{{3}} 条消息；开始于 <time datetime=\"{{4}}\">{{5}}</time>，最后消息 <time datetime=\"{{6}}\">{{7}}</time></div></td><td class=\"table--communication-list__stats\"> <strong><a href=\"{{8}}\">{{9}}</a></strong> </td><td class=\"table--communication-list__options\"><a href=\"{{10}}\">最后消息</a> • <a data-confirm=\"您确定吗？\" data-method=\"post\" href=\"{{11}}\">隐藏</a> </td></tr>"
+  },
+  {
+    "fragmentA": "<h1>Posts</h1>",
+    "fragmentB": "<h1>帖子</h1>"
+  },
+  {
+    "fragmentA": "<input autocapitalize=\"none\" class=\"input hform__text\" id=\"posts_pq\" name=\"pq\" placeholder=\"Search posts\" spellcheck=\"false\" type=\"text\" value=\"user_id:661851\">",
+    "fragmentB": "<input autocapitalize=\"none\" class=\"input hform__text\" id=\"posts_pq\" name=\"pq\" placeholder=\"搜索帖子\" spellcheck=\"false\" type=\"text\" value=\"user_id:661851\">"
+  },
+  {
+    "fragmentA": "<button class=\"hform__button button\" type=\"submit\">Search</button>",
+    "fragmentB": "<button class=\"hform__button button\" type=\"submit\">搜索</button>"
+  },
+  {
+    "fragmentA": "<div class=\"fieldlabel\">For more information, see the <a href=\"/pages/search_syntax\">search syntax documentation</a>. Search results are sorted by creation date. </div>",
+    "fragmentB": "<div class=\"fieldlabel\">更多信息，请参阅<a href=\"/pages/search_syntax\">搜索语法文档</a>。搜索结果按创建日期排序。</div>"
+  },
+  {
+    "fragmentA": "<h2>Search Results</h2>",
+    "fragmentB": "<h2>搜索结果</h2>"
+  },
+  {
+    "fragmentA": "<a href=\"/forums/dis\">General Discussion</a>",
+    "fragmentB": "<a href=\"/forums/dis\">综合讨论</a>"
+  },
+  {
+    "fragmentA": "<a href=\"/forums/meta\">Site and Policy</a>",
+    "fragmentB": "<a href=\"/forums/meta\">网站与政策</a>"
+  },
+  {
+    "fragmentA": "<a href=\"/forums/art\">Art Chat</a>",
+    "fragmentB": "<a href=\"/forums/art\">艺术讨论</a>"
+  },
+  {
+    "fragmentA": "<div>Posted <time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time> <a class=\"communication__interaction\" href=\"{{4}}\"><i class=\"fa fa-flag\"></i> Report </a></div>",
+    "fragmentB": "<div>发布于 <time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time> <a class=\"communication__interaction\" href=\"{{4}}\"><i class=\"fa fa-flag\"></i> 举报 </a></div>"
+  },
+  {
+    "fragmentA": "<a class=\"communication__interaction\" href=\"{{1}}\" title=\"Link to post\"><i class=\"fa fa-link\"></i> Link </a>",
+    "fragmentB": "<a class=\"communication__interaction\" href=\"{{1}}\" title=\"链接到帖子\"><i class=\"fa fa-link\"></i> 链接 </a>"
+  },
+  {
+    "fragmentA": "<a class=\"communication__interaction post-reply post-reply-quote\" data-author=\"{{1}}\" data-post=\"{{2}}\" data-reply-url=\"{{3}}\" href=\"{{3}}\"><i class=\"fa fa-quote-right\"></i> Quote </a>",
+    "fragmentB": "<a class=\"communication__interaction post-reply post-reply-quote\" data-author=\"{{1}}\" data-post=\"{{2}}\" data-reply-url=\"{{3}}\" href=\"{{3}}\"><i class=\"fa fa-quote-right\"></i> 引用 </a>"
+  },
+  {
+    "fragmentA": "<a class=\"communication__interaction post-reply\" data-author=\"{{1}}\" data-reply-url=\"{{2}}\" href=\"{{2}}\"><i class=\"fa fa-reply\"></i> Reply </a>",
+    "fragmentB": "<a class=\"communication__interaction post-reply\" data-author=\"{{1}}\" data-reply-url=\"{{2}}\" href=\"{{2}}\"><i class=\"fa fa-reply\"></i> 回复 </a>"
+  },
+  {
+    "fragmentA": "<strong><a class=\"communication__interaction\" href=\"{{1}}\"><i class=\"fas fa-edit\"></i> Edit </a></strong>",
+    "fragmentB": "<strong><a class=\"communication__interaction\" href=\"{{1}}\"><i class=\"fas fa-edit\"></i> 编辑 </a></strong>"
+  },
+  {
+    "fragmentA": "<a href=\"{{1}}\">Edited <time datetime=\"{{2}}\">{{3}}</time> </a>",
+    "fragmentB": "<a href=\"{{1}}\">编辑于 <time datetime=\"{{2}}\">{{3}}</time> </a>"
+  },
+  {
+    "fragmentA": "<span class=\"page-current\">1</span>",
+    "fragmentB": "<span class=\"page-current\">1</span>"
+  },
+  {
+    "fragmentA": "<a href=\"/posts?page=2&amp;pq=user_id%3A661851\">2</a>",
+    "fragmentB": "<a href=\"/posts?page=2&amp;pq=user_id%3A661851\">2</a>"
+  },
+  {
+    "fragmentA": "<a class=\"js-next\" href=\"/posts?page=2&amp;pq=user_id%3A661851\">Next ›</a>",
+    "fragmentB": "<a class=\"js-next\" href=\"/posts?page=2&amp;pq=user_id%3A661851\">下一页 ›</a>"
+  },
+  {
+    "fragmentA": "<a href=\"/posts?page=2&amp;pq=user_id%3A661851\">Last »</a>",
+    "fragmentB": "<a href=\"/posts?page=2&amp;pq=user_id%3A661851\">最后一页 »</a>"
+  },
+  {
+    "fragmentA": "<span>« First</span>",
+    "fragmentB": "<span>« 第一页</span>"
+  },
+  {
+    "fragmentA": "<span>‹ Prev</span>",
+    "fragmentB": "<span>‹ 上一页</span>"
+  },
+  {
+    "fragmentA": "<span class=\"block__header__title\">Showing results <strong>{{1}} - {{2}} </strong>of <strong>{{3}} </strong>total </span>",
+    "fragmentB": "<span class=\"block__header__title\">正在显示第 <strong>{{1}} - {{2}} </strong>条，总计 <strong>{{3}} </strong>条 </span>"
+  },
+  {
+    "fragmentA": "<h3>Default search</h3>",
+    "fragmentB": "<h3>默认搜索</h3>"
+  },
+  {
+    "fragmentA": "<p>If you do not specify a field to search over, the search engine will search for posts with a body that is similar to the query's <em>word stems</em>. For example, posts containing the words <code>winged humanization</code>, <code>wings</code>, and <code>spread wings</code> would all be found by a search for <code>wing</code>, but <code>sewing</code> would not be. </p>",
+    "fragmentB": "<p>如果您未指定搜索字段，搜索引擎将查找正文与查询的<em>词干</em>相似的帖子。例如，包含 <code>winged humanization</code>、<code>wings</code> 和 <code>spread wings</code> 的帖子都可以通过搜索 <code>wing</code> 找到，但 <code>sewing</code> 则不会。</p>"
+  },
+  {
+    "fragmentA": "<h3>Allowed fields</h3>",
+    "fragmentB": "<h3>允许的字段</h3>"
+  },
+  {
+    "fragmentA": "<th>Field Selector</th>",
+    "fragmentB": "<th>字段选择器</th>"
+  },
+  {
+    "fragmentA": "<th>Type</th>",
+    "fragmentB": "<th>类型</th>"
+  },
+  {
+    "fragmentA": "<th>Description</th>",
+    "fragmentB": "<th>描述</th>"
+  },
+  {
+    "fragmentA": "<th>Example</th>",
+    "fragmentB": "<th>示例</th>"
+  },
+  {
+    "fragmentA": "<td>Literal</td>",
+    "fragmentB": "<td>字面量</td>"
+  },
+  {
+    "fragmentA": "<td>Full Text</td>",
+    "fragmentB": "<td>全文</td>"
+  },
+  {
+    "fragmentA": "<td>Date/Time Range</td>",
+    "fragmentB": "<td>日期/时间范围</td>"
+  },
+  {
+    "fragmentA": "<td>Numeric Range</td>",
+    "fragmentB": "<td>数字范围</td>"
+  },
+  {
+    "fragmentA": "<td>Meta</td>",
+    "fragmentB": "<td>元数据</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the author of this post. Anonymous authors will never match this term.</td>",
+    "fragmentB": "<td>匹配此帖子的作者。匿名作者永远不会匹配此词条。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the body of this post. This is the default field.</td>",
+    "fragmentB": "<td>匹配此帖子的正文。这是默认字段。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the creation time of this post.</td>",
+    "fragmentB": "<td>匹配此帖子的创建时间。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the numeric surrogate key for this post.</td>",
+    "fragmentB": "<td>匹配此帖子的数字代理键。</td>"
+  },
+  {
+    "fragmentA": "<td><code>my:posts</code> matches posts you have posted if you are signed in. </td>",
+    "fragmentB": "<td><code>my:posts</code> 匹配您已发布的帖子（如果您已登录）。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the title of the topic.</td>",
+    "fragmentB": "<td>匹配主题的标题。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the numeric surrogate key for the topic this post belongs to.</td>",
+    "fragmentB": "<td>匹配此帖子所属主题的数字代理键。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the offset from the beginning of the topic of this post. Positions begin at 0.</td>",
+    "fragmentB": "<td>匹配此帖子从主题开头开始的偏移量。位置从 0 开始。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the creation or last edit time of this post.</td>",
+    "fragmentB": "<td>匹配此帖子的创建时间或最后编辑时间。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches posts with the specified user_id. Anonymous users will never match this term.</td>",
+    "fragmentB": "<td>匹配具有指定 user_id 的帖子。匿名用户永远不会匹配此词条。</td>"
+  },
+  {
+    "fragmentA": "<td>Matches the short name for the forum this post belongs to.</td>",
+    "fragmentB": "<td>匹配此帖子所属论坛的短名称。</td>"
+  },
+  {
+    "fragmentA": "<h3> <a href=\"{{1}}\">{{2}}</a> » <a href=\"{{3}}\">{{4}}</a> » <a href=\"{{5}}\">Post {{6}}</a> </h3>",
+    "fragmentB": "<h3> <a href=\"{{1}}\">{{2}}</a> » <a href=\"{{3}}\">{{4}}</a> » <a href=\"{{5}}\">帖子 {{6}}</a> </h3>"
+  },
+  {
+    "fragmentA": "<div class=\"paragraph\"><a href=\"{{1}}\">{{2}}</a><br>{{3}}</div>",
+    "fragmentB": "<div class=\"paragraph\"><a href=\"{{1}}\">{{2}}</a><br>{{3}}</div>"
+  },
+  {
+    "fragmentA": "<h1>Tag changes by <a href=\"/profiles/{{1}}\">{{2}}</a></h1>",
+    "fragmentB": "<h1>由 <a href=\"/profiles/{{1}}\">{{2}}</a> 进行的标签更改</h1>"
+  },
+  {
+    "fragmentA": "<input autocapitalize=\"none\" class=\"input\" id=\"only_tag\" name=\"only_tag\" placeholder=\"Tag\" title=\"Only show this tag\" type=\"text\">",
+    "fragmentB": "<input autocapitalize=\"none\" class=\"input\" id=\"only_tag\" name=\"only_tag\" placeholder=\"标签\" title=\"仅显示此标签\" type=\"text\">"
+  },
+  {
+    "fragmentA": "<button class=\"button\" title=\"Search\" type=\"submit\">Search</button>",
+    "fragmentB": "<button class=\"button\" title=\"搜索\" type=\"submit\">搜索</button>"
+  },
+  {
+    "fragmentA": "<a href=\"/profiles/{{1}}/tag_changes?added=0\">Removed</a>",
+    "fragmentB": "<a href=\"/profiles/{{1}}/tag_changes?added=0\">已移除</a>"
+  },
+  {
+    "fragmentA": "<a href=\"/profiles/{{1}}/tag_changes?added=1\">Added</a>",
+    "fragmentB": "<a href=\"/profiles/{{1}}/tag_changes?added=1\">已添加</a>"
+  },
+  {
+    "fragmentA": "<a href=\"/profiles/{{1}}/tag_changes\">All</a>",
+    "fragmentB": "<a href=\"/profiles/{{1}}/tag_changes\">全部</a>"
+  },
+  {
+    "fragmentA": "<span class=\"block__header__title page__info\">Listing changes for {{1}} images</span>",
+    "fragmentB": "<span class=\"block__header__title page__info\">列出 {{1}} 张图片的更改</span>"
+  },
+  {
+    "fragmentA": "<span class=\"page-current\">{{1}}</span>",
+    "fragmentB": "<span class=\"page-current\">{{1}}</span>"
+  },
+  {
+    "fragmentA": "<a href=\"/profiles/{{1}}/tag_changes?page={{2}}\">{{3}}</a>",
+    "fragmentB": "<a href=\"/profiles/{{1}}/tag_changes?page={{2}}\">{{3}}</a>"
+  },
+  {
+    "fragmentA": "<a class=\"js-next\" href=\"/profiles/{{1}}/tag_changes?page=2\">Next ›</a>",
+    "fragmentB": "<a class=\"js-next\" href=\"/profiles/{{1}}/tag_changes?page=2\">下一页 ›</a>"
+  },
+  {
+    "fragmentA": "<a href=\"/profiles/{{1}}/tag_changes?page=4\">Last »</a>",
+    "fragmentB": "<a href=\"/profiles/{{1}}/tag_changes?page=4\">最后一页 »</a>"
+  },
+  {
+    "fragmentA": "<div class=\"block block--fixed block--warning\"><h4><i class=\"fa fa-triangle-exclamation\"></i> <strong>Do not undo staff member tag changes!</strong></h4><p>Ask them if you believe their changes are wrong. Staff members usually have a good reason to change tags. There might also be additional context, which you either can't see, or simply are unaware of.</p></div>",
+    "fragmentB": "<div class=\"block block--fixed block--warning\"><h4><i class=\"fa fa-triangle-exclamation\"></i> <strong>请不要撤销工作人员的标签更改！</strong></h4><p>如果您认为他们的更改有误，请询问他们。工作人员通常有充分的理由更改标签。可能还存在您无法看到或根本不知道的额外背景信息。</p></div>"
+  },
+  {
+    "fragmentA": "<div class=\"tag__change-info\"> <strong><a href=\"/profiles/{{10}}\">{{20}}</a></strong>  <div class=\"flex__grow hide-mobile\"></div><span><time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time></span><div class=\"tag_change-tag-count\"><div class=\"label label--small label--success\"><i class=\"fa fa-plus\"></i> {{4}} tag(s)</div></div></div>",
+    "fragmentB": "<div class=\"tag__change-info\"> <strong><a href=\"/profiles/{{10}}\">{{20}}</a></strong>  <div class=\"flex__grow hide-mobile\"></div><span><time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time></span><div class=\"tag_change-tag-count\"><div class=\"label label--small label--success\"><i class=\"fa fa-plus\"></i> {{4}} 个标签</div></div></div>"
+  },
+  {
+    "fragmentA": "<div class=\"tag__change-info\"> <strong><a href=\"/profiles/{{10}}y\">{{20}}</a></strong>  <div class=\"flex__grow hide-mobile\"></div><span><time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time></span><div class=\"tag_change-tag-count\"><div class=\"label label--small label--danger\"><i class=\"fa fa-minus\"></i> {{4}} tag(s)</div></div></div>",
+    "fragmentB": "<div class=\"tag__change-info\"> <strong><a href=\"/profiles/{{10}}\">{{20}}</a></strong>  <div class=\"flex__grow hide-mobile\"></div><span><time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time></span><div class=\"tag_change-tag-count\"><div class=\"label label--small label--danger\"><i class=\"fa fa-minus\"></i> {{4}} 个标签</div></div></div>"
+  },
+  {
+    "fragmentA": "<div class=\"tag__change-info\"> <strong><a href=\"/profiles/{{10}}\">{{20}}</a></strong>  <div class=\"flex__grow hide-mobile\"></div><span><time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time></span><div class=\"tag_change-tag-count\"><div class=\"label label--small label--success\"><i class=\"fa fa-plus\"></i> {{4}} tag(s)</div><div class=\"label label--small label--danger\"><i class=\"fa fa-minus\"></i> {{5}} tag(s)</div></div></div>",
+    "fragmentB": "<div class=\"tag__change-info\"> <strong><a href=\"/profiles/{{10}}\">{{20}}</a></strong>  <div class=\"flex__grow hide-mobile\"></div><span><time datetime=\"{{1}}\" title=\"{{2}}\">{{3}}</time></span><div class=\"tag_change-tag-count\"><div class=\"label label--small label--success\"><i class=\"fa fa-plus\"></i> {{4}} 个标签</div><div class=\"label label--small label--danger\"><i class=\"fa fa-minus\"></i> {{5}} 个标签</div></div></div>"
+  },
+  {
+    "fragmentA": "<div class=\"added\"><i class=\"fa fa-plus\"></i><div class=\"tag-list\">",
+    "fragmentB": "<div class=\"added\"><i class=\"fa fa-plus\"></i><div class=\"tag-list\">"
+  },
+  {
+    "fragmentA": "<div class=\"removed\"><i class=\"fa fa-minus\"></i><div class=\"tag-list\">",
+    "fragmentB": "<div class=\"removed\"><i class=\"fa fa-minus\"></i><div class=\"tag-list\">"
+  },
+  {
+    "fragmentA": "<div class=\"tag__change--not-retained\">",
+    "fragmentB": "<div class=\"tag__change--not-retained\">"
+  },
+  {
+    "fragmentA": "<p>* Crossed out tags were reverted and thus are not retained</p>",
+    "fragmentB": "<p>* 被划掉的标签已被还原，因此不被保留</p>"
+  },
+  {
+    "fragmentA": "<button class=\"button button--link\"><i class=\"fa fa-exclamation-triangle\"></i> General reporting </button>",
+    "fragmentB": "<button class=\"button button--link\"><i class=\"fa fa-exclamation-triangle\"></i> 常规举报 </button>"
+  },
+  {
+    "fragmentA": "<label for=\"image-dedupe\">Updating/merging</label>",
+    "fragmentB": "<label for=\"image-dedupe\">更新/合并</label>"
+  },
+  {
+    "fragmentA": "Delete this image and redirect to",
+    "fragmentB": "删除此图片并重定向到"
+  },
+  {
+    "fragmentA": "<input class=\"input\" id=\"duplicate_report_duplicate_of_image_id\" min=\"0\" name=\"duplicate_report[duplicate_of_image_id]\" placeholder=\"image number.\" required=\"\" type=\"number\">",
+    "fragmentB": "<input class=\"input\" id=\"duplicate_report_duplicate_of_image_id\" min=\"0\" name=\"duplicate_report[duplicate_of_image_id]\" placeholder=\"图片编号。\" required=\"\" type=\"number\">"
+  },
+  {
+    "fragmentA": "<input class=\"input input--separate-left\" id=\"duplicate_report_reason\" name=\"duplicate_report[reason]\" placeholder=\"Explanation\" type=\"text\">",
+    "fragmentB": "<input class=\"input input--separate-left\" id=\"duplicate_report_reason\" name=\"duplicate_report[reason]\" placeholder=\"说明\" type=\"text\">"
+  },
+  {
+    "fragmentA": "<button class=\"button\" data-disable-with=\"Saving…\" type=\"submit\">Report Duplicate</button>",
+    "fragmentB": "<button class=\"button\" data-disable-with=\"保存中…\" type=\"submit\">举报重复</button>"
+  },
+  {
+    "fragmentA": "<h2>Submit a report</h2>",
+    "fragmentB": "<h2>提交举报</h2>"
+  },
+  {
+    "fragmentA": "<p><strong><a href=\"/images/{{1}}\">Image &gt;&gt;{{1}}</a></strong></p>",
+    "fragmentB": "<p><strong><a href=\"/images/{{1}}\">图片 &gt;&gt;{{1}}</a></strong></p>"
+  },
+  {
+    "fragmentA": "<h3>Reporting Tips</h3>",
+    "fragmentB": "<h3>举报提示</h3>"
+  },
+  {
+    "fragmentA": "<li>Make sure to report for the correct <a href=\"/pages/rules\">rule</a>. </li>",
+    "fragmentB": "<li>请确保根据正确的<a href=\"/pages/rules\">规则</a>进行举报。</li>"
+  },
+  {
+    "fragmentA": "<li>One report per problem. If it involves multiple things (images, comments, etc), list all of their IDs in the description of a single report.</li>",
+    "fragmentB": "<li>每个问题提交一份举报。如果涉及多个内容（图片、评论等），请在一次举报的描述中列出所有相关 ID。</li>"
+  },
+  {
+    "fragmentA": "<li><strong>Do not report someone just because they disagree with you. Abusing the report system is a bannable offense.</strong></li>",
+    "fragmentB": "<li><strong>请勿仅因他人与您意见不合就举报对方。滥用举报系统是可导致封禁的行为。</strong></li>"
+  },
+  {
+    "fragmentA": "<p>You may only open up to <strong>3 reports</strong> at a time. Please be mindful of what you report. </p>",
+    "fragmentB": "<p>您一次最多只能提交 <strong>3 份</strong>举报。请注意您所举报的内容。</p>"
+  },
+  {
+    "fragmentA": "<h3>Takedown Policy</h3>",
+    "fragmentB": "<h3>删除政策</h3>"
+  },
+  {
+    "fragmentA": "<p><strong>Only an owner of an image's rights (normally the artist) can request a takedown.</strong> If you're the artist, you'll <strong>need</strong> a verified artist link. </p>",
+    "fragmentB": "<p><strong>只有图片权利所有者（通常是艺术家）才能请求删除。</strong>如果您是艺术家，您<strong>需要</strong>一个经过验证的艺术家链接。</p>"
+  },
+  {
+    "fragmentA": "<p>For more information, please read the <a href=\"/pages/takedowns\">takedown policy</a>. </p>",
+    "fragmentB": "<p>更多信息，请阅读<a href=\"/pages/takedowns\">删除政策</a>。</p>"
+  },
+  {
+    "fragmentA": "<select class=\"input\" id=\"report_category\" name=\"report[category]\"><option value=\"Rule #0\">Rule #0: Namecalling, trolling, discrimination</option><option value=\"Rule #1\">Rule #1: DNP, content theft, pay content, trace/bad edit</option><option value=\"Rule #2\">Rule #2: Bad tagging/sourcing</option><option value=\"Rule #3\">Rule #3: Image not MLP-related/obligatory pony</option><option value=\"Rule #4\">Rule #4: Whining about filterable content</option><option value=\"Rule #5\">Rule #5: Underage+human/anthro-looking porn</option><option value=\"Rule #6\">Rule #6: Spam, off-topic, or general site abuse</option><option value=\"Rule #7\">Rule #7: Above topic rating (NOT swear words)</option><option value=\"Rule #8\">Rule #8: Privacy violation</option><option value=\"Rule #9\">Rule #9: Commissions</option><option value=\"Rule #n\">Rule #n: Spirit of the rules</option><option value=\"Other\">Other (please explain)</option><option value=\"Takedown request\">Takedown request</option></select>",
+    "fragmentB": "<select class=\"input\" id=\"report_category\" name=\"report[category]\"><option value=\"Rule #0\">规则 #0：辱骂、挑衅、歧视</option><option value=\"Rule #1\">规则 #1：DNP、内容盗窃、付费内容、描图/劣质编辑</option><option value=\"Rule #2\">规则 #2：标签/来源标注不当</option><option value=\"Rule #3\">规则 #3：图片与小马无关/强行小马</option><option value=\"Rule #4\">规则 #4：抱怨可过滤内容</option><option value=\"Rule #5\">规则 #5：涉及未成年+人类/兽人外观的色情内容</option><option value=\"Rule #6\">规则 #6：垃圾信息、离题内容或一般性网站滥用</option><option value=\"Rule #7\">规则 #7：超出主题评级（不包括脏话）</option><option value=\"Rule #8\">规则 #8：隐私侵犯</option><option value=\"Rule #9\">规则 #9：委托</option><option value=\"Rule #n\">规则 #n：规则精神</option><option value=\"Other\">其他（请说明）</option><option value=\"Takedown request\">删除请求</option></select>"
+  },
+  {
+    "fragmentA": "<a class=\"selected\" data-click-tab=\"write\" href=\"#\"><i class=\"fa fa-edit\"></i> Edit</a>",
+    "fragmentB": "<a class=\"selected\" data-click-tab=\"write\" href=\"#\"><i class=\"fa fa-edit\"></i> 编辑</a>"
+  },
+  {
+    "fragmentA": "<a data-click-tab=\"preview\" href=\"#\"><i class=\"fa fa-cog fa-fw fa-spin js-preview-loading hidden\" title=\"Loading preview…\"></i> <i class=\"fa fa-eye fa-fw js-preview-idle\"></i> Preview</a>",
+    "fragmentB": "<a data-click-tab=\"preview\" href=\"#\"><i class=\"fa fa-cog fa-fw fa-spin js-preview-loading hidden\" title=\"正在加载预览…\"></i> <i class=\"fa fa-eye fa-fw js-preview-idle\"></i> 预览</a>"
+  },
+  {
+    "fragmentA": "<strong>Syntax quick reference:</strong>",
+    "fragmentB": "<strong>语法快速参考：</strong>"
+  },
+  {
+    "fragmentA": "<textarea class=\"input input--wide input--text input--resize-vertical js-toolbar-input js-preview-input\" id=\"report_reason\" name=\"report[reason]\" placeholder=\"Provide anything else we should know here.\"></textarea>",
+    "fragmentB": "<textarea class=\"input input--wide input--text input--resize-vertical js-toolbar-input js-preview-input\" id=\"report_reason\" name=\"report[reason]\" placeholder=\"在此提供任何我们需要知道的额外信息。\"></textarea>"
+  },
+  {
+    "fragmentA": "<button class=\"button\" type=\"submit\">Send Report</button>",
+    "fragmentB": "<button class=\"button\" type=\"submit\">发送举报</button>"
+  },
+  {
+    "fragmentA": "<div class=\"block\" id=\"imagespns\"><div class=\"spnstxt\">Interested in advertising on Derpibooru? <a href=\"/pages/advertising\">Click here</a> for information! </div><a href=\"/adverts/{{236}}\" id=\"imagespns__link\" rel=\"nofollow\" title=\"{{2}}\"><img alt=\"{{3}}\" src=\"{{1}}\"></a><p><strong>Help fund the $15 daily operational cost of Derpibooru - <a href=\"/pages/donations\">support us financially</a>! </strong></p></div>",
+    "fragmentB": "<div class=\"block\" id=\"imagespns\"><div class=\"spnstxt\">想在 Derpibooru 上投放广告？<a href=\"/pages/advertising\">点击此处</a>了解详情！</div><a href=\"/adverts/{{236}}\" id=\"imagespns__link\" rel=\"nofollow\" title=\"{{2}}\"><img alt=\"{{3}}\" src=\"{{1}}\"></a><p><strong>帮助资助 Derpibooru 每天 15 美元的运营成本——<a href=\"/pages/donations\">为我们提供经济支持</a>！</strong></p></div>"
+  },
+  {
     "fragmentA": "",
     "fragmentB": ""
   },

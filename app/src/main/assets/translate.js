@@ -3,8 +3,8 @@
   window.__pageTranslatorLoaded = true;
 
   var SKIP_TAGS = { SCRIPT:1, STYLE:1, NOSCRIPT:1, TEXTAREA:1, INPUT:1, IFRAME:1, CODE:1, PRE:1 };
-  var CHUNK_MAX_ITEMS = 25;
-  var CHUNK_MAX_CHARS = 1800;
+  var CHUNK_MAX_ITEMS = 50;
+  var CHUNK_MAX_CHARS = 4000;
   var MUTATION_DEBOUNCE_MS = 800;
 
   var originalStore = [];
@@ -469,13 +469,17 @@
   }
 
   function sendChunk(nodes) {
-    var requestId = 'req_' + (requestCounter++);
-    pendingRequests[requestId] = nodes;
-    var texts = [];
-    for (var i = 0; i < nodes.length; i++) texts.push(nodes[i].nodeValue);
-    if (window.AndroidTranslator && window.AndroidTranslator.requestTranslate) {
-      window.AndroidTranslator.requestTranslate(requestId, JSON.stringify(texts));
-    }
+      var requestId = 'req_' + (requestCounter++);
+      pendingRequests[requestId] = nodes;
+      var texts = [];
+      for (var i = 0; i < nodes.length; i++) {
+          // 只提交纯文本：压缩连续空白、去除首尾空白
+          var clean = nodes[i].nodeValue.replace(/\s+/g, ' ').trim();
+          texts.push(clean);
+      }
+      if (window.AndroidTranslator && window.AndroidTranslator.requestTranslate) {
+          window.AndroidTranslator.requestTranslate(requestId, JSON.stringify(texts));
+      }
   }
 
   function translateDynamicNodes(nodes) {
