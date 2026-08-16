@@ -1,570 +1,445 @@
 package com.kerybotu.derpibooru.mirror
 
-import android.Manifest
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
+import android.content.res.Configuration
 import android.os.Bundle
-import android.view.Menu
+import android.util.Log
 import android.view.MenuItem
 import android.view.View
-import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.ValueCallback
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
-import android.widget.TextView
+import android.widget.SeekBar
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.Toolbar
-import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.webkit.ProxyConfig
-import androidx.webkit.ProxyController
-import androidx.webkit.WebViewFeature
-import com.kerybotu.derpibooru.mirror.rules.DynamicSelectorManager
-import com.kerybotu.derpibooru.mirror.rules.StaticRuleManager
+import androidx.drawerlayout.widget.DrawerLayout
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.navigation.NavigationView
+import com.kerybotu.derpibooru.mirror.databinding.ActivityMainBinding
+import com.kerybotu.derpibooru.mirror.model.Image
+import com.kerybotu.derpibooru.mirror.network.NetworkManager
+import com.kerybotu.derpibooru.mirror.ui.ImageAdapter
+import com.kerybotu.derpibooru.mirror.ui.ImageDetailActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.json.JSONArray
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.util.concurrent.Executor
 
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        private const val TRANSLATE_PREFS = "translate_prefs"
-        private const val KEY_AUTO_STATIC_TRANSLATE = "auto_static_translate"
-    }
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var drawerLayout: DrawerLayout
+    private lateinit var adapter: ImageAdapter
 
-    private lateinit var toolbar: Toolbar
-    private lateinit var webView: WebView
-    private lateinit var loadingOverlay: LinearLayout
-    private lateinit var loadingText: TextView
-
-    private var proxyServer: LocalProxyServer? = null
-    private var translateBridge: TranslateBridge? = null
-    private var currentBestIp: String = ""
-    private var translateScriptCache: String? = null
-    private var translateInjected = false
+    private var allImages: List<Image> = emptyList()
+    private var currentImages: List<Image> = emptyList()
+    private var columnCount = 2 // 默认竖屏2列
+    private var page = 1
+    private var currentQuery = "safe"
+    private var loading = false
+    private var startupStarted = false
+    private var toolbarBasePaddingLeft = 0
+    private var toolbarBasePaddingRight = 0
+    private var toolbarBasePaddingBottom = 0
+    private var bottomBarBaseHeight = 0
+    private var fabBaseMarginBottom = 0
 
     private val activityJob = Job()
     private val activityScope = CoroutineScope(Dispatchers.Main + activityJob)
 
-    private val notificationPermLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-
-    // -------------------- 文件上传相关 --------------------
-    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
-
-    private val fileChooserLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val callback = fileChooserCallback
-            fileChooserCallback = null
-            if (callback == null) return@registerForActivityResult
-
-            val data = result.data
-            val uris: Array<Uri>? = when {
-                result.resultCode != RESULT_OK || data == null -> null
-                data.clipData != null -> {
-                    val clip = data.clipData!!
-                    Array(clip.itemCount) { i -> clip.getItemAt(i).uri }
-                }
-                data.data != null -> arrayOf(data.data!!)
-                else -> null
-            }
-            callback.onReceiveValue(uris)
-        }
-
-    // ---------- 动态获取当前站点域名和起始 URL ----------
-    private fun currentTargetDomain(): String = AppSettings.getTargetDomain(applicationContext)
-    private fun currentStartUrl(): String = AppSettings.getStartUrl(applicationContext)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        PaletteManager.apply(this)
 
-        toolbar = findViewById(R.id.toolbar)
-        webView = findViewById(R.id.webview)
-        loadingOverlay = findViewById(R.id.loading_overlay)
-        loadingText = findViewById(R.id.loading_text)
+        // 处理状态栏与顶栏重叠问题
+        applyWindowInsets()
 
-        setSupportActionBar(toolbar)
-        supportActionBar?.title = "Derpibooru"
+        setSupportActionBar(binding.toolbar)
 
-        applyInsets()
-        requestNotificationPermissionIfNeeded()
-        setupCookiePersistence()
-
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
-        webView.settings.databaseEnabled = true
-        webView.settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-
-        translateBridge = TranslateBridge(webView)
-        webView.addJavascriptInterface(translateBridge!!, "AndroidTranslator")
-
-        // 预加载翻译脚本到内存，减少首次注入时的文件读取延迟
-        activityScope.launch(Dispatchers.IO) {
-            if (translateScriptCache == null) {
-                translateScriptCache = assets.open("translate.js")
-                    .bufferedReader().use { it.readText() }
+        binding.bottomNavigation.setOnItemSelectedListener { item ->
+            binding.bottomNavigation.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+            when (item.itemId) {
+                R.id.tab_home -> true
+                R.id.tab_search -> { showSearchDialog(); false }
+                R.id.tab_upload -> { Toast.makeText(this, "上传功能即将开放", Toast.LENGTH_SHORT).show(); false }
+                R.id.tab_messages -> { Toast.makeText(this, "暂无未读消息", Toast.LENGTH_SHORT).show(); false }
+                R.id.tab_profile -> { startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.ProfileActivity::class.java)); false }
+                else -> false
             }
         }
-
-        webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                translateInjected = false
-                // API < 23 不支持 onPageCommitVisible，短延迟注入兜底
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-                    webView.postDelayed({
-                        injectTranslateScriptEarlyOnce()
-                    }, 80)
-                }
-            }
-
-            override fun onPageCommitVisible(view: WebView, url: String?) {
-                super.onPageCommitVisible(view, url)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    injectTranslateScriptEarlyOnce()
-                }
-            }
-
-            override fun onPageFinished(view: WebView, url: String?) {
-                super.onPageFinished(view, url)
-                if (!translateInjected) {
-                    injectTranslateScriptEarlyOnce()
-                }
-                CookieManager.getInstance().flush()
-            }
+        binding.fabUpload.setOnClickListener {
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+            Toast.makeText(this, "上传功能即将开放", Toast.LENGTH_SHORT).show()
         }
 
-        // 文件上传
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onShowFileChooser(
-                view: WebView,
-                filePathCallback: ValueCallback<Array<Uri>>,
-                fileChooserParams: FileChooserParams
-            ): Boolean {
-                fileChooserCallback?.onReceiveValue(null)
-                fileChooserCallback = filePathCallback
+        // 初始化 DrawerLayout 和侧滑菜单
+        drawerLayout = binding.drawerLayout
+        val toggle = ActionBarDrawerToggle(
+            this,
+            drawerLayout,
+            binding.toolbar,
+            R.string.navigation_drawer_open,
+            R.string.navigation_drawer_close
+        )
+        drawerLayout.addDrawerListener(toggle)
+        toggle.syncState()
 
-                val intent = fileChooserParams.createIntent().apply {
-                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                }
-                return try {
-                    fileChooserLauncher.launch(intent)
-                    true
-                } catch (e: Exception) {
-                    fileChooserCallback = null
-                    Toast.makeText(this@MainActivity, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
-                    false
-                }
-            }
+        binding.navView.setNavigationItemSelectedListener { menuItem ->
+            handleNavigationItemClick(menuItem)
+            drawerLayout.closeDrawer(GravityCompat.START)
+            true
         }
 
-        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-            val port = proxyServer?.port
-            if (port != null) {
-                DownloadHelper.download(this, port, url, userAgent, contentDisposition, mimeType)
-            } else {
-                Toast.makeText(this, "代理未就绪，无法下载", Toast.LENGTH_SHORT).show()
+        // 根据屏幕方向设置初始列数
+        columnCount = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 4 else 2
+
+        // 初始化 RecyclerView
+        adapter = ImageAdapter(currentImages) { image ->
+            val intent = Intent(this, ImageDetailActivity::class.java)
+            intent.putExtra("image", image)
+            startActivity(intent)
+        }
+        binding.recyclerView.layoutManager = GridLayoutManager(this, columnCount)
+        binding.recyclerView.adapter = adapter
+        binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0 || loading) return
+                val lm = rv.layoutManager as GridLayoutManager
+                if (lm.findLastVisibleItemPosition() >= adapter.itemCount - columnCount * 2) {
+                    activityScope.launch { loadPage(page + 1, currentQuery, append = true) }
+                }
             }
+        })
+
+        // 密度按钮点击事件：切换列数
+        binding.btnDensity.setOnClickListener {
+            cycleDensity()
         }
 
-        // 启动时同步静态规则和动态选择器
+        // 密度按钮长按事件：弹出自定义滑块调整列数
+        binding.btnDensity.setOnLongClickListener {
+            showDensitySliderDialog()
+            true
+        }
+
+        // 搜索按钮点击事件
+        binding.btnSearch.setOnClickListener {
+            showSearchDialog()
+        }
+
+        // 网络初始化并加载数据
         activityScope.launch {
-            StaticRuleManager.syncIfNeeded(applicationContext)
+            startupStarted = true
+            try {
+                updateStartup("正在优选网络节点…", "正在连接最快的 Cloudflare 节点")
+                NetworkManager.init(applicationContext)
+                updateStartup("正在准备首页…", "正在预加载最新图片")
+                loadPage(1, currentQuery, append = false)
+                updateStartup("准备就绪", "欢迎回来")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "网络初始化失败", e)
+                Toast.makeText(this@MainActivity, "网络初始化失败，显示模拟数据", Toast.LENGTH_SHORT).show()
+                loadMockImages()
+                updateStartup("准备就绪", "当前使用离线预览")
+            }
+            binding.startupOverlay.postDelayed({ binding.startupOverlay.visibility = View.GONE }, 300)
         }
-        activityScope.launch {
-            DynamicSelectorManager.syncIfNeeded(applicationContext)
+    }
+
+    /**
+     * 处理窗口 insets，动态设置 Toolbar 的顶部 padding 等于状态栏高度。
+     */
+    private fun applyWindowInsets() {
+        toolbarBasePaddingLeft = binding.toolbar.paddingLeft
+        toolbarBasePaddingRight = binding.toolbar.paddingRight
+        toolbarBasePaddingBottom = binding.toolbar.paddingBottom
+        if (bottomBarBaseHeight == 0) {
+            bottomBarBaseHeight = binding.bottomNavigation.layoutParams.height
+                .takeIf { it > 0 } ?: (64 * resources.displayMetrics.density).toInt()
         }
-
-        startOptimizeAndLoad(forceRefresh = false)
-    }
-
-    // -------------------- Cookie 持久化 --------------------
-    private fun setupCookiePersistence() {
-        val cookieManager = CookieManager.getInstance()
-        cookieManager.setAcceptCookie(true)
-        cookieManager.setAcceptThirdPartyCookies(webView, true)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        CookieManager.getInstance().flush()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        CookieManager.getInstance().flush()
-    }
-
-    // -------------------- 状态栏适配 --------------------
-    private fun applyInsets() {
-        val baseToolbarHeight = run {
-            val typedValue = android.util.TypedValue()
-            theme.resolveAttribute(androidx.appcompat.R.attr.actionBarSize, typedValue, true)
-            typedValue.getDimension(resources.displayMetrics).toInt()
+        if (fabBaseMarginBottom == 0) {
+            fabBaseMarginBottom = (binding.fabUpload.layoutParams as? android.view.ViewGroup.MarginLayoutParams)
+                ?.bottomMargin ?: (34 * resources.displayMetrics.density).toInt()
         }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val navigationBarHeight = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            val toolbarParams = binding.toolbar.layoutParams
+            toolbarParams.height = resources.getDimensionPixelSize(androidx.appcompat.R.dimen.abc_action_bar_default_height_material) + statusBarHeight
+            binding.toolbar.layoutParams = toolbarParams
+            binding.toolbar.setPadding(
+                toolbarBasePaddingLeft,
+                statusBarHeight,
+                toolbarBasePaddingRight,
+                toolbarBasePaddingBottom
+            )
 
-        ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, insets ->
-            val statusBarInset = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            val params = view.layoutParams as ViewGroup.MarginLayoutParams
-            params.height = baseToolbarHeight + statusBarInset.top
-            view.layoutParams = params
-            view.setPadding(view.paddingLeft, statusBarInset.top, view.paddingRight, view.paddingBottom)
+            // BottomNavigationView must own the navigation-bar safe area instead of
+            // letting the system draw over its labels and touch targets.
+            val bottomParams = binding.bottomNavigation.layoutParams
+            bottomParams.height = bottomBarBaseHeight + navigationBarHeight
+            binding.bottomNavigation.layoutParams = bottomParams
+            binding.bottomNavigation.setPadding(
+                binding.bottomNavigation.paddingLeft,
+                binding.bottomNavigation.paddingTop,
+                binding.bottomNavigation.paddingRight,
+                navigationBarHeight
+            )
+
+            val fabParams = binding.fabUpload.layoutParams as? android.view.ViewGroup.MarginLayoutParams
+            fabParams?.let {
+                it.bottomMargin = fabBaseMarginBottom + navigationBarHeight
+                binding.fabUpload.layoutParams = it
+            }
+
+            binding.recyclerView.setPadding(
+                binding.recyclerView.paddingLeft,
+                binding.recyclerView.paddingTop,
+                binding.recyclerView.paddingRight,
+                bottomBarBaseHeight + navigationBarHeight + (8 * resources.displayMetrics.density).toInt()
+            )
             insets
         }
-        ViewCompat.requestApplyInsets(toolbar)
+        ViewCompat.requestApplyInsets(binding.root)
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) {
-                notificationPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+    private fun cycleDensity() {
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        columnCount = when {
+            landscape -> if (columnCount >= 6) 4 else columnCount + 1
+            else -> if (columnCount >= 4) 2 else columnCount + 1
         }
+        updateGridColumns()
+        Toast.makeText(this, "排列密度：$columnCount 列", Toast.LENGTH_SHORT).show()
     }
 
-    // -------------------- IP 优选 + 手动 IP 支持 + 加载 --------------------
-    private fun startOptimizeAndLoad(forceRefresh: Boolean) {
-        loadingOverlay.visibility = View.VISIBLE
+    private fun showDensitySliderDialog() {
+        val seekBar = SeekBar(this)
+        seekBar.max = 5 // 2到6列
+        seekBar.progress = columnCount - 2
 
-        val manualIp = AppSettings.getManualIp(applicationContext)
-        if (manualIp != null) {
-            // 手动 IP 优先
-            loadingText.text = "准备就绪"
-            currentBestIp = manualIp
-            activityScope.launch {
-                delay(250)
-                loadingOverlay.visibility = View.GONE
-                if (proxyServer == null) {
-                    setupProxyAndLoad(manualIp)
-                } else {
-                    proxyServer?.updateTargetDomain(currentTargetDomain())
-                    proxyServer?.updateTargetIp(manualIp)
-                    webView.reload()
-                }
-            }
-            return
-        }
-
-        loadingText.text = "正在优选IP"
-        activityScope.launch {
-            val result = IpOptimizer.getBestIpSmart(applicationContext, forceRefresh)
-            currentBestIp = result.ip
-
-            loadingText.text = "准备就绪"
-            delay(250)
-            loadingOverlay.visibility = View.GONE
-
-            if (proxyServer == null) {
-                setupProxyAndLoad(currentBestIp)
-            } else {
-                proxyServer?.updateTargetDomain(currentTargetDomain())
-                proxyServer?.updateTargetIp(currentBestIp)
-                webView.reload()
-            }
-        }
-    }
-
-    private fun setupProxyAndLoad(ip: String) {
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
-            proxyServer = LocalProxyServer(currentTargetDomain(), ip).apply { start() }
-
-            val proxyConfig = ProxyConfig.Builder()
-                .addProxyRule("127.0.0.1:${proxyServer!!.port}")
-                .build()
-
-            val executor = Executor { command -> command.run() }
-            ProxyController.getInstance().setProxyOverride(proxyConfig, executor) {
-                webView.loadUrl(currentStartUrl())
-            }
-        } else {
-            webView.loadUrl(currentStartUrl())
-        }
-    }
-
-    // -------------------- 三点菜单 --------------------
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main_menu, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.action_font_size -> { showFontSizeDialog(); true }
-            R.id.action_refresh -> { webView.reload(); true }
-            R.id.action_translate -> { showTranslateSubmenu(); true }
-            R.id.action_copy_link -> { copyCurrentLink(); true }
-            R.id.action_settings -> { showSettingsDialog(); true }
-            else -> super.onOptionsItemSelected(item)
-        }
-    }
-
-    private fun showFontSizeDialog() {
-        val currentZoom = webView.settings.textZoom
-        val checkedIndex = listOf(80, 100, 120, 150, 175)
-            .indexOf(currentZoom).let { if (it == -1) 1 else it }
-
-        AlertDialog.Builder(this)
-            .setTitle("字体大小")
-            .setSingleChoiceItems(arrayOf("小", "标准", "大", "较大", "特大"), checkedIndex) { dialog, which ->
-                webView.settings.textZoom = listOf(80, 100, 120, 150, 175)[which]
-                dialog.dismiss()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("调整排列密度")
+            .setView(seekBar)
+            .setPositiveButton("确定") { _, _ ->
+                columnCount = seekBar.progress + 2
+                updateGridColumns()
+                Toast.makeText(this, "已设置为 $columnCount 列", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("取消", null)
-            .show()
+            .create()
+        dialog.show()
     }
 
-    // -------------------- 复制链接 --------------------
-    private fun copyCurrentLink() {
-        val url = webView.url
-        if (url.isNullOrBlank()) {
-            Toast.makeText(this, "暂无可复制的链接", Toast.LENGTH_SHORT).show()
+    private fun updateGridColumns() {
+        (binding.recyclerView.layoutManager as GridLayoutManager).spanCount = columnCount
+        binding.recyclerView.adapter?.notifyDataSetChanged()
+    }
+
+    private fun handleNavigationItemClick(item: MenuItem) {
+        when (item.itemId) {
+            R.id.nav_forums -> Toast.makeText(this, "论坛", Toast.LENGTH_SHORT).show()
+            R.id.nav_tags -> Toast.makeText(this, "标签", Toast.LENGTH_SHORT).show()
+            R.id.nav_rankings -> Toast.makeText(this, "排行榜", Toast.LENGTH_SHORT).show()
+            R.id.nav_filters -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.FilterActivity::class.java))
+            R.id.nav_galleries -> Toast.makeText(this, "图库", Toast.LENGTH_SHORT).show()
+            R.id.nav_comments -> Toast.makeText(this, "评论", Toast.LENGTH_SHORT).show()
+            R.id.nav_channels -> Toast.makeText(this, "频道", Toast.LENGTH_SHORT).show()
+            R.id.nav_settings -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.SettingsActivity::class.java))
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (startupStarted && !NetworkManager.isReady()) {
+            activityScope.launch {
+                runCatching { NetworkManager.init(applicationContext) }
+            }
+        }
+    }
+
+    private fun showSearchDialog() {
+        val editText = EditText(this)
+        editText.hint = "输入标签搜索（例如 safe, artist:xxx）"
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("搜索")
+            .setView(editText)
+            .setPositiveButton("搜索") { _, _ ->
+                val query = editText.text.toString().trim()
+                if (query.isNotEmpty()) activityScope.launch { loadPage(1, query, append = false) }
+            }
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.show()
+    }
+
+    private suspend fun loadRealImages() {
+        binding.progressBar.visibility = View.VISIBLE
+        val json = withContext(Dispatchers.IO) {
+                NetworkManager.getApi(this@MainActivity, "search/images?q=safe&per_page=20&sf=created_at&sd=desc")
+        }
+
+        if (json.isNullOrBlank()) {
+            Log.e("MainActivity", "API 返回内容为空")
+            Toast.makeText(this, "API 请求失败：返回内容为空", Toast.LENGTH_SHORT).show()
+            loadMockImages()
+            binding.progressBar.visibility = View.GONE
             return
         }
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("link", url))
-        Toast.makeText(this, "链接已复制", Toast.LENGTH_SHORT).show()
-    }
 
-    // -------------------- 翻译注入 --------------------
-    private fun injectTranslateScriptEarlyOnce() {
-        if (translateInjected) return
-        translateInjected = true
+        Log.d("MainActivity", "API 返回 JSON（前 500 字符）: ${json.take(500)}")
 
         try {
-            val script = translateScriptCache ?: assets.open("translate.js")
-                .bufferedReader().use { it.readText() }
-                .also { translateScriptCache = it }
-
-            val rulesPayload = StaticRuleManager.getRulesPayloadJson(applicationContext)
-            val selectorsJson = DynamicSelectorManager.getSelectorsJson(applicationContext)
-            val autoEnabled = isAutoStaticTranslateEnabled()
-
-            val initScript = """
-                (function() {
-                    window.__setStaticRules && window.__setStaticRules(${JSONObject.quote(rulesPayload)});
-                    window.__setDynamicSelectors && window.__setDynamicSelectors(${JSONObject.quote(selectorsJson)});
-                    window.__bootstrapAutoStatic && window.__bootstrapAutoStatic($autoEnabled);
-                })();
-            """.trimIndent()
-
-            webView.evaluateJavascript(script + "\n" + initScript, null)
+            val images = parseImages(json)
+            if (images.isNotEmpty()) {
+                allImages = images
+                currentImages = images
+                adapter.updateData(images)
+                Toast.makeText(this, "加载成功：${images.size} 张图片", Toast.LENGTH_SHORT).show()
+            } else {
+                Log.w("MainActivity", "解析成功但图片列表为空")
+                Toast.makeText(this, "没有找到图片", Toast.LENGTH_SHORT).show()
+                loadMockImages()
+            }
         } catch (e: Exception) {
-            Toast.makeText(this, "翻译脚本加载失败：${e.message}", Toast.LENGTH_LONG).show()
+            Log.e("MainActivity", "解析 API 数据失败", e)
+            Toast.makeText(this, "API 请求失败：解析错误 ${e.message}", Toast.LENGTH_SHORT).show()
+            loadMockImages()
+        }
+        binding.progressBar.visibility = View.GONE
+    }
+
+    private suspend fun loadPage(targetPage: Int, query: String, append: Boolean) {
+        if (loading) return
+        loading = true
+        binding.progressBar.visibility = View.VISIBLE
+        try {
+            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val filterParam = AppSettings.getCurrentFilterId(this@MainActivity)?.let { "&filter_id=$it" } ?: ""
+            val json = withContext(Dispatchers.IO) {
+                NetworkManager.getApi(this@MainActivity, "search/images?q=$encoded&per_page=30&page=$targetPage&sf=created_at&sd=desc$filterParam")
+            }
+            val images = json?.let { parseImages(it) }.orEmpty()
+            if (!append) {
+                page = 1; currentQuery = query; allImages = images; currentImages = images
+                adapter.updateData(images)
+            } else if (images.isNotEmpty()) {
+                page = targetPage; allImages = allImages + images; currentImages = allImages; adapter.updateData(allImages)
+            }
+            if (images.isEmpty() && !append) Toast.makeText(this, "没有找到匹配图片", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "加载图片失败", e)
+            if (!append) Toast.makeText(this, "网络异常，请稍后重试", Toast.LENGTH_SHORT).show()
+        } finally {
+            loading = false; binding.progressBar.visibility = View.GONE
         }
     }
 
-    private fun isAutoStaticTranslateEnabled(): Boolean {
-        return getSharedPreferences(TRANSLATE_PREFS, MODE_PRIVATE)
-            .getBoolean(KEY_AUTO_STATIC_TRANSLATE, false)
-    }
+    private fun parseImages(json: String): List<Image> {
+        val root = JSONObject(json)
+        val imagesArray = root.optJSONArray("images")
+        if (imagesArray == null) {
+            Log.e("MainActivity", "返回 JSON 中没有 images 数组")
+            return emptyList()
+        }
+        val result = mutableListOf<Image>()
+        for (i in 0 until imagesArray.length()) {
+            val obj = imagesArray.getJSONObject(i)
+            val id = obj.optInt("id", -1)
+            val width = obj.optInt("width", 0)
+            val height = obj.optInt("height", 0)
+            val score = obj.optInt("score", 0)
+            val faves = obj.optInt("faves", 0)
+            val upvotes = obj.optInt("upvotes", 0)
+            val downvotes = obj.optInt("downvotes", 0)
+            val commentCount = obj.optInt("comment_count", 0)
 
-    private fun showTranslateSubmenu() {
-        val prefs = getSharedPreferences(TRANSLATE_PREFS, MODE_PRIVATE)
-        val autoEnabled = prefs.getBoolean(KEY_AUTO_STATIC_TRANSLATE, false)
-
-        val options = arrayOf(
-            "翻译评论/动态内容",
-            "恢复动态内容原文",
-            if (autoEnabled) "关闭全站本地静态翻译" else "开启全站本地静态翻译",
-            "立即更新翻译规则"
-        )
-
-        AlertDialog.Builder(this)
-            .setTitle("翻译")
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> webView.evaluateJavascript(
-                        "window.__pageTranslator && window.__pageTranslator.runDynamic();", null
-                    )
-                    1 -> webView.evaluateJavascript(
-                        "window.__pageTranslator && window.__pageTranslator.revertDynamic();", null
-                    )
-                    2 -> {
-                        val newVal = !autoEnabled
-                        prefs.edit().putBoolean(KEY_AUTO_STATIC_TRANSLATE, newVal).apply()
-                        if (newVal) {
-                            webView.evaluateJavascript(
-                                "window.__pageTranslator && window.__pageTranslator.runStatic();", null
-                            )
-                            Toast.makeText(this, "已开启：进入页面自动本地翻译静态内容", Toast.LENGTH_SHORT).show()
-                        } else {
-                            webView.evaluateJavascript(
-                                "window.__pageTranslator && window.__pageTranslator.stopStaticWatch();", null
-                            )
-                            Toast.makeText(this, "静态翻译已关闭，刷新页面后完全生效", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                    3 -> activityScope.launch {
-                        StaticRuleManager.syncIfNeeded(applicationContext, force = true)
-                        DynamicSelectorManager.syncIfNeeded(applicationContext, force = true)
-                        Toast.makeText(this@MainActivity, "翻译规则已更新", Toast.LENGTH_SHORT).show()
-                    }
+            val tagsArray = obj.optJSONArray("tags")
+            val tags = mutableListOf<String>()
+            if (tagsArray != null) {
+                for (j in 0 until tagsArray.length()) {
+                    tags.add(tagsArray.optString(j, ""))
                 }
             }
-            .show()
+
+            val representations = obj.optJSONObject("representations")
+            val thumbnailUrl = (if (AppSettings.isHighResolution(this)) representations?.optString("medium", null) else representations?.optString("small", null))
+                ?: representations?.optString("small", null)
+                ?: representations?.optString("thumb", null)
+
+            result.add(
+                Image(
+                    id = id,
+                    title = "",
+                    thumbnailUrl = thumbnailUrl,
+                    width = width,
+                    height = height,
+                    score = score,
+                    faves = faves,
+                    upvotes = upvotes,
+                    downvotes = downvotes,
+                    commentCount = commentCount,
+                    tags = tags,
+                    fullUrl = representations?.optString("full", null),
+                    uploader = obj.optString("uploader", null),
+                    createdAt = obj.optString("created_at", null),
+                    description = obj.optString("description", null)
+                )
+            )
+        }
+        return result
     }
 
-    // -------------------- 设置面板 --------------------
-    private fun showSettingsDialog() {
-        val view = layoutInflater.inflate(R.layout.dialog_settings, null)
-        val ipText = view.findViewById<TextView>(R.id.settings_current_ip)
-        val refreshBtn = view.findViewById<Button>(R.id.settings_refresh_btn)
-        val advancedBtn = view.findViewById<Button>(R.id.settings_advanced_btn)
-
-        ipText.text = "当前节点 IP：${currentBestIp.ifBlank { "获取中..." }}"
-
-        val dialog = AlertDialog.Builder(this)
-            .setView(view)
-            .setPositiveButton("关闭", null)
-            .create()
-
-        refreshBtn.setOnClickListener {
-            dialog.dismiss()
-            startOptimizeAndLoad(forceRefresh = true)
-        }
-
-        advancedBtn.setOnClickListener {
-            dialog.dismiss()
-            showAdvancedSettingsDialog()
-        }
-
-        dialog.show()
+    private fun loadMockImages() {
+        val mock = listOf(
+            Image(
+                id = 3862014,
+                title = "",
+                thumbnailUrl = null,
+                width = 1080,
+                height = 1440,
+                score = 1098,
+                faves = 734,
+                upvotes = 1103,
+                downvotes = 5,
+                commentCount = 28,
+                tags = listOf("safe", "artist:anoraknr", "gif")
+            ),
+            Image(
+                id = 3862015,
+                title = "",
+                thumbnailUrl = null,
+                width = 1600,
+                height = 900,
+                score = 520,
+                faves = 312,
+                upvotes = 550,
+                downvotes = 30,
+                commentCount = 15,
+                tags = listOf("safe", "rainbow dash")
+            )
+        )
+        allImages = mock
+        currentImages = mock
+        adapter.updateData(mock)
     }
 
-    private fun showAdvancedSettingsDialog() {
-        val view = layoutInflater.inflate(R.layout.dialog_advanced_settings, null)
-        val siteRadioGroup = view.findViewById<RadioGroup>(R.id.site_radio_group)
-        val radioDerpibooru = view.findViewById<RadioButton>(R.id.radio_derpibooru)
-        val radioTrixiebooru = view.findViewById<RadioButton>(R.id.radio_trixiebooru)
-        val manualIpInput = view.findViewById<EditText>(R.id.manual_ip_input)
-        val manualIpSaveBtn = view.findViewById<Button>(R.id.manual_ip_save_btn)
-        val manualIpClearBtn = view.findViewById<Button>(R.id.manual_ip_clear_btn)
-        val cacheSizeText = view.findViewById<TextView>(R.id.cache_size_text)
-        val clearCacheBtn = view.findViewById<Button>(R.id.clear_cache_btn)
-
-        // 初始化站点选择
-        when (AppSettings.getSelectedSite(applicationContext)) {
-            AppSettings.Site.DERPIBOORU -> radioDerpibooru.isChecked = true
-            AppSettings.Site.TRIXIEBOORU -> radioTrixiebooru.isChecked = true
-        }
-
-        manualIpInput.setText(AppSettings.getManualIp(applicationContext) ?: "")
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("高级设置")
-            .setView(view)
-            .setPositiveButton("关闭", null)
-            .create()
-
-        siteRadioGroup.setOnCheckedChangeListener { _, checkedId ->
-            val newSite = if (checkedId == R.id.radio_trixiebooru) {
-                AppSettings.Site.TRIXIEBOORU
-            } else {
-                AppSettings.Site.DERPIBOORU
-            }
-            if (newSite != AppSettings.getSelectedSite(applicationContext)) {
-                AppSettings.setSelectedSite(applicationContext, newSite)
-                Toast.makeText(this, "已切换到 ${newSite.displayName}，正在重新加载", Toast.LENGTH_SHORT).show()
-                dialog.dismiss()
-                startOptimizeAndLoad(forceRefresh = false)
-            }
-        }
-
-        manualIpSaveBtn.setOnClickListener {
-            val ip = manualIpInput.text.toString().trim()
-            if (ip.isBlank()) {
-                Toast.makeText(this, "请输入 IP 地址", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            if (!AppSettings.isValidIpFormat(ip)) {
-                Toast.makeText(this, "IP 格式不正确", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            AppSettings.setManualIp(applicationContext, ip)
-            Toast.makeText(this, "已保存，正在使用该 IP 重新加载", Toast.LENGTH_SHORT).show()
-            dialog.dismiss()
-            startOptimizeAndLoad(forceRefresh = false)
-        }
-
-        manualIpClearBtn.setOnClickListener {
-            AppSettings.setManualIp(applicationContext, null)
-            manualIpInput.setText("")
-            Toast.makeText(this, "已恢复自动优选", Toast.LENGTH_SHORT).show()
-            dialog.dismiss()
-            startOptimizeAndLoad(forceRefresh = true)
-        }
-
-        // 异步计算当前缓存大小
-        activityScope.launch {
-            val size = CacheManager.calculateCacheSize(applicationContext)
-            cacheSizeText.text = "当前缓存：${CacheManager.formatSize(size)}"
-        }
-
-        clearCacheBtn.setOnClickListener {
-            clearCacheBtn.isEnabled = false
-            activityScope.launch {
-                val freed = CacheManager.clearCache(applicationContext, webView)
-                cacheSizeText.text = "当前缓存：0 B"
-                clearCacheBtn.isEnabled = true
-                Toast.makeText(
-                    this@MainActivity,
-                    "已清除缓存，释放 ${CacheManager.formatSize(freed)}",
-                    Toast.LENGTH_SHORT
-                ).show()
-                // 重新同步翻译规则和动态选择器
-                StaticRuleManager.syncIfNeeded(applicationContext, force = true)
-                DynamicSelectorManager.syncIfNeeded(applicationContext, force = true)
-            }
-        }
-
-        dialog.show()
+    private fun updateStartup(status: String, detail: String) {
+        binding.startupStatus.text = status
+        binding.startupDetail.text = detail
     }
 
     override fun onDestroy() {
         activityJob.cancel()
-        translateBridge?.destroy()
-        fileChooserCallback?.onReceiveValue(null)
-        fileChooserCallback = null
-        CookieManager.getInstance().flush()
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
-            ProxyController.getInstance().clearProxyOverride({ it.run() }) {}
-        }
-        proxyServer?.stop()
+        NetworkManager.shutdown()
         super.onDestroy()
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            @Suppress("DEPRECATION")
-            super.onBackPressed()
-        }
     }
 }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <group android:id="@+id/group_browse" android:checkableBehavior="single">
+        <item android:id="@+id/nav_tags" android:title="标签" android:icon="@drawable/ic_search" />
+        <item android:id="@+id/nav_filters" android:title="过滤器" android:icon="@drawable/ic_filter" />
+        <item android:id="@+id/nav_galleries" android:title="图库" android:icon="@drawable/ic_image" />
+        <item android:id="@+id/nav_rankings" android:title="排行榜" android:icon="@drawable/ic_arrow_up" />
+        <item android:id="@+id/nav_comments" android:title="全站评论" android:icon="@drawable/ic_comment" />
+        <item android:id="@+id/nav_forums" android:title="论坛" android:icon="@drawable/ic_comment" />
+        <item android:id="@+id/nav_channels" android:title="频道" android:icon="@drawable/ic_grid" />
+    </group>
+    <item android:id="@+id/nav_settings" android:title="设置" android:icon="@drawable/ic_settings" />
+</menu>

@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Derpibooru"
+rootProject.name = "DerpiViewer"
 include(":app")

@@ -1,5 +1,6 @@
 package com.kerybotu.derpibooru.mirror
 
+import android.util.Log
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -84,20 +85,27 @@ class LocalProxyServer(
         val host = hostPort.substringBefore(":")
         val portNum = hostPort.substringAfter(":", "443").toIntOrNull() ?: 443
 
+        Log.d("LocalProxyServer", "CONNECT 请求: $hostPort")
+
         while (true) {
             val line = readLine(clientIn) ?: break
             if (line.isEmpty()) break
         }
 
         val connectHost = if (host.equals(targetDomain, ignoreCase = true)) preferredIp else host
+        Log.d("LocalProxyServer", "目标主机: $host, 连接 IP: $connectHost, 端口: $portNum")
 
         val remote = Socket()
         try {
             remote.connect(InetSocketAddress(connectHost, portNum), 10000)
+            Log.d("LocalProxyServer", "远程连接成功: $connectHost:$portNum")
         } catch (e: Exception) {
+            Log.e("LocalProxyServer", "远程连接失败: $connectHost:$portNum", e)
             try {
                 remote.connect(InetSocketAddress(host, portNum), 10000)
+                Log.d("LocalProxyServer", "备用连接成功: $host:$portNum")
             } catch (e2: Exception) {
+                Log.e("LocalProxyServer", "备用连接也失败: $host:$portNum", e2)
                 try {
                     clientOut.write("HTTP/1.1 502 Bad Gateway\r\n\r\n".toByteArray())
                 } catch (_: Exception) {}

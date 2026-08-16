@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/tab_home" android:icon="@drawable/ic_home" android:title="首页" />
+    <item android:id="@+id/tab_search" android:icon="@drawable/ic_search" android:title="搜索" />
+    <item android:id="@+id/tab_upload" android:icon="@drawable/ic_arrow_up" android:title="上传" />
+    <item android:id="@+id/tab_messages" android:icon="@drawable/ic_comment" android:title="消息" />
+    <item android:id="@+id/tab_profile" android:icon="@drawable/ic_account_box" android:title="我的" />
+</menu>

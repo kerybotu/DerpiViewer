@@ -4,20 +4,26 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
+import kotlin.random.Random
 
 /**
  * 负责获取 Cloudflare 优选 IP 列表并做测速优选。
  *
- * 两层缓存：
- * - IP 列表缓存 1 小时（省 Worker 请求配额）
- * - 测速结果缓存 5 分钟（短时间内重复启动 App，直接复用上次优选结果，跳过测速动画）
- * - Worker 请求失败时回退到预编码的兜底列表，保证任何情况下都能启动
+ * 候选来源（合并去重后统一测速）：
+ * 1. Worker 提供的列表（1 小时缓存）
+ * 2. Cloudflare 官方 IP 段 API 随机采样（24 小时缓存，每次候选重新随机采样）
+ * 3. 本地预编码兜底列表（Worker 完全不可用时使用）
+ *
+ * 测速结果缓存 5 分钟，短时间内重复启动直接复用。
  */
 object IpOptimizer {
 
@@ -33,8 +39,15 @@ object IpOptimizer {
 
     private const val WORKER_URL = "https://cloudflarecdnip.495648.xyz/"
 
+    // -------------------- Cloudflare 官方 IP 段数据源 --------------------
+    private const val CF_IPS_API_URL = "https://api.cloudflare.com/client/v4/ips"
+    private const val KEY_CF_CIDRS = "cf_cidrs_cache"
+    private const val KEY_CF_FETCH_TIME = "cf_cidrs_fetch_time"
+    private const val CF_CACHE_TTL_MS = 24 * 60 * 60 * 1000L // CIDR 列表几乎不变，缓存 24 小时
+    private const val CF_SAMPLE_PER_CIDR = 4 // 每个网段随机采样的 IP 数量
+    private const val CF_MAX_SAMPLED_IPS = 60 // 采样总数上限，防止候选爆炸
+
     // ================= Worker 挂掉时的兜底列表（预编码）=================
-    // 建议定期手动从 Worker 拉一次最新结果，同步更新这份列表
     private val FALLBACK_IP_LIST = listOf(
         "172.67.102.229",
         "104.24.169.89",
@@ -241,15 +254,11 @@ object IpOptimizer {
     // ====================================================================
 
     private const val CONNECT_TIMEOUT_MS = 1200
-    private const val OVERALL_TIMEOUT_MS = 3000L
+    private const val OVERALL_TIMEOUT_MS = 8000L // 候选池扩大，总超时适当放宽
+    private const val MAX_CONCURRENT_TESTS = 20 // 并发测速上限，避免资源耗尽
 
-    /** didOptimize=false 表示命中了 5 分钟短缓存，未真正重新测速 */
     data class OptimizeResult(val ip: String, val didOptimize: Boolean)
 
-    /**
-     * 唯一对外入口。
-     * @param forceRefresh 手动"重新优选"时传 true，跳过所有缓存强制刷新
-     */
     suspend fun getBestIpSmart(context: Context, forceRefresh: Boolean = false): OptimizeResult {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -262,24 +271,10 @@ object IpOptimizer {
             }
         }
 
-        val ipList = getIpList(context, forceRefresh)
-
-        // 阶段一：原有的纯 TCP 测速排序，逻辑完全不变
-        val rankedByLatency = speedTestRanked(ipList, 443)
-        val fastest = rankedByLatency.firstOrNull() ?: ipList.firstOrNull() ?: FALLBACK_IP_LIST.first()
-
-        // 阶段二（新增，最小化改动）：只对"测速最快的这一个"做一次真实验证，
-        // 不并发、不批量、只此一次，行为上等同于用户正常打开一次网页，
-        // 避免像之前那样对多个陌生 IP 发起密集连接触发风控。
-        // 如果这一个验证失败（1034），退而求其次换下一个候选，最多再试 1 次，到此为止不再继续。
-        val best = withContext(Dispatchers.IO) {
-            if (validateSingleIp(fastest)) {
-                fastest
-            } else {
-                val second = rankedByLatency.getOrNull(1)
-                if (second != null && validateSingleIp(second)) second else fastest
-            }
-        }
+        val candidatePool = buildCandidatePool(context, forceRefresh)
+        val best = speedTest(candidatePool, 443)
+            ?: candidatePool.firstOrNull()
+            ?: FALLBACK_IP_LIST.first()
 
         prefs.edit()
             .putString(KEY_LAST_BEST_IP, best)
@@ -289,7 +284,22 @@ object IpOptimizer {
         return OptimizeResult(best, didOptimize = true)
     }
 
-    // -------------------- IP 列表获取（缓存 + Worker + 兜底） --------------------
+    /**
+     * 合并三类来源，去重后返回统一候选池：
+     * Worker 列表 + Cloudflare 官方网段随机采样 + 本地兜底列表
+     */
+    private suspend fun buildCandidatePool(context: Context, forceRefresh: Boolean): List<String> {
+        val workerList = getIpList(context, forceRefresh)
+        val cfSampled = getCloudflareSampledIps(context, forceRefresh)
+
+        val merged = LinkedHashSet<String>()
+        merged.addAll(workerList)
+        merged.addAll(cfSampled)
+        merged.addAll(FALLBACK_IP_LIST)
+        return merged.toList()
+    }
+
+    // -------------------- IP 列表获取（Worker，缓存 + 兜底） --------------------
 
     private suspend fun getIpList(context: Context, forceRefresh: Boolean): List<String> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -319,7 +329,7 @@ object IpOptimizer {
             if (list.isNotEmpty()) return list
         }
 
-        return FALLBACK_IP_LIST
+        return emptyList() // Worker 彻底不可用时返回空列表，最终仍有 CF 采样 + FALLBACK_IP_LIST 兜底
     }
 
     private suspend fun fetchFromWorker(): List<String> = withContext(Dispatchers.IO) {
@@ -329,14 +339,11 @@ object IpOptimizer {
                 conn.connectTimeout = 3000
                 conn.readTimeout = 3000
                 conn.requestMethod = "GET"
-
                 val code = conn.responseCode
                 if (code == 200) {
                     val text = conn.inputStream.bufferedReader().use { it.readText() }
                     conn.disconnect()
-                    text.lines()
-                        .map { it.trim() }
-                        .filter { it.isNotBlank() && isValidIp(it) }
+                    text.lines().map { it.trim() }.filter { it.isNotBlank() && isValidIp(it) }
                 } else {
                     conn.disconnect()
                     emptyList()
@@ -354,22 +361,168 @@ object IpOptimizer {
         return parts.all { it.toIntOrNull()?.let { n -> n in 0..255 } == true }
     }
 
-    // -------------------- 并发测速优选 --------------------
+    // -------------------- Cloudflare 官方 IP 段：拉取 + 缓存 + 随机采样 --------------------
 
-    private suspend fun speedTestRanked(ipList: List<String>, port: Int): List<String> =
+    /**
+     * 获取 Cloudflare 官方 IPv4 CIDR 段列表（24 小时缓存），
+     * 并从每个网段随机采样若干 IP 作为额外候选。
+     * API 请求失败时静默返回空列表，不影响其它数据源正常工作。
+     */
+    private suspend fun getCloudflareSampledIps(context: Context, forceRefresh: Boolean): List<String> {
+        val cidrs = getCloudflareCidrs(context, forceRefresh)
+        if (cidrs.isEmpty()) return emptyList()
+
+        val sampled = mutableListOf<String>()
+        for (cidr in cidrs) {
+            val perCidr = sampleRandomIpsInCidr(cidr, CF_SAMPLE_PER_CIDR)
+            sampled.addAll(perCidr)
+            if (sampled.size >= CF_MAX_SAMPLED_IPS) break
+        }
+        return sampled.take(CF_MAX_SAMPLED_IPS)
+    }
+
+    private suspend fun getCloudflareCidrs(context: Context, forceRefresh: Boolean): List<String> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val lastFetchTime = prefs.getLong(KEY_CF_FETCH_TIME, 0L)
+
+        if (!forceRefresh && now - lastFetchTime < CF_CACHE_TTL_MS) {
+            val cached = prefs.getString(KEY_CF_CIDRS, null)
+            if (!cached.isNullOrBlank()) {
+                val list = cached.split(",").filter { it.isNotBlank() }
+                if (list.isNotEmpty()) return list
+            }
+        }
+
+        val fetched = fetchCloudflareCidrsFromApi()
+        if (fetched.isNotEmpty()) {
+            prefs.edit()
+                .putString(KEY_CF_CIDRS, fetched.joinToString(","))
+                .putLong(KEY_CF_FETCH_TIME, now)
+                .apply()
+            return fetched
+        }
+
+        // API 请求失败：用旧缓存兜底（哪怕过期），实在没有就返回空列表，
+        // 不影响 Worker 列表 + 本地兜底列表继续正常工作
+        val staleCache = prefs.getString(KEY_CF_CIDRS, null)
+        if (!staleCache.isNullOrBlank()) {
+            return staleCache.split(",").filter { it.isNotBlank() }
+        }
+        return emptyList()
+    }
+
+    private suspend fun fetchCloudflareCidrsFromApi(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            withTimeoutOrNull(5000L) {
+                val conn = URL(CF_IPS_API_URL).openConnection() as HttpURLConnection
+                conn.connectTimeout = 4000
+                conn.readTimeout = 4000
+                conn.requestMethod = "GET"
+                val code = conn.responseCode
+                if (code == 200) {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    conn.disconnect()
+                    parseIpv4CidrsFromResponse(text)
+                } else {
+                    conn.disconnect()
+                    emptyList()
+                }
+            } ?: emptyList()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    private fun parseIpv4CidrsFromResponse(json: String): List<String> {
+        return try {
+            val root = JSONObject(json)
+            if (!root.optBoolean("success", false)) return emptyList()
+            val result = root.optJSONObject("result") ?: return emptyList()
+            val cidrsArray = result.optJSONArray("ipv4_cidrs") ?: return emptyList()
+            (0 until cidrsArray.length()).map { cidrsArray.getString(it) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    /**
+     * 从形如 "104.16.0.0/13" 的 CIDR 网段中，随机采样 count 个可用 IP。
+     * 排除网络地址和广播地址（首尾各留一个），避免采样到无效地址。
+     */
+    private fun sampleRandomIpsInCidr(cidr: String, count: Int): List<String> {
+        return try {
+            val parts = cidr.split("/")
+            if (parts.size != 2) return emptyList()
+            val baseIp = ipToLong(parts[0]) ?: return emptyList()
+            val prefixLen = parts[1].toIntOrNull() ?: return emptyList()
+            if (prefixLen !in 0..32) return emptyList()
+
+            val hostBits = 32 - prefixLen
+            val rangeSize = if (hostBits >= 31) 1L else (1L shl hostBits)
+
+            // 网段太小（/31、/32）直接返回网络地址本身；否则排除首尾，在中间随机采样
+            if (rangeSize <= 2) {
+                return listOf(longToIp(baseIp))
+            }
+
+            val usableStart = baseIp + 1
+            val usableEnd = baseIp + rangeSize - 2
+            val usableCount = usableEnd - usableStart + 1
+            if (usableCount <= 0) return emptyList()
+
+            val actualCount = minOf(count.toLong(), usableCount).toInt()
+            val results = LinkedHashSet<String>()
+            var attempts = 0
+            while (results.size < actualCount && attempts < actualCount * 5) {
+                val offset = Random.nextLong(0, usableCount)
+                val candidate = usableStart + offset
+                results.add(longToIp(candidate))
+                attempts++
+            }
+            results.toList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun ipToLong(ip: String): Long? {
+        val parts = ip.trim().split(".")
+        if (parts.size != 4) return null
+        var result = 0L
+        for (part in parts) {
+            val n = part.toIntOrNull() ?: return null
+            if (n !in 0..255) return null
+            result = (result shl 8) or n.toLong()
+        }
+        return result
+    }
+
+    private fun longToIp(value: Long): String {
+        return "${(value shr 24) and 0xFF}.${(value shr 16) and 0xFF}.${(value shr 8) and 0xFF}.${value and 0xFF}"
+    }
+
+    // -------------------- 并发测速优选（限制并发，避免资源耗尽） --------------------
+
+    private suspend fun speedTest(ipList: List<String>, port: Int): String? =
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
+                val semaphore = Semaphore(MAX_CONCURRENT_TESTS)
                 val deferredResults = ipList.map { ip ->
                     async {
-                        val latency = measureTcpConnectLatency(ip, port)
-                        ip to latency
+                        semaphore.withPermit {
+                            val latency = measureTcpConnectLatency(ip, port)
+                            ip to latency
+                        }
                     }
                 }
                 deferredResults.awaitAll()
                     .filter { it.second >= 0 }
-                    .sortedBy { it.second }
-                    .map { it.first }
-            } ?: emptyList()
+                    .minByOrNull { it.second }
+                    ?.first
+            }
         }
 
     private fun measureTcpConnectLatency(ip: String, port: Int): Long {
@@ -381,55 +534,6 @@ object IpOptimizer {
             System.currentTimeMillis() - start
         } catch (e: Exception) {
             -1L
-        }
-    }
-
-    // -------------------- 单 IP 真实验证（新增，仅验证最终候选，不做批量） --------------------
-
-    private const val TARGET_DOMAIN_FOR_VALIDATION = "derpibooru.org"
-
-    private fun validateSingleIp(ip: String): Boolean {
-        var rawSocket: java.net.Socket? = null
-        var sslSocket: javax.net.ssl.SSLSocket? = null
-        return try {
-            rawSocket = java.net.Socket()
-            rawSocket.connect(InetSocketAddress(ip, 443), 4000)
-            rawSocket.soTimeout = 4000
-
-            val factory = javax.net.ssl.SSLSocketFactory.getDefault() as javax.net.ssl.SSLSocketFactory
-            sslSocket = factory.createSocket(rawSocket, TARGET_DOMAIN_FOR_VALIDATION, 443, true) as javax.net.ssl.SSLSocket
-            sslSocket.soTimeout = 4000
-            sslSocket.startHandshake()
-
-            val out = sslSocket.outputStream
-            val request = "GET / HTTP/1.1\r\n" +
-                    "Host: $TARGET_DOMAIN_FOR_VALIDATION\r\n" +
-                    "User-Agent: Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36\r\n" +
-                    "Connection: close\r\n\r\n"
-            out.write(request.toByteArray(Charsets.UTF_8))
-            out.flush()
-
-            val reader = java.io.BufferedReader(java.io.InputStreamReader(sslSocket.inputStream))
-            val statusLine = reader.readLine() ?: return false
-            val statusCode = statusLine.split(" ").getOrNull(1)?.toIntOrNull() ?: return false
-
-            // 读完响应体再关闭，避免半截断开的异常流量特征
-            try {
-                val buffer = CharArray(2048)
-                var totalRead = 0
-                while (totalRead < 65536) {
-                    val n = reader.read(buffer)
-                    if (n == -1) break
-                    totalRead += n
-                }
-            } catch (_: Exception) {}
-
-            statusCode != 530
-        } catch (e: Exception) {
-            false
-        } finally {
-            try { sslSocket?.close() } catch (_: Exception) {}
-            try { rawSocket?.close() } catch (_: Exception) {}
         }
     }
 }
