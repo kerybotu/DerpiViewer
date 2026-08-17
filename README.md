@@ -1,4 +1,4 @@
-# DerpibooruMobile
+# DerpiViewer
 
 一款基于 Derpibooru API 的 Derpibooru 第三方客户端，通过 Cloudflare 优选 IP 绕过 DNS 污染，并内置翻译、下载、文件上传等增强功能。
 
