@@ -1,6 +1,8 @@
 # DerpibooruMobile
 
-一款基于 Android WebView 的 Derpibooru 镜像浏览器，通过 Cloudflare 优选 IP 绕过 DNS 污染，并内置翻译、下载、文件上传等增强功能。
+一款基于 Derpibooru API 的 Derpibooru 第三方客户端，通过 Cloudflare 优选 IP 绕过 DNS 污染，并内置翻译、下载、文件上传等增强功能。
+
+（懒得改了）
 
 ## 功能特性
 
