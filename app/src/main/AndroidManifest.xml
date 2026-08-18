@@ -37,7 +37,31 @@
             android:name=".ui.SettingsActivity"
             android:exported="false" />
         <activity
+            android:name=".auth.LoginActivity"
+            android:exported="false" />
+        <activity
+            android:name=".network.ChallengeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.DerpiViewer" />
+        <activity
             android:name=".ui.FilterActivity"
             android:exported="false" />
+        <activity
+            android:name=".ui.VideoFeedActivity"
+            android:exported="false"
+            android:theme="@style/Theme.DerpiViewer.FullScreen" />
+        <activity
+            android:name=".ui.FeaturedActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.SearchActivity"
+            android:exported="false" />
+        <activity android:name=".ui.TagSearchActivity" android:exported="false" />
+        <activity android:name=".ui.RecentCommentsActivity" android:exported="false" />
+        <activity android:name=".ui.ForumActivity" android:exported="false" />
+        <activity android:name=".ui.GalleryActivity" android:exported="false" />
+        <activity android:name=".ui.DownloadManagerActivity" android:exported="false" />
+        <activity android:name=".ui.FavoritesActivity" android:exported="false" />
+        <activity android:name=".network.DeepOptimizeActivity" android:exported="false" />
     </application>
 </manifest>

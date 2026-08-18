@@ -22,8 +22,12 @@ import com.google.android.material.navigation.NavigationView
 import com.kerybotu.derpibooru.mirror.databinding.ActivityMainBinding
 import com.kerybotu.derpibooru.mirror.model.Image
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
+import com.kerybotu.derpibooru.mirror.network.ResourceCoordinator
 import com.kerybotu.derpibooru.mirror.ui.ImageAdapter
 import com.kerybotu.derpibooru.mirror.ui.ImageDetailActivity
+import com.kerybotu.derpibooru.mirror.ui.FilterCache
+import com.kerybotu.derpibooru.mirror.ui.CdnImageGate
+import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,19 +40,26 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var adapter: ImageAdapter
+    private lateinit var drawerToggle: ActionBarDrawerToggle
 
     private var allImages: List<Image> = emptyList()
     private var currentImages: List<Image> = emptyList()
     private var columnCount = 2 // 默认竖屏2列
     private var page = 1
-    private var currentQuery = "safe"
+    private var currentQuery = "*"
+    private var currentSort = "created_at"
     private var loading = false
     private var startupStarted = false
+    private var appliedFilterId: Int? = null
+    private var lastPrefetchedFrom = -1
     private var toolbarBasePaddingLeft = 0
     private var toolbarBasePaddingRight = 0
     private var toolbarBasePaddingBottom = 0
     private var bottomBarBaseHeight = 0
     private var fabBaseMarginBottom = 0
+    private var homeLoadJob: Job? = null
+    private var featuredPanel: com.kerybotu.derpibooru.mirror.ui.FeaturedPanel? = null
+    private var lastPaletteSignature: String? = null
 
     private val activityJob = Job()
     private val activityScope = CoroutineScope(Dispatchers.Main + activityJob)
@@ -58,6 +69,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         PaletteManager.apply(this)
+        lastPaletteSignature = paletteSignature()
+        applyStartupPalette()
 
         // 处理状态栏与顶栏重叠问题
         applyWindowInsets()
@@ -67,30 +80,37 @@ class MainActivity : AppCompatActivity() {
         binding.bottomNavigation.setOnItemSelectedListener { item ->
             binding.bottomNavigation.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
             when (item.itemId) {
-                R.id.tab_home -> true
-                R.id.tab_search -> { showSearchDialog(); false }
-                R.id.tab_upload -> { Toast.makeText(this, "上传功能即将开放", Toast.LENGTH_SHORT).show(); false }
+                R.id.tab_home -> {
+                    resetHomeAndRefresh()
+                    true
+                }
+                R.id.tab_video_feed -> { clearSelectionState(); startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.VideoFeedActivity::class.java)); false }
+                R.id.tab_featured -> {
+                    clearSelectionState()
+                    showFeaturedContent()
+                    true
+                }
                 R.id.tab_messages -> { Toast.makeText(this, "暂无未读消息", Toast.LENGTH_SHORT).show(); false }
-                R.id.tab_profile -> { startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.ProfileActivity::class.java)); false }
+                R.id.tab_profile -> { clearSelectionState(); startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.ProfileActivity::class.java)); false }
                 else -> false
             }
         }
-        binding.fabUpload.setOnClickListener {
-            it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
-            Toast.makeText(this, "上传功能即将开放", Toast.LENGTH_SHORT).show()
+        binding.bottomNavigation.setOnItemReselectedListener { item ->
+            if (item.itemId == R.id.tab_home) resetHomeAndRefresh()
         }
+        configureUploadFab()
 
         // 初始化 DrawerLayout 和侧滑菜单
         drawerLayout = binding.drawerLayout
-        val toggle = ActionBarDrawerToggle(
+        drawerToggle = ActionBarDrawerToggle(
             this,
             drawerLayout,
             binding.toolbar,
             R.string.navigation_drawer_open,
             R.string.navigation_drawer_close
         )
-        drawerLayout.addDrawerListener(toggle)
-        toggle.syncState()
+        drawerLayout.addDrawerListener(drawerToggle)
+        drawerToggle.syncState()
 
         binding.navView.setNavigationItemSelectedListener { menuItem ->
             handleNavigationItemClick(menuItem)
@@ -102,19 +122,45 @@ class MainActivity : AppCompatActivity() {
         columnCount = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 4 else 2
 
         // 初始化 RecyclerView
-        adapter = ImageAdapter(currentImages) { image ->
+        adapter = ImageAdapter(currentImages, { image ->
             val intent = Intent(this, ImageDetailActivity::class.java)
             intent.putExtra("image", image)
             startActivity(intent)
-        }
+        }, { count -> updateSelectionUi(count) })
         binding.recyclerView.layoutManager = GridLayoutManager(this, columnCount)
         binding.recyclerView.adapter = adapter
+        binding.homeRefresh.setOnRefreshListener {
+            if (featuredPanel?.visibility == View.VISIBLE) {
+                featuredPanel?.refresh()
+            } else {
+                launchHomePage(1, currentQuery, append = false)
+            }
+        }
         binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    val lm = rv.layoutManager as GridLayoutManager
+                    val distance = ResourceCoordinator.imagePreloadDistance(this@MainActivity)
+                    CdnImageGate.prefetch(this@MainActivity, currentImages.drop(lm.findLastVisibleItemPosition() + 1).map { it.thumbnailUrl }, columnCount * distance)
+                } else {
+                    CdnImageGate.pausePrefetch(this@MainActivity)
+                }
+            }
+
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 if (dy <= 0 || loading) return
                 val lm = rv.layoutManager as GridLayoutManager
+                val firstPrefetch = lm.findLastVisibleItemPosition() + 1
+                if (firstPrefetch > lastPrefetchedFrom) {
+                    lastPrefetchedFrom = firstPrefetch
+                    CdnImageGate.prefetch(
+                        this@MainActivity,
+                        currentImages.drop(firstPrefetch).map { it.thumbnailUrl },
+                        limit = columnCount * ResourceCoordinator.imagePreloadDistance(this@MainActivity)
+                    )
+                }
                 if (lm.findLastVisibleItemPosition() >= adapter.itemCount - columnCount * 2) {
-                    activityScope.launch { loadPage(page + 1, currentQuery, append = true) }
+                    launchHomePage(page + 1, currentQuery, append = true)
                 }
             }
         })
@@ -132,7 +178,7 @@ class MainActivity : AppCompatActivity() {
 
         // 搜索按钮点击事件
         binding.btnSearch.setOnClickListener {
-            showSearchDialog()
+            startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.SearchActivity::class.java))
         }
 
         // 网络初始化并加载数据
@@ -140,7 +186,12 @@ class MainActivity : AppCompatActivity() {
             startupStarted = true
             try {
                 updateStartup("正在优选网络节点…", "正在连接最快的 Cloudflare 节点")
-                NetworkManager.init(applicationContext)
+                NetworkManager.init(applicationContext) { domain, tested, total ->
+                    runOnUiThread {
+                        updateStartup("正在测速 $domain", "已完成 $tested / $total 个节点")
+                    }
+                }
+                activityScope.launch { preloadSystemFilters() }
                 updateStartup("正在准备首页…", "正在预加载最新图片")
                 loadPage(1, currentQuery, append = false)
                 updateStartup("准备就绪", "欢迎回来")
@@ -196,7 +247,7 @@ class MainActivity : AppCompatActivity() {
 
             val fabParams = binding.fabUpload.layoutParams as? android.view.ViewGroup.MarginLayoutParams
             fabParams?.let {
-                it.bottomMargin = fabBaseMarginBottom + navigationBarHeight
+                it.bottomMargin = bottomBarBaseHeight + navigationBarHeight + fabBaseMarginBottom
                 binding.fabUpload.layoutParams = it
             }
 
@@ -246,24 +297,87 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleNavigationItemClick(item: MenuItem) {
         when (item.itemId) {
-            R.id.nav_forums -> Toast.makeText(this, "论坛", Toast.LENGTH_SHORT).show()
-            R.id.nav_tags -> Toast.makeText(this, "标签", Toast.LENGTH_SHORT).show()
-            R.id.nav_rankings -> Toast.makeText(this, "排行榜", Toast.LENGTH_SHORT).show()
+            R.id.nav_forums -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.ForumActivity::class.java))
+            R.id.nav_tags -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.TagSearchActivity::class.java))
+            R.id.nav_rankings -> showRankings()
             R.id.nav_filters -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.FilterActivity::class.java))
-            R.id.nav_galleries -> Toast.makeText(this, "图库", Toast.LENGTH_SHORT).show()
-            R.id.nav_comments -> Toast.makeText(this, "评论", Toast.LENGTH_SHORT).show()
-            R.id.nav_channels -> Toast.makeText(this, "频道", Toast.LENGTH_SHORT).show()
+            R.id.nav_galleries -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.GalleryActivity::class.java))
+            R.id.nav_comments -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.RecentCommentsActivity::class.java))
+            R.id.nav_downloads -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.DownloadManagerActivity::class.java))
+            R.id.nav_favorites -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.FavoritesActivity::class.java))
             R.id.nav_settings -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.SettingsActivity::class.java))
+        }
+    }
+
+    private fun configureUploadFab() {
+        binding.fabUpload.setImageResource(R.drawable.ic_add)
+        binding.fabUpload.setOnClickListener {
+            val featuredCount = featuredPanel?.selectedImages()?.size ?: 0
+            val selected = if (featuredPanel?.visibility == View.VISIBLE && featuredCount > 0) {
+                featuredPanel!!.selectedImages()
+            } else adapter.selectedItems()
+            if (selected.isNotEmpty()) {
+                DownloadQueueManager.get(this).enqueueImages(selected)
+                adapter.clearSelection(); featuredPanel?.clearSelection()
+                Toast.makeText(this, "已加入下载队列", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "上传功能即将开放", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun clearSelectionState() {
+        adapter.clearSelection()
+        featuredPanel?.clearSelection()
+    }
+
+    private fun updateSelectionUi(count: Int) {
+        val featuredCount = featuredPanel?.selectedImages()?.size ?: 0
+        val total = if (featuredPanel?.visibility == View.VISIBLE) featuredCount else count
+        if (total > 0) {
+            binding.toolbar.title = "已选择${total}张图片"
+            binding.toolbar.setNavigationIcon(R.drawable.ic_close)
+            binding.toolbar.setNavigationOnClickListener { adapter.clearSelection(); featuredPanel?.clearSelection() }
+            binding.btnDensity.visibility = View.GONE
+            binding.btnSearch.visibility = View.GONE
+            binding.fabUpload.setImageResource(R.drawable.ic_download)
+        } else {
+            binding.toolbar.title = "DerpiViewer"
+            // Restore the drawer toggle after the temporary selection close action.
+            binding.toolbar.setNavigationOnClickListener { drawerLayout.openDrawer(androidx.core.view.GravityCompat.START) }
+            drawerToggle.syncState()
+            binding.btnDensity.visibility = View.VISIBLE
+            binding.btnSearch.visibility = View.VISIBLE
+            configureUploadFab()
         }
     }
 
     override fun onResume() {
         super.onResume()
+        PaletteManager.apply(this)
+        applyStartupPalette()
+        val paletteChanged = paletteSignature() != lastPaletteSignature
+        if (paletteChanged) lastPaletteSignature = paletteSignature()
         if (startupStarted && !NetworkManager.isReady()) {
             activityScope.launch {
                 runCatching { NetworkManager.init(applicationContext) }
             }
         }
+        val selectedFilter = AppSettings.getCurrentFilterId(this)
+        if (startupStarted && (paletteChanged || selectedFilter != appliedFilterId) && !loading) {
+            launchHomePage(1, currentQuery, append = false)
+        }
+    }
+
+    private fun paletteSignature(): String = "${AppSettings.getPalette(this)}:${AppSettings.getAccentColor(this)}"
+
+    private fun applyStartupPalette() {
+        if (!::binding.isInitialized) return
+        val c = PaletteManager.colors(this)
+        binding.startupOverlay.setBackgroundColor(c.surface)
+        binding.startupStatus.setTextColor(c.onSurface)
+        binding.startupDetail.setTextColor(c.muted)
+        binding.startupProgress.indeterminateTintList = android.content.res.ColorStateList.valueOf(c.primary)
     }
 
     private fun showSearchDialog() {
@@ -274,7 +388,7 @@ class MainActivity : AppCompatActivity() {
             .setView(editText)
             .setPositiveButton("搜索") { _, _ ->
                 val query = editText.text.toString().trim()
-                if (query.isNotEmpty()) activityScope.launch { loadPage(1, query, append = false) }
+                if (query.isNotEmpty()) launchHomePage(1, query, append = false)
             }
             .setNegativeButton("取消", null)
             .create()
@@ -284,7 +398,7 @@ class MainActivity : AppCompatActivity() {
     private suspend fun loadRealImages() {
         binding.progressBar.visibility = View.VISIBLE
         val json = withContext(Dispatchers.IO) {
-                NetworkManager.getApi(this@MainActivity, "search/images?q=safe&per_page=20&sf=created_at&sd=desc")
+                NetworkManager.getApi(this@MainActivity, "search/images?q=*&per_page=50&sf=created_at&sd=desc")
         }
 
         if (json.isNullOrBlank()) {
@@ -323,14 +437,17 @@ class MainActivity : AppCompatActivity() {
         binding.progressBar.visibility = View.VISIBLE
         try {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val filterParam = AppSettings.getCurrentFilterId(this@MainActivity)?.let { "&filter_id=$it" } ?: ""
+            val filterParam = NetworkManager.currentFilterParam(this@MainActivity)
             val json = withContext(Dispatchers.IO) {
-                NetworkManager.getApi(this@MainActivity, "search/images?q=$encoded&per_page=30&page=$targetPage&sf=created_at&sd=desc$filterParam")
+                NetworkManager.getApi(this@MainActivity, "search/images?q=$encoded&per_page=50&page=$targetPage&sf=$currentSort&sd=desc$filterParam")
             }
             val images = json?.let { parseImages(it) }.orEmpty()
             if (!append) {
                 page = 1; currentQuery = query; allImages = images; currentImages = images
                 adapter.updateData(images)
+                lastPrefetchedFrom = -1
+                CdnImageGate.prefetch(this@MainActivity, images.map { it.thumbnailUrl }, limit = columnCount * ResourceCoordinator.imagePreloadDistance(this@MainActivity))
+                appliedFilterId = AppSettings.getCurrentFilterId(this@MainActivity)
             } else if (images.isNotEmpty()) {
                 page = targetPage; allImages = allImages + images; currentImages = allImages; adapter.updateData(allImages)
             }
@@ -339,8 +456,61 @@ class MainActivity : AppCompatActivity() {
             Log.e("MainActivity", "加载图片失败", e)
             if (!append) Toast.makeText(this, "网络异常，请稍后重试", Toast.LENGTH_SHORT).show()
         } finally {
-            loading = false; binding.progressBar.visibility = View.GONE
+            loading = false
+            binding.progressBar.visibility = View.GONE
+            binding.homeRefresh.isRefreshing = false
         }
+    }
+
+    private fun launchHomePage(targetPage: Int, query: String, append: Boolean) {
+        homeLoadJob?.cancel()
+        homeLoadJob = activityScope.launch { loadPage(targetPage, query, append) }
+    }
+
+    /** Restores the same transient home state used on the first page load. */
+    private fun resetHomeAndRefresh() {
+        adapter.clearSelection(); featuredPanel?.clearSelection()
+        featuredPanel?.visibility = View.GONE
+        binding.recyclerView.visibility = View.VISIBLE
+        homeLoadJob?.cancel()
+        loading = false
+        page = 1
+        currentQuery = "*"
+        currentSort = "created_at"
+        appliedFilterId = AppSettings.getCurrentFilterId(this)
+        lastPrefetchedFrom = -1
+        allImages = emptyList()
+        currentImages = emptyList()
+        adapter.updateData(emptyList())
+        binding.recyclerView.scrollToPosition(0)
+        binding.homeRefresh.isRefreshing = true
+        launchHomePage(1, currentQuery, append = false)
+    }
+
+    private fun showRankings() {
+        featuredPanel?.visibility = View.GONE
+        binding.recyclerView.visibility = View.VISIBLE
+        currentSort = "score"
+        currentQuery = "*"
+        page = 1
+        binding.recyclerView.scrollToPosition(0)
+        binding.homeRefresh.isRefreshing = true
+        launchHomePage(1, currentQuery, append = false)
+    }
+
+    private fun showFeaturedContent() {
+        homeLoadJob?.cancel()
+        binding.recyclerView.visibility = View.GONE
+        binding.progressBar.visibility = View.GONE
+        binding.startupOverlay.visibility = View.GONE
+        if (featuredPanel == null) {
+            featuredPanel = com.kerybotu.derpibooru.mirror.ui.FeaturedPanel(this).also {
+                it.onRefreshFinished = { binding.homeRefresh.isRefreshing = false }
+                it.onSelectionChanged = { updateSelectionUi(it) }
+                binding.homeRefresh.addView(it, android.widget.FrameLayout.LayoutParams(-1, -1))
+            }
+        }
+        featuredPanel?.visibility = View.VISIBLE
     }
 
     private fun parseImages(json: String): List<Image> {
@@ -391,7 +561,9 @@ class MainActivity : AppCompatActivity() {
                     fullUrl = representations?.optString("full", null),
                     uploader = obj.optString("uploader", null),
                     createdAt = obj.optString("created_at", null),
-                    description = obj.optString("description", null)
+                    description = obj.optString("description", null),
+                    mimeType = obj.optString("mime_type", null),
+                    uploaderId = obj.optLong("uploader_id", -1L).takeIf { it > 0L }
                 )
             )
         }
@@ -437,9 +609,22 @@ class MainActivity : AppCompatActivity() {
         binding.startupDetail.text = detail
     }
 
+    private suspend fun preloadSystemFilters() {
+        val json = withContext(Dispatchers.IO) {
+            NetworkManager.getApi(this@MainActivity, "filters/system?page=1")
+        }
+        if (!json.isNullOrBlank()) FilterCache.saveSystemFilters(this, json)
+    }
+
     override fun onDestroy() {
+        featuredPanel?.dispose()
         activityJob.cancel()
         NetworkManager.shutdown()
         super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        ResourceCoordinator.onTrimMemory(this, level)
+        super.onTrimMemory(level)
     }
 }

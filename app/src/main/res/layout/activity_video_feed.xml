@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:background="?attr/colorSurface">
+    <androidx.viewpager2.widget.ViewPager2 android:id="@+id/video_pager" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <ImageButton android:id="@+id/video_back" android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="top|start" android:layout_margin="12dp" android:background="@android:color/transparent" android:src="@drawable/ic_arrow_back" android:tint="@android:color/white" android:contentDescription="返回" />
+    <ImageButton android:id="@+id/video_audio" android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="top|start" android:layout_marginStart="60dp" android:layout_marginTop="12dp" android:background="@android:color/transparent" android:src="@drawable/ic_volume" android:tint="@android:color/white" android:contentDescription="静音" />
+    <ImageButton android:id="@+id/video_sort" android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="top|end" android:layout_margin="12dp" android:background="@android:color/transparent" android:src="@drawable/ic_menu" android:tint="@android:color/white" android:contentDescription="切换排序" />
+    <TextView android:id="@+id/video_empty" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="正在加载视频…" android:textColor="?attr/colorOnSurface" android:textSize="16sp" />
+</FrameLayout>

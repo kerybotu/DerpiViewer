@@ -17,5 +17,7 @@ data class Image(
     val fullUrl: String? = null,
     val uploader: String? = null,
     val createdAt: String? = null,
-    val description: String? = null
+    val description: String? = null,
+    val mimeType: String? = null,
+    val uploaderId: Long? = null
 ) : Serializable

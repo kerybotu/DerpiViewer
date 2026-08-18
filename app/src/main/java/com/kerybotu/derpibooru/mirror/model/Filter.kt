@@ -10,5 +10,7 @@ data class Filter(
     val system: Boolean,
     val public: Boolean,
     val spoilerCount: Int,
-    val hiddenCount: Int
+    val hiddenCount: Int,
+    val creator: String? = null,
+    val createdAt: String? = null
 ) : Serializable

@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent" android:layout_height="match_parent" android:background="?attr/colorSurface">
     <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
-        <androidx.appcompat.widget.Toolbar android:id="@+id/filter_toolbar" android:layout_width="match_parent" android:layout_height="?attr/actionBarSize" android:background="?attr/colorPrimary" android:title="过滤器" android:titleTextColor="@android:color/white" android:navigationIcon="@drawable/ic_arrow_back" app:menu="@menu/filter_menu" />
+        <include android:id="@+id/filter_toolbar" layout="@layout/include_safe_toolbar" />
         <LinearLayout android:id="@+id/current_filter_card" android:layout_width="match_parent" android:layout_height="72dp" android:layout_margin="16dp" android:layout_marginBottom="8dp" android:gravity="center_vertical" android:paddingHorizontal="16dp" android:background="?attr/colorSecondaryContainer">
             <ImageView android:layout_width="24dp" android:layout_height="24dp" android:src="@drawable/ic_filter" android:contentDescription="当前过滤器" />
             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="12dp" android:orientation="vertical">
@@ -14,13 +14,17 @@
         </LinearLayout>
         <com.google.android.material.tabs.TabLayout android:id="@+id/filter_tabs" android:layout_width="match_parent" android:layout_height="48dp" android:visibility="gone" app:tabIndicatorAnimationMode="elastic" app:tabIndicatorFullWidth="false" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingHorizontal="16dp" android:paddingBottom="8dp">
-            <com.google.android.material.textfield.TextInputLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" style="@style/Widget.Material3.TextInputLayout.OutlinedBox" app:startIconDrawable="@drawable/ic_search">
-                <com.google.android.material.textfield.TextInputEditText android:id="@+id/filter_search" android:layout_width="match_parent" android:layout_height="48dp" android:hint="搜索过滤器名称" android:singleLine="true" />
+            <com.google.android.material.textfield.TextInputLayout android:id="@+id/filter_search_container" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" style="@style/Widget.Material3.TextInputLayout.OutlinedBox" app:startIconDrawable="@drawable/ic_search" app:endIconMode="custom" app:endIconDrawable="@drawable/ic_search" app:endIconContentDescription="搜索">
+                <com.google.android.material.textfield.TextInputEditText android:id="@+id/filter_search" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="56dp" android:gravity="center_vertical" android:paddingTop="0dp" android:paddingBottom="0dp" android:hint="输入过滤器 ID" android:singleLine="true" android:inputType="number" android:imeOptions="actionSearch" />
             </com.google.android.material.textfield.TextInputLayout>
             <ImageButton android:id="@+id/filter_help" android:layout_width="44dp" android:layout_height="44dp" android:layout_marginStart="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:src="@drawable/ic_comment" android:contentDescription="搜索语法帮助" />
         </LinearLayout>
         <com.kerybotu.derpibooru.mirror.ui.PullRefreshLayout android:id="@+id/filter_refresh" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
-            <androidx.recyclerview.widget.RecyclerView android:id="@+id/filter_list" android:layout_width="match_parent" android:layout_height="match_parent" android:clipToPadding="false" android:paddingBottom="88dp" />
+            <FrameLayout android:layout_width="match_parent" android:layout_height="match_parent">
+                <androidx.recyclerview.widget.RecyclerView android:id="@+id/filter_list" android:layout_width="match_parent" android:layout_height="match_parent" android:clipToPadding="false" android:paddingBottom="88dp" />
+                <ProgressBar android:id="@+id/filter_loading" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:visibility="gone" />
+                <TextView android:id="@+id/filter_empty" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="没有找到符合条件的过滤器" android:textColor="?attr/colorOnSurfaceVariant" android:visibility="gone" />
+            </FrameLayout>
         </com.kerybotu.derpibooru.mirror.ui.PullRefreshLayout>
     </LinearLayout>
     <com.google.android.material.floatingactionbutton.FloatingActionButton android:id="@+id/add_filter" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|end" android:layout_margin="20dp" android:src="@drawable/ic_add" android:contentDescription="新建过滤器" app:backgroundTint="?attr/colorPrimary" />

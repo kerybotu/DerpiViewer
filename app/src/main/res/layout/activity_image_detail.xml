@@ -1,154 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@android:color/white">
-
-    <com.google.android.material.appbar.AppBarLayout
-        android:id="@+id/app_bar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@android:color/transparent"
-        android:fitsSystemWindows="true"
-        app:elevation="0dp">
-
-        <com.google.android.material.appbar.CollapsingToolbarLayout
-            android:id="@+id/collapsing_toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:contentScrim="?attr/colorPrimary"
-            app:expandedTitleGravity="bottom"
-            app:layout_scrollFlags="scroll|exitUntilCollapsed"
-            app:titleEnabled="false">
-
-            <ImageView
-                android:id="@+id/detail_image"
-                android:layout_width="match_parent"
-                android:layout_height="300dp"
-                android:scaleType="fitCenter"
-                android:background="#F5F5F5"
-                android:contentDescription="图片"
-                app:layout_collapseMode="parallax" />
-
-            <androidx.appcompat.widget.Toolbar
-                android:id="@+id/toolbar"
-                android:layout_width="match_parent"
-                android:layout_height="?attr/actionBarSize"
-                app:title=""
-                app:navigationIcon="@drawable/ic_arrow_back"
-                app:layout_collapseMode="pin"
-                app:titleTextColor="@android:color/white" />
-        </com.google.android.material.appbar.CollapsingToolbarLayout>
-    </com.google.android.material.appbar.AppBarLayout>
-
-    <androidx.core.widget.NestedScrollView
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingBottom="24dp">
-
-            <!-- 评分互动区 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="12dp"
-                android:gravity="center_vertical"
-                android:background="@android:color/white">
-
-                <!-- 收藏、点赞、得分、点踩、评论 -->
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-                    <ImageView android:layout_width="24dp" android:layout_height="24dp" android:src="@drawable/ic_favorite" android:contentDescription="收藏" />
-                    <TextView android:id="@+id/detail_faves" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textSize="14sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-                    <ImageView android:layout_width="24dp" android:layout_height="24dp" android:src="@drawable/ic_arrow_up" android:contentDescription="点赞" />
-                    <TextView android:id="@+id/detail_upvotes" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textSize="14sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-                    <TextView android:id="@+id/detail_score" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textStyle="bold" android:textSize="20sp" android:textColor="?attr/colorPrimary" />
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="得分" android:textSize="12sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-                    <ImageView android:layout_width="24dp" android:layout_height="24dp" android:src="@drawable/ic_arrow_down" android:contentDescription="点踩" />
-                    <TextView android:id="@+id/detail_downvotes" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textSize="14sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-                    <ImageView android:layout_width="24dp" android:layout_height="24dp" android:src="@drawable/ic_comment" android:contentDescription="评论" />
-                    <TextView android:id="@+id/detail_comments_count" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textSize="14sp" />
-                </LinearLayout>
+<androidx.coordinatorlayout.widget.CoordinatorLayout android:id="@+id/detail_root" xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:background="?attr/colorSurface">
+    <ImageView android:id="@+id/detail_image" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="图片" />
+    <androidx.media3.ui.PlayerView android:id="@+id/detail_video_player" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" android:background="?attr/colorSurface" />
+    <include android:id="@+id/detail_toolbar" layout="@layout/include_safe_toolbar" android:clickable="true" android:focusable="true" />
+    <LinearLayout android:id="@+id/bottom_sheet" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:clickable="true" android:focusable="true" android:background="@drawable/bg_detail_sheet" app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior" app:behavior_peekHeight="112dp" app:behavior_hideable="false" app:behavior_fitToContents="false" app:behavior_halfExpandedRatio="0.52">
+        <View android:id="@+id/sheet_handle" android:layout_width="36dp" android:layout_height="4dp" android:layout_gravity="center_horizontal" android:layout_marginTop="10dp" android:layout_marginBottom="8dp" android:background="#66777777" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:paddingHorizontal="16dp">
+            <ImageView android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/ic_account_box" android:contentDescription="上传者" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="10dp" android:orientation="vertical">
+                <TextView android:id="@+id/detail_uploader" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textStyle="bold" android:textSize="15sp" />
+                <TextView android:id="@+id/detail_created_at" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="?attr/colorOnSurfaceVariant" />
             </LinearLayout>
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EEEEEE" />
-
-            <!-- 上传者元数据 -->
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="12dp">
-                <TextView android:id="@+id/detail_uploader" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="上传者：" android:textStyle="bold" android:textSize="14sp" />
-                <TextView android:id="@+id/detail_created_at" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="上传时间：" android:textSize="13sp" android:textColor="@android:color/darker_gray" />
-                <TextView android:id="@+id/detail_dimensions" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="分辨率：" android:textSize="13sp" android:textColor="@android:color/darker_gray" />
-                <TextView android:id="@+id/detail_file_size" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="文件大小：" android:textSize="13sp" android:textColor="@android:color/darker_gray" />
-            </LinearLayout>
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EEEEEE" />
-
-            <TextView android:id="@+id/detail_description" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="12dp" android:text="暂无描述" android:textSize="14sp" android:lineSpacingExtra="4dp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EEEEEE" />
-
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/detail_tags_group"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_margin="12dp"
-                app:chipSpacingHorizontal="8dp"
-                app:singleSelection="false" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EEEEEE" />
-
-            <TextView android:id="@+id/detail_source" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="12dp" android:text="来源：" android:textSize="14sp" android:autoLink="web" />
-
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center">
-                <Button android:id="@+id/btn_share" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="分享" android:drawableLeft="@drawable/ic_share" android:drawablePadding="8dp" android:backgroundTint="?attr/colorPrimary" />
-                <Button android:id="@+id/btn_download" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:text="下载" android:drawableLeft="@drawable/ic_download" android:drawablePadding="8dp" android:backgroundTint="?attr/colorPrimary" />
-            </LinearLayout>
-
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="12dp" android:text="评论区（开发中）" android:textStyle="bold" android:textSize="16sp" />
+            <ImageButton android:id="@+id/btn_share" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:src="@drawable/ic_share" android:contentDescription="分享" />
+            <ImageButton android:id="@+id/btn_more" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:src="@drawable/ic_menu" android:contentDescription="更多操作" />
         </LinearLayout>
-    </androidx.core.widget.NestedScrollView>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="52dp" android:gravity="center_vertical" android:paddingHorizontal="12dp">
+            <TextView android:id="@+id/detail_faves" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:gravity="center" android:drawableStart="@drawable/ic_favorite" android:drawablePadding="6dp" android:text="0" />
+            <TextView android:id="@+id/detail_upvotes" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:gravity="center" android:drawableStart="@drawable/ic_arrow_up" android:drawablePadding="6dp" android:text="0" />
+            <TextView android:id="@+id/detail_score" android:layout_width="wrap_content" android:layout_height="44dp" android:gravity="center" android:visibility="gone" android:textSize="12sp" android:textColor="?attr/colorOnSurfaceVariant" />
+            <TextView android:id="@+id/detail_comments_count" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:gravity="center" android:drawableStart="@drawable/ic_comment" android:drawablePadding="6dp" android:text="0" />
+        </LinearLayout>
+        <View android:id="@+id/detail_divider" android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/colorOutlineVariant" />
+        <androidx.core.widget.NestedScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp" android:paddingBottom="36dp">
+                <TextView android:id="@+id/detail_description" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="3" android:ellipsize="end" android:textSize="14sp" android:lineSpacingExtra="4dp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+                    <TextView android:id="@+id/btn_expand_description" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginTop="6dp" android:text="展开阅读" android:textColor="?attr/colorPrimary" android:textStyle="bold" />
+                    <Button android:id="@+id/btn_translate_description" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="翻译" />
+                </LinearLayout>
+                  <com.google.android.material.chip.ChipGroup android:id="@+id/detail_tags_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" app:chipSpacingHorizontal="8dp" app:chipSpacingVertical="6dp" />
+                <TextView android:id="@+id/detail_source" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:autoLink="web" android:textSize="14sp" android:textColor="?attr/colorPrimary" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="22dp" android:text="评论" android:textStyle="bold" android:textSize="18sp" />
+                <LinearLayout android:id="@+id/detail_comments_preview" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="vertical" />
+            </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
+    </LinearLayout>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

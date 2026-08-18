@@ -1,6 +1,7 @@
 package com.kerybotu.derpibooru.mirror
 
 import android.content.Context
+import com.kerybotu.derpibooru.mirror.theme.AccentColor
 
 object AppSettings {
 
@@ -12,9 +13,13 @@ object AppSettings {
     private const val KEY_HIGH_RES = "high_res_thumbnails"
     private const val KEY_VIDEO_THUMBNAILS = "video_thumbnails"
     private const val KEY_VIDEO_AUDIO = "video_audio"
+    private const val KEY_VIDEO_WIFI_ONLY = "video_wifi_only"
     private const val KEY_HIDE_UPLOADER = "hide_uploader"
     private const val KEY_HIDE_SCORE = "hide_score"
     private const val KEY_PALETTE = "palette"
+    private const val KEY_ACCENT = "accent_color"
+    private const val KEY_CDN_MODE = "cdn_concurrency_mode"
+    private const val KEY_CDN_THREADS = "cdn_concurrency_threads"
 
     enum class Site(val domain: String, val displayName: String) {
         DERPIBOORU("derpibooru.org", "Derpibooru"),
@@ -23,6 +28,7 @@ object AppSettings {
     }
 
     enum class Palette { DARK, LIGHT, COLORFUL }
+    enum class CdnConcurrencyMode { AUTO, CUSTOM }
 
     fun getSelectedSite(context: Context): Site {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -68,24 +74,41 @@ object AppSettings {
 
     fun isIpOptimizationEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_USE_IP_OPTIMIZATION, true)
     fun setIpOptimizationEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY_USE_IP_OPTIMIZATION, enabled).apply()
-    fun isHighResolution(context: Context): Boolean = prefs(context).getBoolean(KEY_HIGH_RES, true)
+    fun isHighResolution(context: Context): Boolean = prefs(context).getBoolean(KEY_HIGH_RES, false)
     fun setHighResolution(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIGH_RES, value).apply()
     fun isVideoThumbnailsEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_VIDEO_THUMBNAILS, true)
     fun setVideoThumbnailsEnabled(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_VIDEO_THUMBNAILS, value).apply()
     fun isVideoAudioEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_VIDEO_AUDIO, true)
     fun setVideoAudioEnabled(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_VIDEO_AUDIO, value).apply()
+    fun isVideoWifiOnly(context: Context): Boolean = prefs(context).getBoolean(KEY_VIDEO_WIFI_ONLY, false)
+    fun setVideoWifiOnly(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_VIDEO_WIFI_ONLY, value).apply()
     fun isUploaderHidden(context: Context): Boolean = prefs(context).getBoolean(KEY_HIDE_UPLOADER, false)
     fun setUploaderHidden(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIDE_UPLOADER, value).apply()
     fun isScoreHidden(context: Context): Boolean = prefs(context).getBoolean(KEY_HIDE_SCORE, false)
     fun setScoreHidden(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIDE_SCORE, value).apply()
     fun getPalette(context: Context): Palette = runCatching { Palette.valueOf(prefs(context).getString(KEY_PALETTE, Palette.COLORFUL.name)!!) }.getOrDefault(Palette.COLORFUL)
     fun setPalette(context: Context, palette: Palette) = prefs(context).edit().putString(KEY_PALETTE, palette.name).apply()
+    fun getAccentColor(context: Context): AccentColor = runCatching {
+        AccentColor.valueOf(prefs(context).getString(KEY_ACCENT, AccentColor.BLUE.name)!!)
+    }.getOrDefault(AccentColor.BLUE)
+    fun setAccentColor(context: Context, accent: AccentColor) = prefs(context).edit().putString(KEY_ACCENT, accent.name).apply()
     fun getCurrentFilterId(context: Context): Int? = context.getSharedPreferences("filter_state", Context.MODE_PRIVATE).getInt("current_id", -1).takeIf { it > 0 }
     fun setCurrentFilterId(context: Context, id: Int?) = context.getSharedPreferences("filter_state", Context.MODE_PRIVATE).edit().putInt("current_id", id ?: -1).apply()
+    fun getCdnConcurrencyMode(context: Context): CdnConcurrencyMode = runCatching { CdnConcurrencyMode.valueOf(prefs(context).getString(KEY_CDN_MODE, CdnConcurrencyMode.AUTO.name)!!) }.getOrDefault(CdnConcurrencyMode.AUTO)
+    fun setCdnConcurrencyMode(context: Context, mode: CdnConcurrencyMode) = prefs(context).edit().putString(KEY_CDN_MODE, mode.name).apply()
+    fun getCustomCdnThreads(context: Context): Int = prefs(context).getInt(KEY_CDN_THREADS, 3).coerceIn(1, 8)
+    fun setCustomCdnThreads(context: Context, threads: Int) = prefs(context).edit().putInt(KEY_CDN_THREADS, threads.coerceIn(1, 8)).apply()
+    fun getCdnThreads(context: Context): Int = when (getCdnConcurrencyMode(context)) {
+        CdnConcurrencyMode.AUTO -> when (Runtime.getRuntime().availableProcessors()) { in 0..4 -> 2; in 5..8 -> 3; else -> 4 }
+        CdnConcurrencyMode.CUSTOM -> getCustomCdnThreads(context)
+    }
 
     fun isValidIpFormat(ip: String): Boolean {
-        val parts = ip.trim().split(".")
-        if (parts.size != 4) return false
-        return parts.all { it.toIntOrNull()?.let { n -> n in 0..255 } == true }
+        val value = ip.trim().removePrefix("[").removeSuffix("]")
+        if (value.isEmpty() || value.any { it.isWhitespace() }) return false
+        return runCatching {
+            val address = java.net.InetAddress.getByName(value)
+            address.hostAddress != null && (value.contains('.') || value.contains(':'))
+        }.getOrDefault(false)
     }
 }

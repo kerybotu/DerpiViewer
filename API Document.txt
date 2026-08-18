@@ -1,0 +1,262 @@
+API
+Last updated about a year ago
+
+ Revision history
+
+Derpibooru provides a JSON API for major site functionality, which can be freely used by anyone wanting to produce tools for the site or other web applications that use the data provided within Derpibooru.
+
+Note that if you are looking to continuously scrape the entire website, we offer nightly database dumps instead. Consider if these suit your needs first, then rely on the API if they do not.
+
+Licensing
+Anyone may use the API. Users making abusively high numbers of requests or excessively expensive requests will be asked to stop, and banned if they do not. Your application must properly cache, and respect server-side cache expiry times. Your client must gracefully back off if requests fail, preferably exponentially or fatally.
+
+If images are used, the artist must always be credited (if provided) and the original source URL must be displayed alongside the image, either in textual form or as a link. A link to the Derpibooru page is optional but recommended; we recommend the derpibooru.org domain as a canonical domain. The https: protocol must be specified on all URLs.
+
+Rate Limits
+To prevent site abuse, we have some rate limits in place. Those are:
+
+Normal requests: 30 requests per 5 seconds
+API search path (/api/v1/json/search*): 20 requests per 10 seconds
+
+Additionally, our services employ middleware to monitor the state of our site and issue anti-bot challenge pages in case the overall site request rate exceeds the normal values. Please note that this is independent of your application's actions, and you may be challenged even if your IP has never sent any requests to the site before.
+
+ In case of a middleware challenge, the site will respond with "501" HTTP error code of response content type text/html. It is important that upon receiving this error, your API client backs off and does not send any requests from the same IP for at least 5 seconds.
+
+ If your application continues to send requests after receiving the challenge page, it will be blocked for at least 15 minutes, and the server will respond with "500" HTTP error code, and an empty response body. Any requests sent from the same IP before the 15 minute blocking period expires will reset the timer back to 15 minutes. Make sure your application completely backs off for at least 15 minutes upon receiving such error.
+
+Parameters
+This is a list of general parameters that are useful when working with the API. Not all parameters may be used in every request.
+
+Name	Description
+filter_id	Assuming the user can access the filter ID given by the parameter, overrides the current filter for this request. This is primarily useful for unauthenticated API access.
+key	An optional authentication token. If omitted, no user will be authenticated.
+
+You can find your authentication token in your account settings.
+page	Controls the current page of the response, if the response is paginated. Empty values default to the first page.
+per_page	Controls the number of results per page, up to a limit of 50, if the response is paginated. The default is 25.
+q	The current search query, if the request is a search request.
+sd	The current sort direction, if the request is a search request.
+sf	The current sort field, if the request is a search request.
+Routes
+The interested reader may find the implementations of these endpoints here. For the purposes of this document, a brief overview is given.
+
+Method	Path	Allowed Query Parameters	Description	Response Format	Example
+GET	/api/v1/json/comments/:comment_id		Fetches a comment response for the comment ID referenced by the comment_id URL parameter.	{"comment":comment-response}	/api/v1/json/comments/1000
+GET	/api/v1/json/images/:image_id	key, filter_id	Fetches an image response for the image ID referenced by the image_id URL parameter.	{"image":image-response}	/api/v1/json/images/1
+POST	/api/v1/json/images	key, url	Submits a new image. Both key and url are required. Errors will result in an {"errors":image-errors-response}.	{"image":image-response}	Posting images
+GET	/api/v1/json/images/featured		Fetches an image response for the for the current featured image.	{"image":image-response}	/api/v1/json/images/featured
+GET	/api/v1/json/tags/:tag_id		Fetches a tag response for the tag slug given by the tag_id URL parameter. The tag's ID is not used.	{"tag":tag-response}	/api/v1/json/tags/artist-colon-atryl
+GET	/api/v1/json/posts/:post_id		Fetches a post response for the post ID given by the post_id URL parameter.	{"post":post-response}	/api/v1/json/posts/2730144
+GET	/api/v1/json/profiles/:user_id		Fetches a profile response for the user ID given by the user_id URL parameter.	{"user":user-response}	/api/v1/json/profiles/216494
+GET	/api/v1/json/filters/:filter_id	key	Fetches a filter response for the filter ID given by the filter_id URL parameter.	{"filter":filter-response}	/api/v1/json/filters/56027
+GET	/api/v1/json/filters/system	page	Fetches a list of filter responses that are flagged as being system filters (and thus usable by anyone).	{"filters":[filter-response]}	/api/v1/json/filters/system
+GET	/api/v1/json/filters/user	key, page	Fetches a list of filter responses that belong to the user given by key. If no key is given or it is invalid, will return a 403 Forbidden error.	{"filters":[filter-response]}	/api/v1/json/filters/user
+GET	/api/v1/json/oembed	url	Fetches an oEmbed response for the given app link or CDN URL.	oembed-response	/api/v1/json/oembed?url=https://derpicdn.net/img/2012/1/2/3/full.png
+GET	/api/v1/json/search/comments	key, page	Executes the search given by the q query parameter, and returns comment responses sorted by descending creation time.	{"comments":[comment-response]}	/api/v1/json/search/comments?q=image_id:1000000
+GET	/api/v1/json/search/galleries	key, page	Executes the search given by the q query parameter, and returns gallery responses sorted by descending creation time.	{"galleries":[gallery-response]}	/api/v1/json/search/galleries?q=title:mean*
+GET	/api/v1/json/search/posts	key, page	Executes the search given by the q query parameter, and returns post responses sorted by descending creation time.	{"posts":[post-response]}	/api/v1/json/search/posts?q=subject:time wasting thread
+GET	/api/v1/json/search/images	key, filter_id, page, per_page, q, sd, sf	Executes the search given by the q query parameter, and returns image responses.	{"images":[image-response]}	/api/v1/json/search/images?q=safe
+GET	/api/v1/json/search/tags	page	Executes the search given by the q query parameter, and returns tag responses sorted by descending image count.	{"tags":[tag-response]}	/api/v1/json/search/tags?q=analyzed_name:wing
+POST	/api/v1/json/search/reverse	key, url, distance	Returns image responses based on the results of reverse-searching the image given by the url query parameter.	{"images":[image-response]}	/api/v1/json/search/reverse?url=https://derpicdn.net/img/2019/12/24/2228439/full.jpg
+GET	/api/v1/json/forums		Fetches a list of forum responses.	{"forums":forum-response}	/api/v1/json/forums
+GET	/api/v1/json/forums/:short_name		Fetches a forum response for the abbreviated name given by the short_name URL parameter.	{"forum":forum-response}	/api/v1/json/forums/dis
+GET	/api/v1/json/forums/:short_name/topics	page	Fetches a list of topic responses for the abbreviated forum name given by the short_name URL parameter.	{"topics":topic-response}	/api/v1/json/forums/dis/topics
+GET	/api/v1/json/forums/:short_name/topics/:topic_slug		Fetches a topic response for the abbreviated forum name given by the short_name and topic given by topic_slug URL parameters.	{"topic":topic-response}	/api/v1/json/forums/dis/topics/ask-the-mods-anything
+GET	/api/v1/json/forums/:short_name/topics/:topic_slug/posts	page	Fetches a list of post responses for the abbreviated forum name given by the short_name and topic given by topic_slug URL parameters.	{"posts":post-response}	/api/v1/json/forums/dis/topics/ask-the-mods-anything/posts
+GET	/api/v1/json/forums/:short_name/topics/:topic_slug/posts/:post_id		Fetches a post response for the abbreviated forum name given by the short_name, topic given by topic_slug and post given by post_id URL parameters.	{"post":post-response}	/api/v1/json/forums/dis/topics/ask-the-mods-anything/posts/2761095
+Posting Images
+Posting images should be done via request body parameters. An example with all parameters included is shown below.
+
+You are strongly recommended to test code using this endpoint using a local copy of the website's source code. Abuse of the endpoint will result in a ban.
+
+You must provide the direct link to the image in the url parameter.
+
+You must set the content-type header to application/json for the site to process your request.
+
+POST /api/v1/json/images?key=API_KEY
+{
+  "image": {
+    "description": "[bq]Hey there this is a test post![/bq]\nDescriptions are *weird*.\nHave a >>0 re-upload :)\n",
+    "tag_input": "artist needed, safe, derpy hooves, pegasus, pony, adventure in the comments, bag, building, chair, cigar, derpibooru legacy, eyes, featured image, female, grin, gritted teeth, hilarious in hindsight, image macro, it begins, j. jonah jameson, letter, mail, male, mare, meme, muffin, necktie, paper, parody, phone, ponified, sitting, smiling, smoking, song in the comments, spider-man, stallion, swinging",
+    "source_url": "https://derpibooru.org/images/0"
+  },
+  "url": "https://derpicdn.net/img/view/2012/1/2/0.jpg"
+}
+Image Responses
+Field	Type	Description
+animated	Boolean	Whether the image is animated.
+aspect_ratio	Float	The image's width divided by its height.
+comment_count	Integer	The number of comments made on the image.
+created_at	RFC3339 datetime	The creation time, in UTC, of the image.
+deletion_reason	String	The hide reason for the image, or null if none provided. This will only have a value on images which are deleted for a rule violation.
+description	String	The image's description.
+downvotes	Integer	The number of downvotes the image has.
+duplicate_of	Integer	The ID of the target image, or null if none provided. This will only have a value on images which are merged into another image.
+duration	Float	The number of seconds the image lasts, if animated, otherwise .04.
+faves	Integer	The number of faves the image has.
+first_seen_at	RFC3339 datetime	The time, in UTC, the image was first seen (before any duplicate merging).
+format	String	The file extension of the image. One of "gif", "jpg", "jpeg", "png", "svg", "webm".
+height	Integer	The image's height, in pixels.
+hidden_from_users	Boolean	Whether the image is hidden. An image is hidden if it is merged or deleted for a rule violation.
+id	Integer	The image's ID.
+intensities	Object	Optional object of internal image intensity data for deduplication purposes. May be null if intensities have not yet been generated.
+mime_type	String	The MIME type of this image. One of "image/gif", "image/jpeg", "image/png", "image/svg+xml", "video/webm".
+name	String	The filename that the image was uploaded with.
+orig_sha512_hash	String	The SHA512 hash of the image as it was originally uploaded.
+processed	Boolean	Whether the image has finished optimization.
+representations	Object	A mapping of representation names to their respective URLs. Contains the keys "full", "large", "medium", "small", "tall", "thumb", "thumb_small", "thumb_tiny".
+score	Integer	The image's number of upvotes minus the image's number of downvotes.
+sha512_hash	String	The SHA512 hash of this image after it has been processed.
+size	Integer	The number of bytes the image's file contains.
+source_url	String	(Deprecated - Use source_urls field instead) Provides the first source URL of the image as stored in the database, intended for legacy applications only.
+source_urls	String[]	A list of all source URLs provided for the image, may be empty.
+spoilered	Boolean	Whether the image is hit by the current filter.
+tag_count	Integer	The number of tags present on the image.
+tag_ids	Array	A list of tag IDs the image contains.
+tags	Array	A list of tag names the image contains.
+thumbnails_generated	Boolean	Whether the image has finished thumbnail generation. Do not attempt to load images from view_url or representations if this is false.
+updated_at	RFC3339 datetime	The time, in UTC, the image was last updated.
+uploader	String	The image's uploader.
+uploader_id	Integer	The ID of the image's uploader. null if uploaded anonymously.
+upvotes	Integer	The image's number of upvotes.
+view_url	String	The image's view URL, including tags.
+width	Integer	The image's width, in pixels.
+wilson_score	Float	The lower bound of the Wilson score interval for the image, based on its upvotes and downvotes, given a z-score corresponding to a confidence of 99.5%.
+Comment Responses
+Field	Type	Description
+author	String	The comment's author.
+avatar	String	The URL of the author's avatar. May be a link to the CDN path, or a data: URI.
+body	String	The comment text.
+created_at	RFC3339 datetime	The creation time, in UTC, of the comment.
+edit_reason	String	The edit reason for this comment, or null if none provided.
+edited_at	RFC3339 datetime	The time, in UTC, this comment was last edited at, or null if it was not edited.
+id	Integer	The comment's ID.
+image_id	Integer	The ID of the image the comment belongs to.
+updated_at	RFC3339 datetime	The time, in UTC, the comment was last updated at.
+user_id	Integer	The ID of the user the comment belongs to, if any.
+Forum Responses
+Field	Type	Description
+name	String	The forum's name.
+short_name	String	The forum's short name (used to identify it).
+description	String	The forum's description.
+topic_count	Integer	The amount of topics in the forum.
+post_count	Integer	The amount of posts in the forum.
+Topic Responses
+Field	Type	Description
+slug	String	The topic's slug (used to identify it).
+title	String	The topic's title.
+post_count	Integer	The amount of posts in the topic.
+view_count	Integer	The amount of views the topic has received.
+sticky	Boolean	Whether the topic is sticky.
+last_replied_to_at	RFC3339 datetime	The time, in UTC, when the last reply was made.
+locked	Boolean	Whether the topic is locked.
+user_id	Integer	The ID of the user who made the topic. null if posted anonymously.
+author	String	The name of the user who made the topic.
+Post Responses
+Field	Type	Description
+author	String	The post's author.
+avatar	String	The URL of the author's avatar. May be a link to the CDN path, or a data: URI.
+body	String	The post text.
+created_at	RFC3339 datetime	The creation time, in UTC, of the post.
+edit_reason	String	The edit reason for this post.
+edited_at	RFC3339 datetime	The time, in UTC, this post was last edited at, or null if it was not edited.
+id	Integer	The post's ID (used to identify it).
+updated_at	RFC3339 datetime	The time, in UTC, the post was last updated at.
+user_id	Integer	The ID of the user the post belongs to, if any.
+Tag Responses
+Field	Type	Description
+aliased_tag	String	The slug of the tag this tag is aliased to, if any.
+aliases	Array	The slugs of the tags aliased to this tag.
+category	String	The category class of this tag. One of "character", "content-fanmade", "content-official", "error", "oc", "origin", "rating", "species", "spoiler".
+description	String	The long description for the tag.
+dnp_entries	Array	An array of objects containing DNP entries claimed on the tag.
+id	Integer	The tag's ID.
+images	Integer	The image count of the tag.
+implied_by_tags	Array	The slugs of the tags this tag is implied by.
+implied_tags	Array	The slugs of the tags this tag implies.
+name	String	The name of the tag.
+name_in_namespace	String	The name of the tag in its namespace.
+namespace	String	The namespace of the tag.
+short_description	String	The short description for the tag.
+slug	String	The slug for the tag.
+spoiler_image_uri	String	The spoiler image for the tag.
+User Responses
+Field	Type	Description
+id	Integer	The ID of the user.
+name	String	The name of the user.
+slug	String	The slug of the user.
+role	String	The role of the user.
+description	String	The description (bio) of the user.
+avatar_url	String	The URL of the user's thumbnail. null if the avatar is not set.
+created_at	RFC3339 datetime	The creation time, in UTC, of the user.
+comments_count	Integer	The comment count of the user.
+uploads_count	Integer	The upload count of the user.
+posts_count	Integer	The forum posts count of the user.
+topics_count	Integer	The forum topics count of the user.
+links	Object	The links the user has registered. See links-response.
+awards	Object	The awards/badges of the user. See awards-response.
+Filter Responses
+Field	Type	Description
+id	Integer	The id of the filter.
+name	String	The name of the filter.
+description	String	The description of the filter.
+user_id	Integer	The id of the user the filter belongs to. null if it isn't assigned to a user (usually system filters only).
+user_count	Integer	The amount of users employing this filter.
+system	Boolean	If true, is a system filter. System filters are usable by anyone and don't have a user_id set.
+public	Boolean	If true, is a public filter. Public filters are usable by anyone.
+spoilered_tag_ids	Array	A list of tag IDs (as integers) that this filter will spoil.
+spoilered_complex	String	The complex spoiled filter.
+hidden_tag_ids	Array	A list of tag IDs (as integers) that this filter will hide.
+hidden_complex	String	The complex hidden filter.
+Links Responses
+Field	Type	Description
+user_id	Integer	The ID of the user who owns this link.
+created_at	RFC3339 datetime	The creation time, in UTC, of this link.
+state	String	The state of this link.
+tag_id	Integer	The ID of an associated tag for this link. null if no tag linked.
+Awards Responses
+Field	Type	Description
+image_url	String	The URL of this award.
+title	String	The title of this award.
+id	Integer	The ID of the badge this award is derived from.
+label	String	The label of this award.
+awarded_on	RFC3339 datetime	The time, in UTC, when this award was given.
+Gallery Responses
+Field	Type	Description
+description	String	The gallery's description.
+id	Integer	The gallery's ID.
+spoiler_warning	String	The gallery's spoiler warning.
+thumbnail_id	Integer	The ID of the cover image for the gallery.
+title	String	The gallery's title.
+user	String	The name of the gallery's creator.
+user_id	Integer	The ID of the gallery's creator.
+Image Errors Responses
+Each field is optional and is an Array of Strings.
+
+Field	Type	Description
+image	Array	Errors in the submitted image
+image_aspect_ratio	Array	Errors in the submitted image
+image_format	Array	When an image is unsupported (ex. WEBP)
+image_height	Array	Errors in the submitted image
+image_width	Array	Errors in the submitted image
+image_size	Array	Usually if an image that is too large is uploaded.
+image_is_animated	Array	Errors in the submitted image
+image_mime_type	Array	Errors in the submitted image
+image_orig_sha512_hash	Array	Errors in the submitted image. If has already been taken is present, means the image already exists in the database.
+image_sha512_hash	Array	Errors in the submitted image
+tag_input	Array	Errors with the tag metadata.
+uploaded_image	Array	Errors in the submitted image
+Oembed Responses
+Field	Type	Description
+author_name	String	The comma-delimited names of the image authors.
+author_url	String	The source URL of the image.
+cache_age	Integer	Always 7200.
+derpibooru_comments	Integer	The number of comments made on the image.
+derpibooru_id	Integer	The image's ID.
+derpibooru_score	Integer	The image's number of upvotes minus the image's number of downvotes.
+derpibooru_tags	Array	The names of the image's tags.
+provider_name	String	Always "Derpibooru".
+provider_url	String	Always "https://derpibooru.org".
+title	String	The image's ID and associated tags, as would be given on the title of the image page.
+type	String	Always "photo".
+version	String	Always "1.0".

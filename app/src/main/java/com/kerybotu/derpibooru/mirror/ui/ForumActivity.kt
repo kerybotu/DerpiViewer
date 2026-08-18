@@ -1,0 +1,28 @@
+package com.kerybotu.derpibooru.mirror.ui
+
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import com.kerybotu.derpibooru.mirror.PaletteManager
+import com.kerybotu.derpibooru.mirror.network.NetworkManager
+import com.kerybotu.derpibooru.mirror.translate.NiuTransService
+import kotlinx.coroutines.*
+import org.json.JSONObject
+
+class ForumActivity : AppCompatActivity() {
+    companion object { const val EXTRA_FORUM = "forum"; const val EXTRA_TOPIC = "topic"; const val EXTRA_TITLE = "title" }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main); private lateinit var list: LinearLayout; private lateinit var scroll: ScrollView; private lateinit var progress: ProgressBar; private var page = 1; private var loading = false
+    private val forum get() = intent.getStringExtra(EXTRA_FORUM); private val topic get() = intent.getStringExtra(EXTRA_TOPIC)
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContentView(buildView()); load() }
+    private fun buildView(): LinearLayout { val c = PaletteManager.colors(this); return LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(c.surface); val title = when { topic != null -> intent.getStringExtra(EXTRA_TITLE) ?: "帖子"; forum != null -> intent.getStringExtra(EXTRA_TITLE) ?: forum; else -> "论坛" }; addView(SafeToolbar(this@ForumActivity).apply { this.title = title; setNavigationIcon(com.kerybotu.derpibooru.mirror.R.drawable.ic_arrow_back); setNavigationOnClickListener { finish() } }, LinearLayout.LayoutParams(-1, dp(56))); scroll = ScrollView(this@ForumActivity); list = LinearLayout(this@ForumActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(24)) }; scroll.addView(list); addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f)); progress = ProgressBar(this@ForumActivity).apply { visibility = View.GONE }; addView(progress, LinearLayout.LayoutParams(-2, dp(40)).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL }); scroll.viewTreeObserver.addOnScrollChangedListener { if (!loading && scroll.getChildAt(0).bottom - scroll.height - scroll.scrollY < dp(500)) load() } } }
+    private fun load() { if (loading) return; loading = true; progress.visibility = View.VISIBLE; scope.launch { val path = when { topic != null -> "forums/$forum/topics/$topic/posts?page=$page"; forum != null -> "forums/$forum/topics?page=$page"; else -> "forums" }; val raw = withContext(Dispatchers.IO) { NetworkManager.getApi(this@ForumActivity, path) }; val root = runCatching { JSONObject(raw.orEmpty()) }.getOrNull(); val key = when { topic != null -> "posts"; forum != null -> "topics"; else -> "forums" }; val arr = root?.optJSONArray(key); repeat(arr?.length() ?: 0) { i -> arr?.optJSONObject(i)?.let { addRow(it, key) } }; if ((arr?.length() ?: 0) > 0 && forum != null) page++; loading = false; progress.visibility = View.GONE } }
+    private fun addRow(item: JSONObject, type: String) { val c = PaletteManager.colors(this); val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(12)); setBackgroundColor(c.surfaceVariant) }; when (type) {
+        "forums" -> { val name = item.optString("name"); row.addView(title(name)); row.addView(meta("${item.optString("description")} · ${item.optInt("topic_count")} 个主题")); row.setOnClickListener { startActivity(Intent(this, ForumActivity::class.java).putExtra(EXTRA_FORUM, item.optString("short_name")).putExtra(EXTRA_TITLE, name)) } }
+        "topics" -> { val title = item.optString("title"); row.addView(title(title)); row.addView(meta("${item.optString("author", item.optString("user", ""))} · ${item.optString("created_at").take(10)}")); row.addView(meta("回复 ${item.optInt("reply_count", item.optInt("post_count"))}")); row.setOnClickListener { startActivity(Intent(this, ForumActivity::class.java).putExtra(EXTRA_FORUM, forum).putExtra(EXTRA_TOPIC, item.optString("slug")).putExtra(EXTRA_TITLE, title)) } }
+        else -> { row.addView(title("${item.optString("author", "匿名用户")} · ${item.optString("created_at").take(10)}")); val body = item.optString("body"); val content = TextView(this).apply { text = body; setTextColor(c.onSurface); setPadding(0, dp(6), 0, 0) }; row.addView(content); addTranslateAction(row, content, body) }
+    }; list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) }) }
+    private fun addTranslateAction(parent: LinearLayout, content: TextView, original: String) { if (!NiuTransService.shouldTranslate(original)) return; val c = PaletteManager.colors(this); parent.addView(Button(this).apply { text = "翻译"; textSize = 12f; backgroundTintList = android.content.res.ColorStateList.valueOf(c.primary); setTextColor(c.onPrimary); setOnClickListener { if (tag is String) { content.text = original; tag = null; text = "翻译" } else { isEnabled = false; text = "翻译中…"; scope.launch { NiuTransService.translate(original).onSuccess { content.text = it; tag = it; this@apply.text = "原文" }.onFailure { this@apply.text = "翻译" }; this@apply.isEnabled = true } } } }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) }) }
+    private fun title(text: String) = TextView(this).apply { this.text = text; textSize = 16f; setTextColor(PaletteManager.colors(this@ForumActivity).primary) }; private fun meta(text: String) = TextView(this).apply { this.text = text; textSize = 13f; setTextColor(PaletteManager.colors(this@ForumActivity).muted); setPadding(0, dp(4), 0, 0) }; private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt(); override fun onDestroy() { scope.cancel(); super.onDestroy() }
+}

@@ -41,6 +41,7 @@ object IpOptimizer {
 
     // -------------------- Cloudflare 官方 IP 段数据源 --------------------
     private const val CF_IPS_API_URL = "https://api.cloudflare.com/client/v4/ips"
+    private const val CF_IPS_V6_URL = "https://www.cloudflare.com/ips-v6/"
     private const val KEY_CF_CIDRS = "cf_cidrs_cache"
     private const val KEY_CF_FETCH_TIME = "cf_cidrs_fetch_time"
     private const val CF_CACHE_TTL_MS = 24 * 60 * 60 * 1000L // CIDR 列表几乎不变，缓存 24 小时
@@ -259,26 +260,34 @@ object IpOptimizer {
 
     data class OptimizeResult(val ip: String, val didOptimize: Boolean)
 
-    suspend fun getBestIpSmart(context: Context, forceRefresh: Boolean = false): OptimizeResult {
+    suspend fun getBestIpSmart(
+        context: Context,
+        forceRefresh: Boolean = false,
+        domainKey: String = AppSettings.getTargetDomain(context),
+        onProgress: ((tested: Int, total: Int) -> Unit)? = null
+    ): OptimizeResult {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
+        val cacheSuffix = domainKey.lowercase().replace(Regex("[^a-z0-9]"), "_")
+        val bestIpKey = "${KEY_LAST_BEST_IP}_$cacheSuffix"
+        val bestTimeKey = "${KEY_LAST_BEST_TIME}_$cacheSuffix"
 
         if (!forceRefresh) {
-            val lastIp = prefs.getString(KEY_LAST_BEST_IP, null)
-            val lastTime = prefs.getLong(KEY_LAST_BEST_TIME, 0L)
+            val lastIp = prefs.getString(bestIpKey, null)
+            val lastTime = prefs.getLong(bestTimeKey, 0L)
             if (!lastIp.isNullOrBlank() && now - lastTime < SHORT_CACHE_TTL_MS) {
                 return OptimizeResult(lastIp, didOptimize = false)
             }
         }
 
         val candidatePool = buildCandidatePool(context, forceRefresh)
-        val best = speedTest(candidatePool, 443)
+        val best = speedTest(candidatePool, 443, onProgress)
             ?: candidatePool.firstOrNull()
             ?: FALLBACK_IP_LIST.first()
 
         prefs.edit()
-            .putString(KEY_LAST_BEST_IP, best)
-            .putLong(KEY_LAST_BEST_TIME, now)
+            .putString(bestIpKey, best)
+            .putLong(bestTimeKey, now)
             .apply()
 
         return OptimizeResult(best, didOptimize = true)
@@ -356,9 +365,12 @@ object IpOptimizer {
     }
 
     private fun isValidIp(s: String): Boolean {
-        val parts = s.split(".")
-        if (parts.size != 4) return false
-        return parts.all { it.toIntOrNull()?.let { n -> n in 0..255 } == true }
+        val value = s.trim().removePrefix("[").removeSuffix("]")
+        if (value.isEmpty() || value.any { it.isWhitespace() }) return false
+        return runCatching {
+            java.net.InetAddress.getByName(value)
+            value.contains('.') || value.contains(':')
+        }.getOrDefault(false)
     }
 
     // -------------------- Cloudflare 官方 IP 段：拉取 + 缓存 + 随机采样 --------------------
@@ -423,7 +435,9 @@ object IpOptimizer {
                 if (code == 200) {
                     val text = conn.inputStream.bufferedReader().use { it.readText() }
                     conn.disconnect()
-                    parseIpv4CidrsFromResponse(text)
+                    val ranges = parseIpv4CidrsFromResponse(text).toMutableList()
+                    ranges += fetchCloudflareIpv6Ranges()
+                    ranges
                 } else {
                     conn.disconnect()
                     emptyList()
@@ -435,13 +449,24 @@ object IpOptimizer {
         }
     }
 
+    private fun fetchCloudflareIpv6Ranges(): List<String> = runCatching {
+        val conn = URL(CF_IPS_V6_URL).openConnection() as HttpURLConnection
+        conn.connectTimeout = 4000; conn.readTimeout = 4000
+        if (conn.responseCode != 200) return@runCatching emptyList()
+        conn.inputStream.bufferedReader().use { reader ->
+            reader.readLines().map { it.trim() }.filter { it.contains(':') && it.contains('/') }
+        }.also { conn.disconnect() }
+    }.getOrDefault(emptyList())
+
     private fun parseIpv4CidrsFromResponse(json: String): List<String> {
         return try {
             val root = JSONObject(json)
             if (!root.optBoolean("success", false)) return emptyList()
             val result = root.optJSONObject("result") ?: return emptyList()
-            val cidrsArray = result.optJSONArray("ipv4_cidrs") ?: return emptyList()
-            (0 until cidrsArray.length()).map { cidrsArray.getString(it) }
+            val cidrs = mutableListOf<String>()
+            result.optJSONArray("ipv4_cidrs")?.let { array -> for (i in 0 until array.length()) cidrs += array.getString(i) }
+            result.optJSONArray("ipv6_cidrs")?.let { array -> for (i in 0 until array.length()) cidrs += array.getString(i) }
+            cidrs
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
@@ -456,6 +481,10 @@ object IpOptimizer {
         return try {
             val parts = cidr.split("/")
             if (parts.size != 2) return emptyList()
+            // IPv6 ranges are accepted and probed through the official ips-v6 source.
+            // Keep the network address as a conservative candidate; IPv6 anycast ranges
+            // are not safely enumerable with the IPv4 Long sampler below.
+            if (parts[0].contains(':')) return listOf(parts[0])
             val baseIp = ipToLong(parts[0]) ?: return emptyList()
             val prefixLen = parts[1].toIntOrNull() ?: return emptyList()
             if (prefixLen !in 0..32) return emptyList()
@@ -506,14 +535,20 @@ object IpOptimizer {
 
     // -------------------- 并发测速优选（限制并发，避免资源耗尽） --------------------
 
-    private suspend fun speedTest(ipList: List<String>, port: Int): String? =
+    private suspend fun speedTest(
+        ipList: List<String>,
+        port: Int,
+        onProgress: ((tested: Int, total: Int) -> Unit)? = null
+    ): String? =
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
                 val semaphore = Semaphore(MAX_CONCURRENT_TESTS)
+                val completed = java.util.concurrent.atomic.AtomicInteger(0)
                 val deferredResults = ipList.map { ip ->
                     async {
                         semaphore.withPermit {
                             val latency = measureTcpConnectLatency(ip, port)
+                            onProgress?.invoke(completed.incrementAndGet(), ipList.size)
                             ip to latency
                         }
                     }

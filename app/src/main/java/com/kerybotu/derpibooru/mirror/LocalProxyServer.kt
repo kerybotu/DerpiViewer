@@ -6,29 +6,28 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 class LocalProxyServer(
-    targetDomain: String,
-    preferredIp: String
+    preferredIps: Map<String, String>
 ) {
     @Volatile
-    var targetDomain: String = targetDomain
+    private var preferredIps: Map<String, String> = preferredIps.mapKeys { it.key.lowercase() }
         private set
 
-    fun updateTargetDomain(newDomain: String) {
-        targetDomain = newDomain
-    }
-
-    @Volatile
-    var preferredIp: String = preferredIp
-        private set
-
-    fun updateTargetIp(newIp: String) {
-        preferredIp = newIp
+    fun updatePreferredIps(newIps: Map<String, String>) {
+        preferredIps = newIps.mapKeys { it.key.lowercase() }
     }
 
     private var serverSocket: ServerSocket? = null
-    private val executor = Executors.newCachedThreadPool()
+    // Each accepted proxy connection fans out to two relay threads; keep the
+    // admission queue bounded so a burst cannot exhaust the process.
+    private val executor = ThreadPoolExecutor(
+        4, 32, 60L, TimeUnit.SECONDS, LinkedBlockingQueue(64),
+        ThreadPoolExecutor.CallerRunsPolicy()
+    )
     @Volatile private var running = false
 
     var port: Int = 0
@@ -92,7 +91,7 @@ class LocalProxyServer(
             if (line.isEmpty()) break
         }
 
-        val connectHost = if (host.equals(targetDomain, ignoreCase = true)) preferredIp else host
+        val connectHost = resolveHost(host)
         Log.d("LocalProxyServer", "目标主机: $host, 连接 IP: $connectHost, 端口: $portNum")
 
         val remote = Socket()
@@ -136,7 +135,7 @@ class LocalProxyServer(
             ?.substringAfter(":")?.trim() ?: run { client.close(); return }
 
         val host = hostHeader.substringBefore(":")
-        val connectHost = if (host.equals(targetDomain, ignoreCase = true)) preferredIp else host
+        val connectHost = resolveHost(host)
 
         val remote = Socket()
         try {
@@ -161,6 +160,15 @@ class LocalProxyServer(
         t1.join(); t2.join()
         try { a.close() } catch (_: Exception) {}
         try { b.close() } catch (_: Exception) {}
+    }
+
+    private fun resolveHost(host: String): String {
+        val normalizedHost = host.lowercase()
+        return preferredIps[normalizedHost]
+            ?: preferredIps.entries.firstOrNull { (domain, _) ->
+                normalizedHost.endsWith(".$domain")
+            }?.value
+            ?: host
     }
 
     private fun pipe(from: Socket, to: Socket) {

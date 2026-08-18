@@ -3,21 +3,28 @@
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:background="?attr/colorSurface">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-        <androidx.appcompat.widget.Toolbar
-            android:id="@+id/settings_toolbar" android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize" android:background="?attr/colorPrimary"
-            android:title="设置" android:titleTextColor="@android:color/white"
-            android:navigationIcon="@drawable/ic_arrow_back" />
+        <include android:id="@+id/settings_toolbar" layout="@layout/include_safe_toolbar" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="账户" android:textStyle="bold" android:textSize="13sp" android:padding="16dp" android:textColor="?attr/colorPrimary" />
+        <TextView android:id="@+id/account_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="16dp" android:textColor="?attr/colorOnSurfaceVariant" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp">
+            <Button android:id="@+id/account_login" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="登录并导入 Key" />
+            <Button android:id="@+id/account_logout" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:text="清除本地凭据" />
+        </LinearLayout>
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="外观" android:textStyle="bold" android:textSize="13sp" android:padding="16dp" android:textColor="?attr/colorPrimary" />
         <RadioGroup android:id="@+id/palette_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingHorizontal="16dp">
             <RadioButton android:id="@+id/palette_dark" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="暗色" />
             <RadioButton android:id="@+id/palette_light" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="浅色" />
             <RadioButton android:id="@+id/palette_colorful" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="彩色" />
         </RadioGroup>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="强调色" android:textStyle="bold" android:textSize="13sp" android:padding="16dp" android:textColor="?attr/colorPrimary" />
+        <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:scrollbars="none">
+            <LinearLayout android:id="@+id/accent_swatches" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingHorizontal="12dp" android:paddingBottom="12dp" />
+        </HorizontalScrollView>
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="浏览体验" android:textStyle="bold" android:textSize="13sp" android:padding="16dp" android:textColor="?attr/colorPrimary" />
         <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_high_res" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="主页使用高分辨率缩略图" android:paddingHorizontal="16dp" android:minHeight="52dp" />
         <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_video_thumb" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="开启视频缩略图" android:paddingHorizontal="16dp" android:minHeight="52dp" />
         <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_video_audio" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="默认开启视频音频" android:paddingHorizontal="16dp" android:minHeight="52dp" />
+        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_video_wifi_only" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="仅 Wi-Fi 下自动播放视频" android:paddingHorizontal="16dp" android:minHeight="52dp" />
         <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_hide_uploader" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="隐藏上传者" android:paddingHorizontal="16dp" android:minHeight="52dp" />
         <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_hide_score" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="隐藏分数" android:paddingHorizontal="16dp" android:minHeight="52dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="站点与网络" android:textStyle="bold" android:textSize="13sp" android:padding="16dp" android:textColor="?attr/colorPrimary" />
@@ -28,11 +35,12 @@
         </RadioGroup>
         <EditText android:id="@+id/custom_domain" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="自定义域名，例如 example.org" android:inputType="textUri" android:paddingHorizontal="16dp" />
         <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_ip" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="优选 IP（关闭则直连）" android:paddingHorizontal="16dp" android:minHeight="52dp" />
-        <EditText android:id="@+id/manual_ip" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="手动优选节点 IP（留空为自动）" android:inputType="numberDecimal" android:paddingHorizontal="16dp" />
+        <EditText android:id="@+id/manual_ip" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="手动优选节点 IP（支持 IPv4 / IPv6，留空为自动）" android:inputType="textNoSuggestions" android:singleLine="true" android:paddingHorizontal="16dp" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp">
             <Button android:id="@+id/save_network" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="保存网络设置" />
             <Button android:id="@+id/optimize_ip" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:text="重新优选 IP" />
         </LinearLayout>
+        <Button android:id="@+id/deep_optimize_ip" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginHorizontal="12dp" android:text="深度 IP 优选" />
         <Button android:id="@+id/restore_auto_ip" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginHorizontal="12dp" android:text="恢复自动优选" />
         <TextView android:id="@+id/network_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="16dp" android:textColor="?attr/colorOnSurfaceVariant" />
         <Button android:id="@+id/clear_cache" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="12dp" android:text="清除缓存" />

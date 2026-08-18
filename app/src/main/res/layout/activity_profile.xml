@@ -8,15 +8,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical">
-        <androidx.appcompat.widget.Toolbar
-            android:id="@+id/profile_toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="?attr/colorPrimary"
-            app:title="我的"
-            app:titleTextColor="@android:color/white"
-            app:navigationIcon="@drawable/ic_arrow_back"
-            app:menu="@menu/profile_menu" />
+        <include android:id="@+id/profile_toolbar" layout="@layout/include_safe_toolbar" />
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -37,10 +29,11 @@
                 android:layout_weight="1"
                 android:layout_marginStart="16dp"
                 android:orientation="vertical">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="未登录" android:textSize="20sp" android:textStyle="bold" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="登录后同步收藏、投票和关注" android:textColor="?attr/colorOnSurfaceVariant" />
+                <TextView android:id="@+id/profile_name" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="未登录" android:textSize="20sp" android:textStyle="bold" />
+                <TextView android:id="@+id/profile_subtitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="登录后同步收藏、投票和关注" android:textColor="?attr/colorOnSurfaceVariant" />
             </LinearLayout>
         </LinearLayout>
+        <Button android:id="@+id/profile_login" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginHorizontal="20dp" android:text="登录" />
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
