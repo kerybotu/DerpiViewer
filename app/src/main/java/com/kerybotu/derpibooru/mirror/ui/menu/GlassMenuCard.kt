@@ -78,7 +78,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
 
             val iconView = ImageView(context).apply {
                 setImageResource(item.iconRes)
-                imageTintList = android.content.res.ColorStateList.valueOf(if (item.selected) colors.primary else colors.onSurface)
+                imageTintList = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.ICON_COLOR)
             }
             val iconParams = LinearLayout.LayoutParams((24 * density).toInt(), (24 * density).toInt()).apply {
                 marginEnd = (16 * density).toInt()

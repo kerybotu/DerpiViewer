@@ -223,7 +223,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         headerGlass.setPalette(colors)
         toolbar.setBackgroundColor(Color.TRANSPARENT)
         toolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
-        val iconColor = GlassWidgetStyle.foreground(headerGlass)
+        val iconColor = GlassWidgetStyle.ICON_COLOR
         toolbar.navigationIcon?.mutate()?.setTint(iconColor)
         toolbar.overflowIcon?.mutate()?.setTint(iconColor)
         for (index in 0 until toolbar.menu.size()) toolbar.menu.getItem(index).icon?.mutate()?.setTint(iconColor)

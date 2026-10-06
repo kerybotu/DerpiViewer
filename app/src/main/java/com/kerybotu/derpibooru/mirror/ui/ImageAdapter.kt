@@ -158,7 +158,7 @@ class ImageAdapter(
                 styleOverlay(binding.infoBar, palette)
                 styleOverlay(binding.statsBar, palette)
             }
-            val foreground = if (glass) GlassWidgetStyle.foreground(binding.root) else palette.onSurface
+            val foreground = if (glass) GlassWidgetStyle.ICON_COLOR else palette.onSurface
             val textColor = if (glass) GlassWidgetStyle.TEXT_COLOR else palette.onSurface
             if (glass) {
                 binding.selectionMark.setTextColor(textColor)

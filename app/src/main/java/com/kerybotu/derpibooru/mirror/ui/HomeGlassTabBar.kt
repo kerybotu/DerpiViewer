@@ -13,7 +13,7 @@ import com.example.liquidglass.LiquidGlassTabBar
 import com.example.liquidglass.LiquidGlassView
 import kotlin.math.abs
 
-/** Library tab bar with app navigation, reselection and fixed theme colors. */
+/** Library tab bar with app navigation, reselection and a fixed white foreground. */
 class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     LiquidGlassTabBar(context, attrs) {
     var onItemSelected: ((Int) -> Unit)? = null
@@ -81,7 +81,7 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
 
     private fun applyForeground() {
         val row = getChildAt(0) as? ViewGroup ?: return
-        val color = GlassWidgetStyle.foreground(this)
+        val color = GlassWidgetStyle.ICON_COLOR
         selectedTintColor = color
         fun tint(view: View) {
             when (view) {

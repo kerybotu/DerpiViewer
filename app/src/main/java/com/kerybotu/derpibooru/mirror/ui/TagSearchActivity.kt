@@ -350,7 +350,7 @@ class TagSearchActivity : AppCompatActivity() {
             isAppearanceLightNavigationBars = light
         }
         headerGlass.setPalette(colors)
-        val foreground = GlassWidgetStyle.foreground(headerGlass)
+        val foreground = GlassWidgetStyle.ICON_COLOR
         toolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
         toolbar.navigationIcon?.mutate()?.setTint(foreground)
         input.setTextColor(GlassWidgetStyle.TEXT_COLOR)

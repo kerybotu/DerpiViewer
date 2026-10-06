@@ -134,7 +134,7 @@ class MainActivity : AppCompatActivity() {
         drawerToggle.syncState()
         val toolbarColors = PaletteManager.colors(this)
         tintToolbarNavigationIcon(
-            if (AppSettings.isNewUiBetaEnabled(this)) glassForegroundColor() else toolbarColors.onPrimary
+            if (AppSettings.isNewUiBetaEnabled(this)) GlassWidgetStyle.ICON_COLOR else toolbarColors.onPrimary
         )
 
         binding.navView.setNavigationItemSelectedListener { menuItem ->
@@ -761,15 +761,8 @@ class MainActivity : AppCompatActivity() {
         binding.fabUploadGlass.enableSensorHighlight = fabVisible && shellGlassResumed
     }
 
-    private fun glassForegroundColor(): Int =
-        if (android.graphics.Color.luminance(PaletteManager.colors(this).surface) > 0.5f) {
-            android.graphics.Color.BLACK
-        } else {
-            android.graphics.Color.WHITE
-        }
-
     private fun updateGlassHeaderTint() {
-        val foreground = glassForegroundColor()
+        val foreground = GlassWidgetStyle.ICON_COLOR
         binding.toolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
         binding.toolbar.setSubtitleTextColor(GlassWidgetStyle.TEXT_COLOR)
         tintToolbarNavigationIcon(foreground)
@@ -779,13 +772,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateGlassShellTint() {
-        val tint = android.content.res.ColorStateList.valueOf(glassForegroundColor())
+        val tint = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.ICON_COLOR)
         binding.bottomNavigation.itemIconTintList = tint
         binding.bottomNavigation.itemTextColor = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.TEXT_COLOR)
         binding.sideNavigation.itemIconTintList = tint
         binding.sideNavigation.itemTextColor = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.TEXT_COLOR)
         binding.fabUpload.imageTintList = tint
-        binding.fabUploadGlass.setIconTint(glassForegroundColor())
+        binding.fabUploadGlass.setIconTint(GlassWidgetStyle.ICON_COLOR)
         binding.glassBottomNavigation.applyPalette()
         updateGlassHeaderTint()
     }
