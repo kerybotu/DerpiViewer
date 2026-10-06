@@ -68,6 +68,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var controls: LinearLayout
     private lateinit var headerExtras: LinearLayout
     private lateinit var loadingPanel: LiquidGlassView
+    private lateinit var loadingIndicator: IosActivityIndicator
     private lateinit var statusPanel: LiquidGlassListItem
     private lateinit var selectionActions: LinearLayout
     private lateinit var downloadButton: LiquidGlassButton
@@ -202,12 +203,10 @@ class SearchActivity : AppCompatActivity() {
         controls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateResultInsets() }
         headerExtras.post { headerContentHeight = headerExtras.height; setHeaderProgress(0f) }
 
+        loadingIndicator = IosActivityIndicator(this).apply { contentDescription = "正在搜索" }
         loadingPanel = trackGlass(LiquidGlassView(this)).apply {
             visibility = View.GONE
-            addView(ProgressBar(this@SearchActivity).apply {
-                indeterminateTintList = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.foreground(this))
-            }, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER))
-            contentDescription = "正在搜索"
+            addView(loadingIndicator, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
         }
         root.addView(loadingPanel, FrameLayout.LayoutParams(dp(80), dp(80), Gravity.CENTER))
         statusPanel = trackGlass(LiquidGlassListItem(this)).apply { visibility = View.GONE }
@@ -415,6 +414,7 @@ class SearchActivity : AppCompatActivity() {
             isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
         }
         queryInput.setTextColor(GlassWidgetStyle.foreground(queryInput)); queryInput.setHintTextColor(colors.muted)
+        loadingIndicator.applyPalette(colors)
         attachedGlass.toMap().forEach { (glass, radius) -> GlassWidgetStyle.apply(glass, radius) }
         adapter.refreshDisplayMode()
         if (appliedPalette != colors) adapter.notifyDataSetChanged()

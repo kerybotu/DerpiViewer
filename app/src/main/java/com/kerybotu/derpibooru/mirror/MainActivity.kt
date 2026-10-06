@@ -923,7 +923,8 @@ class MainActivity : AppCompatActivity() {
         binding.startupOverlay.setBackgroundColor(c.surface)
         binding.startupStatus.setTextColor(c.onSurface)
         binding.startupDetail.setTextColor(c.muted)
-        binding.startupProgress.indeterminateTintList = android.content.res.ColorStateList.valueOf(c.primary)
+        binding.startupProgress.applyPalette(c)
+        binding.progressBar.applyPalette(c)
     }
 
     private fun showSearchDialog() {

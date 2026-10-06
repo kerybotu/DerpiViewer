@@ -24,11 +24,12 @@
                 android:clipToPadding="false"
                 android:scrollbars="vertical" />
 
-            <ProgressBar
+            <com.kerybotu.derpibooru.mirror.ui.IosActivityIndicator
                 android:id="@+id/progress_bar"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:layout_gravity="center"
+                android:contentDescription="@string/loading"
                 android:visibility="gone" />
 
             <LinearLayout
@@ -40,10 +41,11 @@
                 android:background="?attr/colorSurface"
                 android:elevation="8dp">
 
-                <ProgressBar
+                <com.kerybotu.derpibooru.mirror.ui.IosActivityIndicator
                     android:id="@+id/startup_progress"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:contentDescription="@string/loading"
                     android:indeterminate="true" />
 
                 <TextView
