@@ -436,6 +436,10 @@ class MainActivity : AppCompatActivity() {
             navHeight + navigationBarInsetBottom + dp(if (betaUi) Ui2DesignSystem.Spacing.xl else Ui2DesignSystem.Spacing.xs)
         }
         embeddedVideo?.setBottomInset(videoBottomInset)
+        embeddedMessages?.setNavigationInsets(
+            right = if (landscapeIslandLayout) binding.sideNavigation.measuredWidth + sideParams.marginEnd + dp(Ui2DesignSystem.Spacing.islandGap) else 0,
+            bottom = videoBottomInset
+        )
     }
 
     private fun cycleDensity() {
@@ -735,6 +739,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateShellGlass() {
         if (!::binding.isInitialized) return
+        embeddedMessages?.setActive(shellGlassResumed && embeddedScreenId == R.id.tab_messages)
         val enabled = AppSettings.isNewUiBetaEnabled(this)
         val visible = enabled && !AdaptiveLayoutPolicy.isLandscape(this)
         val source = if (embeddedScreenId == R.id.tab_home) binding.homeRefresh else binding.mainContentHost
