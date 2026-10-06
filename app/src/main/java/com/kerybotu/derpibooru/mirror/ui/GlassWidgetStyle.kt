@@ -16,6 +16,8 @@ import com.kerybotu.derpibooru.mirror.PaletteManager
 
 /** App theme and bounded rendering shared by the library's ready-made widgets. */
 object GlassWidgetStyle {
+    const val TEXT_COLOR = Color.WHITE
+
     fun foreground(view: View): Int =
         if (Color.luminance(PaletteManager.colors(view.context).surface) > 0.5f) Color.BLACK else Color.WHITE
 
@@ -59,10 +61,20 @@ object GlassWidgetStyle {
         view.clipToOutline = true
         val color = foreground(view)
         when (view) {
-            is LiquidGlassButton -> view.setTextColor(color)
-            is LiquidGlassChip -> view.setTextColor(color)
+            is LiquidGlassButton -> view.setTextColor(TEXT_COLOR)
+            is LiquidGlassChip -> {
+                view.setTextColor(color)
+                view.textView.setTextColor(TEXT_COLOR)
+            }
             is LiquidGlassFab -> view.setIconTint(color)
-            is LiquidGlassListItem -> view.setTextColor(color)
+            is LiquidGlassListItem -> {
+                view.setTextColor(TEXT_COLOR)
+                view.supportingTextView.setTextColor(TEXT_COLOR)
+                view.trailingTextView.setTextColor(TEXT_COLOR)
+                // The library's text setter also tints icons; retain their theme colors.
+                view.leadingImageView.setColorFilter(color)
+                view.trailingImageView.setColorFilter(color)
+            }
         }
         view.invalidate()
     }

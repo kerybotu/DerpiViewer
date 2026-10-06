@@ -85,7 +85,7 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
         selectedTintColor = color
         fun tint(view: View) {
             when (view) {
-                is TextView -> view.setTextColor(color)
+                is TextView -> view.setTextColor(GlassWidgetStyle.TEXT_COLOR)
                 is ImageView -> view.imageTintList = ColorStateList.valueOf(color)
             }
             if (view is ViewGroup) for (i in 0 until view.childCount) tint(view.getChildAt(i))

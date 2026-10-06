@@ -28,15 +28,27 @@ class IosActivityIndicator @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = android.R.attr.progressBarStyle
 ) : ProgressBar(context, attrs, defStyleAttr) {
+    private val spinner = SpokeDrawable((32 * resources.displayMetrics.density).roundToInt())
+
     init {
         isIndeterminate = true
-        indeterminateDrawable = SpokeDrawable((32 * resources.displayMetrics.density).roundToInt())
+        indeterminateDrawable = spinner
         if (contentDescription.isNullOrBlank()) contentDescription = context.getString(R.string.loading)
         applyPalette()
     }
 
     fun applyPalette(colors: PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         indeterminateTintList = ColorStateList.valueOf(colors.muted)
+    }
+
+    /** Reveals stationary spokes as a pull gesture approaches its refresh threshold. */
+    fun setPullProgress(progress: Float) {
+        spinner.pullProgress = progress.coerceIn(0f, 1f)
+    }
+
+    fun startLoading() {
+        spinner.pullProgress = null
+        if (isShown && windowVisibility == VISIBLE) spinner.start()
     }
 }
 
@@ -50,6 +62,12 @@ private class SpokeDrawable(private val intrinsicSize: Int) : Drawable(), Animat
     private var drawableAlpha = 255
     private var head = 0
     private var running = false
+    var pullProgress: Float? = null
+        set(value) {
+            field = value
+            if (value != null) stop()
+            invalidateSelf()
+        }
 
     override fun draw(canvas: Canvas) {
         val size = minOf(bounds.width(), bounds.height()).toFloat()
@@ -58,18 +76,19 @@ private class SpokeDrawable(private val intrinsicSize: Int) : Drawable(), Animat
         canvas.translate(bounds.exactCenterX(), bounds.exactCenterY())
         paint.color = color
         paint.strokeWidth = size * 0.075f
+        val revealed = pullProgress?.let { (it * SPOKE_COUNT).toInt() } ?: SPOKE_COUNT
         repeat(SPOKE_COUNT) { index ->
             val age = (head - index + SPOKE_COUNT) % SPOKE_COUNT
-            val opacity = 1f - 0.8f * age / (SPOKE_COUNT - 1)
+            val opacity = if (pullProgress != null) 1f else 1f - 0.8f * age / (SPOKE_COUNT - 1)
             paint.alpha = (Color.alpha(color) * drawableAlpha / 255f * opacity).roundToInt()
-            canvas.drawLine(0f, -size * 0.23f, 0f, -size * 0.41f, paint)
+            if (index < revealed) canvas.drawLine(0f, -size * 0.23f, 0f, -size * 0.41f, paint)
             canvas.rotate(360f / SPOKE_COUNT)
         }
         canvas.restoreToCount(checkpoint)
     }
 
     override fun start() {
-        if (running || !isVisible) return
+        if (running || !isVisible || pullProgress != null) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled()) return
         running = true
         head = 0

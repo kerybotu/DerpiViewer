@@ -34,8 +34,11 @@ import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
 import com.example.liquidglass.LiquidGlassTabBar
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -159,6 +162,8 @@ class MainActivity : AppCompatActivity() {
         // the grid's own small spacing instead of reserving island height.
         artworkBasePaddingBottom = dp(4)
         binding.recyclerView.adapter = adapter
+        binding.homeRefresh.scrollTarget = binding.recyclerView
+        binding.homeRefresh.setCanRefresh { !loading && binding.startupOverlay.visibility != View.VISIBLE }
         initializeEmbeddedScreens()
         binding.homeRefresh.setOnRefreshListener {
             if (featuredPanel?.visibility == View.VISIBLE) {
@@ -386,13 +391,24 @@ class MainActivity : AppCompatActivity() {
         } else binding.bottomNavigation.measuredHeight
         val leftInset = artworkBasePaddingLeft
         val rightInset = artworkBasePaddingRight
-        val topPadding = if (betaUi) artworkBasePaddingTop else 0
+        val topPadding = when {
+            betaUi && !landscapeIslandLayout -> {
+                val headerParams = binding.appBarLayout.layoutParams as android.view.ViewGroup.MarginLayoutParams
+                // Reserve the fixed header's space at the beginning of the feed.
+                // clipToPadding=false still lets scrolled artwork pass under the glass.
+                headerParams.topMargin + binding.toolbar.layoutParams.height.coerceAtLeast(dp(60)) +
+                    dp(Ui2DesignSystem.Spacing.islandGap) + artworkBasePaddingTop
+            }
+            betaUi -> artworkBasePaddingTop
+            else -> 0
+        }
         val bottomInset = if (betaUi) artworkBasePaddingBottom else if (landscapeIslandLayout) {
             navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.md)
         } else {
             navHeight + navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.xs)
         }
         binding.recyclerView.setPadding(leftInset, topPadding, rightInset, bottomInset)
+        binding.homeRefresh.contentTopInset = topPadding
         binding.recyclerView.clipToPadding = false
         binding.homeRefresh.post {
             if (!landscapeIslandLayout || binding.homeRefresh.width <= 0) return@post
@@ -749,8 +765,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateGlassHeaderTint() {
         val foreground = glassForegroundColor()
-        binding.toolbar.setTitleTextColor(foreground)
-        binding.toolbar.setSubtitleTextColor(foreground)
+        binding.toolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
+        binding.toolbar.setSubtitleTextColor(GlassWidgetStyle.TEXT_COLOR)
         tintToolbarNavigationIcon(foreground)
         binding.toolbar.overflowIcon?.setTint(foreground)
         binding.btnDensity.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
@@ -760,9 +776,9 @@ class MainActivity : AppCompatActivity() {
     private fun updateGlassShellTint() {
         val tint = android.content.res.ColorStateList.valueOf(glassForegroundColor())
         binding.bottomNavigation.itemIconTintList = tint
-        binding.bottomNavigation.itemTextColor = tint
+        binding.bottomNavigation.itemTextColor = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.TEXT_COLOR)
         binding.sideNavigation.itemIconTintList = tint
-        binding.sideNavigation.itemTextColor = tint
+        binding.sideNavigation.itemTextColor = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.TEXT_COLOR)
         binding.fabUpload.imageTintList = tint
         binding.fabUploadGlass.setIconTint(glassForegroundColor())
         binding.glassBottomNavigation.applyPalette()
@@ -925,6 +941,7 @@ class MainActivity : AppCompatActivity() {
         binding.startupDetail.setTextColor(c.muted)
         binding.startupProgress.applyPalette(c)
         binding.progressBar.applyPalette(c)
+        binding.homeRefresh.applyPalette(c)
     }
 
     private fun showSearchDialog() {
@@ -982,7 +999,7 @@ class MainActivity : AppCompatActivity() {
     private suspend fun loadPage(targetPage: Int, query: String, append: Boolean) {
         if (loading) return
         loading = true
-        binding.progressBar.visibility = View.VISIBLE
+        binding.progressBar.visibility = if (binding.homeRefresh.isRefreshing) View.GONE else View.VISIBLE
         try {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val filterParam = NetworkManager.currentFilterParam(this@MainActivity)
@@ -1014,18 +1031,23 @@ class MainActivity : AppCompatActivity() {
                 homeHasLoaded = true
             }
             if (images.isEmpty() && !append) Toast.makeText(this, "没有找到匹配图片", Toast.LENGTH_SHORT).show()
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (e: Exception) {
             Log.e("MainActivity", "加载图片失败", e)
             if (!append) Toast.makeText(this, "API 解析异常：${e.localizedMessage ?: e.message}", Toast.LENGTH_LONG).show()
         } finally {
-            loading = false
-            binding.progressBar.visibility = View.GONE
-            binding.homeRefresh.isRefreshing = false
+            if (currentCoroutineContext().isActive) {
+                loading = false
+                binding.progressBar.visibility = View.GONE
+                binding.homeRefresh.isRefreshing = false
+            }
         }
     }
 
     private fun launchHomePage(targetPage: Int, query: String, append: Boolean) {
         homeLoadJob?.cancel()
+        loading = false
         homeLoadJob = activityScope.launch { loadPage(targetPage, query, append) }
     }
 

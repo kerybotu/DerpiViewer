@@ -159,13 +159,14 @@ class ImageAdapter(
                 styleOverlay(binding.statsBar, palette)
             }
             val foreground = if (glass) GlassWidgetStyle.foreground(binding.root) else palette.onSurface
+            val textColor = if (glass) GlassWidgetStyle.TEXT_COLOR else palette.onSurface
             if (glass) {
-                binding.selectionMark.setTextColor(foreground)
+                binding.selectionMark.setTextColor(textColor)
                 binding.mediaTypeBadge.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
             }
-            binding.textUpvotes.setTextColor(foreground)
-            binding.textComments.setTextColor(foreground)
-            binding.textFaves.setTextColor(foreground)
+            binding.textUpvotes.setTextColor(textColor)
+            binding.textComments.setTextColor(textColor)
+            binding.textFaves.setTextColor(textColor)
             tintInfoIcons(binding.infoBar, foreground)
             tintInfoIcons(binding.statsBar, foreground)
             CdnImageGate.load(binding.imageThumbnail, image.thumbnailUrl, AppSettings.getCdnThreads(binding.root.context))

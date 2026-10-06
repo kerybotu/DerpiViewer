@@ -64,7 +64,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var adapter: ImageAdapter
     private lateinit var searchRoot: FrameLayout
     private lateinit var pageBackdrop: View
-    private lateinit var resultsSurface: FrameLayout
+    private lateinit var resultsSurface: IosPullRefreshLayout
     private lateinit var controls: LinearLayout
     private lateinit var headerExtras: LinearLayout
     private lateinit var loadingPanel: LiquidGlassView
@@ -102,7 +102,7 @@ class SearchActivity : AppCompatActivity() {
         val root = FrameLayout(this)
         pageBackdrop = View(this).apply { setBackgroundColor(PaletteManager.colors(this@SearchActivity).surface) }
         root.addView(pageBackdrop, FrameLayout.LayoutParams(-1, -1))
-        resultsSurface = FrameLayout(this).apply { setBackgroundColor(PaletteManager.colors(this@SearchActivity).surface) }
+        resultsSurface = IosPullRefreshLayout(this).apply { setBackgroundColor(PaletteManager.colors(this@SearchActivity).surface) }
         results = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@SearchActivity, AdaptiveLayoutPolicy.artworkColumnCount(this@SearchActivity))
             clipToPadding = false
@@ -118,6 +118,12 @@ class SearchActivity : AppCompatActivity() {
         })
         results.adapter = adapter
         resultsSurface.addView(results, FrameLayout.LayoutParams(-1, -1))
+        resultsSurface.scrollTarget = results
+        resultsSurface.setCanRefresh {
+            searchJob?.isActive != true && queryInput.text.toString().trim().trimEnd(',').isNotBlank()
+        }
+        resultsSurface.onPullStarted = { headerSnapAnimator?.cancel() }
+        resultsSurface.setOnRefreshListener { runSearch(fromPull = true) }
         root.addView(resultsSurface, FrameLayout.LayoutParams(-1, -1))
 
         controls = column()
@@ -194,7 +200,8 @@ class SearchActivity : AppCompatActivity() {
         downloadButton = button("下载") {
             DownloadQueueManager.get(this).enqueueImages(adapter.selectedItems())
             adapter.clearSelection()
-            LiquidGlassToast.makeText(this, "已加入下载队列", LiquidGlassToast.LENGTH_SHORT).show()
+            LiquidGlassToast.makeText(this, "已加入下载队列", LiquidGlassToast.LENGTH_SHORT)
+                .setTextColor(GlassWidgetStyle.TEXT_COLOR).show()
         }
         selectionActions.addView(downloadButton, weightedParams())
         selectionActions.addView(button("取消选择") { adapter.clearSelection() }, weightedParams())
@@ -215,12 +222,12 @@ class SearchActivity : AppCompatActivity() {
         })
         results.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                if (dy == 0 || headerContentHeight <= 0) return
+                if (dy == 0 || headerContentHeight <= 0 || resultsSurface.isPulling) return
                 headerSnapAnimator?.cancel()
                 setHeaderProgress(headerHiddenPixels + dy)
             }
             override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
-                if (state == RecyclerView.SCROLL_STATE_IDLE && headerContentHeight > 0)
+                if (state == RecyclerView.SCROLL_STATE_IDLE && headerContentHeight > 0 && !resultsSurface.isPulling)
                     setSearchPanelsCollapsed(headerHiddenPixels >= headerContentHeight * 0.5f)
             }
         })
@@ -306,7 +313,7 @@ class SearchActivity : AppCompatActivity() {
         val value = EditText(this).apply {
             hint = "数值、日期或文本"; setSingleLine(true); background = null
             setPadding(dp(16), 0, dp(16), 0)
-            setTextColor(GlassWidgetStyle.foreground(this)); setHintTextColor(PaletteManager.colors(this@SearchActivity).muted)
+            setTextColor(GlassWidgetStyle.TEXT_COLOR); setHintTextColor(GlassWidgetStyle.TEXT_COLOR)
         }
         val valueSurface = trackGlass(LiquidGlassView(this)).apply { addView(value, FrameLayout.LayoutParams(-1, dp(56))) }
         val negate = trackGlass(LiquidGlassChip(this)).apply {
@@ -320,7 +327,8 @@ class SearchActivity : AppCompatActivity() {
         actions.addView(button("添加") {
             val raw = value.text.toString().trim()
             if (raw.isBlank()) {
-                LiquidGlassToast.makeText(this, "请输入条件", LiquidGlassToast.LENGTH_SHORT).show()
+                LiquidGlassToast.makeText(this, "请输入条件", LiquidGlassToast.LENGTH_SHORT)
+                    .setTextColor(GlassWidgetStyle.TEXT_COLOR).show()
                 value.requestFocus()
                 return@button
             }
@@ -342,18 +350,22 @@ class SearchActivity : AppCompatActivity() {
         val builder = LiquidGlassDialogBuilder(this, animateShow = false, glassSetup = {
             trackGlass(this, resultsSurface, 28f)
         })
-        val color = GlassWidgetStyle.foreground(resultsSurface)
+        val color = GlassWidgetStyle.TEXT_COLOR
         builder.overLightTextColor = color; builder.overDarkTextColor = color
         return builder.setTitle(title).setView(content).create()
     }
 
-    private fun runSearch() {
+    private fun runSearch(fromPull: Boolean = false) {
         val query = queryInput.text.toString().trim().trimEnd(',')
-        if (query.isBlank()) return
+        if (query.isBlank()) { resultsSurface.isRefreshing = false; return }
         suggestionJob?.cancel(); queryInput.dismissDropDown()
         searchJob?.cancel()
-        adapter.updateData(emptyList())
-        statusPanel.visibility = View.GONE; loadingPanel.visibility = View.VISIBLE
+        if (!fromPull) {
+            resultsSurface.isRefreshing = false
+            adapter.updateData(emptyList())
+        }
+        statusPanel.visibility = View.GONE
+        loadingPanel.visibility = if (fromPull) View.GONE else View.VISIBLE
         updateGlassRendering()
         val historyPrefs = getSharedPreferences("search_history", 0)
         val history = (historyPrefs.getStringSet("items", emptySet()).orEmpty() + query).toList().takeLast(10).toSet()
@@ -376,7 +388,11 @@ class SearchActivity : AppCompatActivity() {
                 statusPanel.headline = "搜索失败"; statusPanel.supportingText = "点击重试"
                 statusPanel.setOnClickListener { runSearch() }; statusPanel.visibility = View.VISIBLE
             } finally {
-                if (currentCoroutineContext().isActive) { loadingPanel.visibility = View.GONE; updateGlassRendering() }
+                if (currentCoroutineContext().isActive) {
+                    loadingPanel.visibility = View.GONE
+                    resultsSurface.isRefreshing = false
+                    updateGlassRendering()
+                }
             }
         }
     }
@@ -413,8 +429,9 @@ class SearchActivity : AppCompatActivity() {
         WindowCompat.getInsetsController(window, searchRoot).apply {
             isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
         }
-        queryInput.setTextColor(GlassWidgetStyle.foreground(queryInput)); queryInput.setHintTextColor(colors.muted)
+        queryInput.setTextColor(GlassWidgetStyle.TEXT_COLOR); queryInput.setHintTextColor(GlassWidgetStyle.TEXT_COLOR)
         loadingIndicator.applyPalette(colors)
+        resultsSurface.applyPalette(colors)
         attachedGlass.toMap().forEach { (glass, radius) -> GlassWidgetStyle.apply(glass, radius) }
         adapter.refreshDisplayMode()
         if (appliedPalette != colors) adapter.notifyDataSetChanged()
@@ -444,6 +461,7 @@ class SearchActivity : AppCompatActivity() {
     private fun updateResultInsets() {
         if (!::results.isInitialized) return
         results.setPadding(dp(4), controls.height + dp(8), dp(4), bottomInset + dp(8))
+        resultsSurface.contentTopInset = results.paddingTop
         queryInput.dropDownWidth = queryInput.width
         updateGlassRendering()
     }
