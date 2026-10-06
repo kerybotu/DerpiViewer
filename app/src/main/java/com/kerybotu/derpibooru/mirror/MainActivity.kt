@@ -30,6 +30,8 @@ import com.kerybotu.derpibooru.mirror.ui.FilterCache
 import com.kerybotu.derpibooru.mirror.ui.CdnImageGate
 import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
+import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
+import com.example.liquidglass.LiquidGlassTabBar
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,9 +75,6 @@ class MainActivity : AppCompatActivity() {
     private var lastUi2Enabled: Boolean? = null
     private var shellGlassResumed = false
     private var legacyNavigationRippleColor: android.content.res.ColorStateList? = null
-    private var legacyFabElevation = 0f
-    private var legacyFabPressedTranslationZ = 0f
-    private var legacyFabHoveredFocusedTranslationZ = 0f
     private var embeddedVideo: com.kerybotu.derpibooru.mirror.ui.EmbeddedVideoView? = null
     private var embeddedFeatured: com.kerybotu.derpibooru.mirror.ui.FeaturedPanel? = null
     private var embeddedMessages: com.kerybotu.derpibooru.mirror.ui.EmbeddedMessagesView? = null
@@ -91,9 +90,6 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         legacyNavigationRippleColor = binding.bottomNavigation.itemRippleColor
-        legacyFabElevation = binding.fabUpload.compatElevation
-        legacyFabPressedTranslationZ = binding.fabUpload.compatPressedTranslationZ
-        legacyFabHoveredFocusedTranslationZ = binding.fabUpload.compatHoveredFocusedTranslationZ
         PaletteManager.apply(this)
         lastPaletteSignature = paletteSignature()
         lastUi2Enabled = AppSettings.isNewUiBetaEnabled(this)
@@ -106,15 +102,13 @@ class MainActivity : AppCompatActivity() {
 
         binding.bottomNavigation.setOnItemSelectedListener { item -> handlePrimaryNavigation(item.itemId) }
         binding.sideNavigation.setOnItemSelectedListener { item -> handlePrimaryNavigation(item.itemId) }
-        binding.bottomNavigationIndicator.glassAppearanceListener = { isOverLight ->
-            if (AppSettings.isNewUiBetaEnabled(this)) updateGlassNavigationTint(isOverLight)
-        }
-        binding.headerGlass.glassAppearanceListener = { isOverLight ->
-            if (AppSettings.isNewUiBetaEnabled(this)) updateGlassHeaderTint(isOverLight)
-        }
-        binding.fabUploadGlass.glassAppearanceListener = { isOverLight ->
-            if (AppSettings.isNewUiBetaEnabled(this)) updateGlassFabTint(isOverLight)
-        }
+        val navigationIds = listOf(R.id.tab_home, R.id.tab_video_feed, R.id.tab_featured, R.id.tab_messages, R.id.tab_profile)
+        binding.glassBottomNavigation.configureTabs(navigationIds.map { id ->
+            val item = binding.bottomNavigation.menu.findItem(id)
+            LiquidGlassTabBar.TabItem(item.title ?: "", item.icon?.constantState?.newDrawable()?.mutate())
+        })
+        binding.glassBottomNavigation.onItemSelected = { index -> handlePrimaryNavigation(navigationIds[index]) }
+        binding.glassBottomNavigation.onItemReselected = { index -> if (index == 0) resetHomeAndRefresh() }
         binding.bottomNavigation.setOnItemReselectedListener { item ->
             if (item.itemId == R.id.tab_home) resetHomeAndRefresh()
         }
@@ -137,7 +131,7 @@ class MainActivity : AppCompatActivity() {
         drawerToggle.syncState()
         val toolbarColors = PaletteManager.colors(this)
         tintToolbarNavigationIcon(
-            if (AppSettings.isNewUiBetaEnabled(this)) toolbarColors.onSurface else toolbarColors.onPrimary
+            if (AppSettings.isNewUiBetaEnabled(this)) glassForegroundColor() else toolbarColors.onPrimary
         )
 
         binding.navView.setNavigationItemSelectedListener { menuItem ->
@@ -313,7 +307,7 @@ class MainActivity : AppCompatActivity() {
             sideParams.bottomMargin = 0
             binding.sideNavigation.layoutParams = sideParams
             binding.sideNavigation.visibility = if (landscapeIslandLayout) View.VISIBLE else View.GONE
-            binding.bottomNavigation.visibility = if (landscapeIslandLayout) View.GONE else View.VISIBLE
+            binding.bottomNavigation.visibility = if (betaUi) View.GONE else View.VISIBLE
             updateShellGlass()
 
             val refreshParams = binding.homeRefresh.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
@@ -342,9 +336,9 @@ class MainActivity : AppCompatActivity() {
             bottomParams.bottomMargin = if (betaUi && !landscapeIslandLayout) navigationBarHeight + dp(Ui2DesignSystem.Spacing.md) else 0
             binding.bottomNavigation.layoutParams = bottomParams
 
-            val indicatorParams = binding.bottomNavigationIndicator.layoutParams as android.view.ViewGroup.MarginLayoutParams
+            val indicatorParams = binding.glassBottomNavigation.layoutParams as android.view.ViewGroup.MarginLayoutParams
             indicatorParams.width = bottomParams.width
-            indicatorParams.height = if (betaUi) dp(64) else 0
+            indicatorParams.height = if (betaUi) android.view.ViewGroup.LayoutParams.WRAP_CONTENT else 0
             if (indicatorParams is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
                 indicatorParams.gravity = if (landscapeIslandLayout) android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
                 else android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
@@ -352,7 +346,7 @@ class MainActivity : AppCompatActivity() {
             indicatorParams.marginStart = bottomParams.marginStart
             indicatorParams.marginEnd = bottomParams.marginEnd
             indicatorParams.bottomMargin = bottomParams.bottomMargin
-            binding.bottomNavigationIndicator.layoutParams = indicatorParams
+            binding.glassBottomNavigation.layoutParams = indicatorParams
 
             val fabParams = binding.fabUploadContainer.layoutParams as? android.view.ViewGroup.MarginLayoutParams
             fabParams?.let {
@@ -387,7 +381,9 @@ class MainActivity : AppCompatActivity() {
         refreshParams.rightMargin = 0
         binding.homeRefresh.layoutParams = refreshParams
 
-        val navHeight = if (landscapeIslandLayout) 0 else binding.bottomNavigation.measuredHeight
+        val navHeight = if (landscapeIslandLayout) 0 else if (betaUi) {
+            binding.glassBottomNavigation.measuredHeight.coerceAtLeast(dp(64))
+        } else binding.bottomNavigation.measuredHeight
         val leftInset = artworkBasePaddingLeft
         val rightInset = artworkBasePaddingRight
         val topPadding = if (betaUi) artworkBasePaddingTop else 0
@@ -473,17 +469,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handlePrimaryNavigation(itemId: Int): Boolean {
-        binding.bottomNavigation.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+        val navigation = if (AppSettings.isNewUiBetaEnabled(this)) binding.glassBottomNavigation else binding.bottomNavigation
+        navigation.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
         clearSelectionState()
         if (itemId !in setOf(R.id.tab_home, R.id.tab_video_feed, R.id.tab_featured, R.id.tab_messages, R.id.tab_profile)) return false
         if (itemId == R.id.tab_featured) showFeaturedContent() else showEmbeddedScreen(itemId)
         binding.bottomNavigation.menu.findItem(itemId)?.isChecked = true
         binding.sideNavigation.menu.findItem(itemId)?.isChecked = true
-        syncNavigationIndicator(itemId, animate = true)
+        syncNavigationSelection(itemId)
         return true
     }
 
-    private fun syncNavigationIndicator(itemId: Int, animate: Boolean) {
+    private fun syncNavigationSelection(itemId: Int) {
         val index = when (itemId) {
             R.id.tab_home -> 0
             R.id.tab_video_feed -> 1
@@ -493,7 +490,7 @@ class MainActivity : AppCompatActivity() {
             else -> return
         }
         if (::binding.isInitialized) {
-            binding.bottomNavigationIndicator.setSelectedIndex(index, animate)
+            binding.glassBottomNavigation.selectItem(index)
         }
     }
 
@@ -600,8 +597,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureUploadFab() {
         animateFabAction(R.drawable.ic_add, false)
-        Ui2DesignSystem.applyPressFeedback(binding.fabUpload, binding.fabUploadContainer)
-        binding.fabUpload.setOnClickListener {
+        Ui2DesignSystem.applyPressFeedback(binding.fabUpload)
+        Ui2DesignSystem.applyPressFeedback(binding.fabUploadGlass, binding.fabUploadGlass.imageView)
+        val onClick = View.OnClickListener {
             val featuredCount = featuredPanel?.selectedImages()?.size ?: 0
             val selected = if (featuredPanel?.visibility == View.VISIBLE && featuredCount > 0) {
                 featuredPanel!!.selectedImages()
@@ -614,6 +612,8 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "上传功能即将开放", Toast.LENGTH_SHORT).show()
             }
         }
+        binding.fabUpload.setOnClickListener(onClick)
+        binding.fabUploadGlass.setOnClickListener(onClick)
     }
 
     private fun clearSelectionState() {
@@ -640,38 +640,53 @@ class MainActivity : AppCompatActivity() {
             configureUploadFab()
         }
         if (AppSettings.isNewUiBetaEnabled(this)) {
-            updateGlassHeaderTint(binding.headerGlass.isOverLightBackground)
+            updateGlassHeaderTint()
         }
     }
 
     private fun animateFabAction(icon: Int, selected: Boolean) {
-        val fab = binding.fabUploadContainer
+        // Backdrop capture only accounts for position, not an ancestor's scale or
+        // rotation. Animate the foreground icon while keeping the glass stationary.
+        val fab = binding.fabUpload
         if (fab.tag == icon) return
+        val firstAction = fab.tag == null
         fab.tag = icon
         fab.animate().cancel()
-        fab.animate()
-            .scaleX(0.72f)
-            .scaleY(0.72f)
-            .alpha(0.35f)
-            .rotationBy(if (selected) 90f else -90f)
-            .setDuration(Ui2DesignSystem.Motion.fastMs)
-            .setInterpolator(Ui2DesignSystem.Motion.accelerate)
-            .withEndAction {
-                binding.fabUpload.setImageResource(icon)
-                binding.fabUpload.contentDescription = if (selected) "下载所选图片" else "上传"
-                val target = dp(if (selected) 64 else 56)
-                binding.fabUpload.customSize = target
-                fab.layoutParams = fab.layoutParams.apply { width = target; height = target }
-                fab.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .alpha(1f)
-                    .rotation(0f)
-                    .setDuration(Ui2DesignSystem.Motion.normalMs)
-                    .setInterpolator(Ui2DesignSystem.Motion.spring)
-                    .start()
-            }
+        // Apply the action immediately so an interrupted animation cannot leave
+        // the previous icon attached to the new action.
+        fab.setImageResource(icon)
+        binding.fabUploadGlass.setIconResource(icon)
+        fab.contentDescription = if (selected) "下载所选图片" else "上传"
+        binding.fabUploadGlass.contentDescription = fab.contentDescription
+        updateFabSize()
+        val animatedIcon = if (AppSettings.isNewUiBetaEnabled(this)) binding.fabUploadGlass.imageView else fab
+        animatedIcon.animate().cancel()
+        animatedIcon.scaleX = if (firstAction) 1f else 0.72f
+        animatedIcon.scaleY = animatedIcon.scaleX
+        animatedIcon.alpha = if (firstAction) 1f else 0.35f
+        animatedIcon.rotation = if (firstAction) 0f else if (selected) -90f else 90f
+        if (firstAction) return
+        animatedIcon.animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .alpha(1f)
+            .rotation(0f)
+            .setDuration(Ui2DesignSystem.Motion.normalMs)
+            .setInterpolator(Ui2DesignSystem.Motion.spring)
             .start()
+    }
+
+    private fun updateFabSize() {
+        val selected = binding.fabUpload.tag == R.drawable.ic_download
+        // A stable glass size avoids rebuilding the backdrop during action changes.
+        val target = dp(if (selected && !AppSettings.isNewUiBetaEnabled(this)) 64 else 56)
+        binding.fabUpload.customSize = target
+        val params = binding.fabUploadContainer.layoutParams
+        if (params.width != target || params.height != target) {
+            params.width = target
+            params.height = target
+            binding.fabUploadContainer.layoutParams = params
+        }
     }
 
     override fun onResume() {
@@ -707,8 +722,9 @@ class MainActivity : AppCompatActivity() {
         val enabled = AppSettings.isNewUiBetaEnabled(this)
         val visible = enabled && !AdaptiveLayoutPolicy.isLandscape(this)
         val source = if (embeddedScreenId == R.id.tab_home) binding.homeRefresh else binding.mainContentHost
-        binding.bottomNavigationIndicator.visibility = if (visible) View.VISIBLE else View.GONE
-        binding.bottomNavigationIndicator.setRenderingActive(visible && shellGlassResumed, source)
+        binding.bottomNavigation.visibility = if (enabled) View.GONE else View.VISIBLE
+        binding.glassBottomNavigation.visibility = if (visible) View.VISIBLE else View.GONE
+        binding.glassBottomNavigation.setRenderingActive(visible && shellGlassResumed, source)
 
         binding.headerGlass.visibility = if (enabled) View.VISIBLE else View.GONE
         val headerVisible = enabled && embeddedScreenId == R.id.tab_home &&
@@ -717,17 +733,22 @@ class MainActivity : AppCompatActivity() {
         binding.headerGlass.setRenderingActive(headerVisible && shellGlassResumed, binding.homeRefresh)
 
         binding.fabUploadGlass.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.fabUpload.visibility = if (enabled) View.GONE else View.VISIBLE
         val fabVisible = enabled && binding.fabUploadContainer.visibility == View.VISIBLE
-        binding.fabUploadGlass.setRenderingActive(fabVisible && shellGlassResumed, source)
+        binding.fabUploadGlass.backdropSource = source
+        binding.fabUploadGlass.enableDynamicBackground = fabVisible && shellGlassResumed
+        binding.fabUploadGlass.enableSensorHighlight = fabVisible && shellGlassResumed
     }
 
-    private fun updateGlassFabTint(isOverLight: Boolean) {
-        val foreground = if (isOverLight) android.graphics.Color.rgb(25, 28, 34) else android.graphics.Color.WHITE
-        binding.fabUpload.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
-    }
+    private fun glassForegroundColor(): Int =
+        if (android.graphics.Color.luminance(PaletteManager.colors(this).surface) > 0.5f) {
+            android.graphics.Color.BLACK
+        } else {
+            android.graphics.Color.WHITE
+        }
 
-    private fun updateGlassHeaderTint(isOverLight: Boolean) {
-        val foreground = if (isOverLight) android.graphics.Color.rgb(25, 28, 34) else android.graphics.Color.WHITE
+    private fun updateGlassHeaderTint() {
+        val foreground = glassForegroundColor()
         binding.toolbar.setTitleTextColor(foreground)
         binding.toolbar.setSubtitleTextColor(foreground)
         tintToolbarNavigationIcon(foreground)
@@ -736,18 +757,16 @@ class MainActivity : AppCompatActivity() {
         binding.btnSearch.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
     }
 
-    private fun updateGlassNavigationTint(isOverLight: Boolean) {
-        val foreground = if (isOverLight) android.graphics.Color.rgb(25, 28, 34) else android.graphics.Color.WHITE
-        val background = if (isOverLight) android.graphics.Color.WHITE else android.graphics.Color.BLACK
-        val primary = PaletteManager.colors(this).primary
-        val selected = if (androidx.core.graphics.ColorUtils.calculateContrast(primary, background) >= 3.0) primary
-            else androidx.core.graphics.ColorUtils.blendARGB(primary, foreground, 0.65f)
-        val tint = android.content.res.ColorStateList(
-            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-            intArrayOf(selected, foreground)
-        )
+    private fun updateGlassShellTint() {
+        val tint = android.content.res.ColorStateList.valueOf(glassForegroundColor())
         binding.bottomNavigation.itemIconTintList = tint
         binding.bottomNavigation.itemTextColor = tint
+        binding.sideNavigation.itemIconTintList = tint
+        binding.sideNavigation.itemTextColor = tint
+        binding.fabUpload.imageTintList = tint
+        binding.fabUploadGlass.setIconTint(glassForegroundColor())
+        binding.glassBottomNavigation.applyPalette()
+        updateGlassHeaderTint()
     }
 
     private fun paletteSignature(): String = "${AppSettings.getPalette(this)}:${AppSettings.getAccentColor(this)}:${resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK}"
@@ -789,20 +808,20 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             binding.appBarLayout.clipToOutline = true
-            // Full-strength specular highlights wash out the curved ends of this short header.
-            binding.headerGlass.edgeHighlightOpacity = 35f
             binding.headerGlass.setPalette(colors)
             binding.toolbar.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
             binding.toolbar.elevation = 0f
             Ui2DesignSystem.styleIsland(binding.sideNavigation, colors, Ui2DesignSystem.Shape.navigationIsland)
-            binding.fabUploadGlass.cornerRadius = Ui2DesignSystem.Shape.fabIsland * resources.displayMetrics.density
-            binding.fabUploadGlass.setPalette(colors)
-            // The transparent FAB supplies the icon, click handling and accessibility;
-            // the glass layer underneath supplies the complete button surface.
-            binding.fabUpload.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
-            binding.fabUpload.compatElevation = 0f
-            binding.fabUpload.compatPressedTranslationZ = 0f
-            binding.fabUpload.compatHoveredFocusedTranslationZ = 0f
+            GlassWidgetStyle.apply(binding.fabUploadGlass, Ui2DesignSystem.Shape.fabIsland)
+            binding.fabUploadContainer.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    val radius = binding.fabUploadGlass.cornerRadius.coerceAtMost(minOf(view.width, view.height) / 2f)
+                    outline.setRoundRect(0, 0, view.width, view.height, radius)
+                }
+            }
+            binding.fabUploadContainer.clipToOutline = true
+            binding.fabUploadContainer.clipChildren = true
+            binding.fabUploadContainer.clipToPadding = true
             binding.bottomNavigation.labelVisibilityMode = com.google.android.material.bottomnavigation.LabelVisibilityMode.LABEL_VISIBILITY_LABELED
             // Keep the icon and its label centered inside the compact island.
             binding.bottomNavigation.itemPaddingTop = dp(8)
@@ -812,17 +831,10 @@ class MainActivity : AppCompatActivity() {
             binding.bottomNavigation.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
             binding.bottomNavigation.elevation = 0f
             binding.bottomNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
-            binding.bottomNavigationIndicator.setPalette(colors)
-            updateGlassNavigationTint(android.graphics.Color.luminance(colors.surface) > 0.5f)
-            binding.sideNavigation.itemIconTintList = android.content.res.ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(colors.primary, colors.onSurface)
-            )
             binding.sideNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(colors.surfaceVariant)
             binding.sideNavigation.itemActiveIndicatorShapeAppearance = com.google.android.material.shape.ShapeAppearanceModel.builder()
                 .setAllCornerSizes(dp(Ui2DesignSystem.Shape.pill.toInt()).toFloat()).build()
-            updateGlassHeaderTint(android.graphics.Color.luminance(colors.surface) > 0.5f)
-            updateGlassFabTint(android.graphics.Color.luminance(colors.surface) > 0.5f)
+            updateGlassShellTint()
             binding.toolbar.alpha = 1f
         } else {
             binding.appBarLayout.clipToOutline = false
@@ -840,10 +852,11 @@ class MainActivity : AppCompatActivity() {
             )
             binding.bottomNavigation.itemIconTintList = navigationTint
             binding.bottomNavigation.itemTextColor = navigationTint
+            binding.fabUploadContainer.clipToOutline = false
+            binding.fabUploadContainer.outlineProvider = ViewOutlineProvider.BACKGROUND
+            binding.fabUploadContainer.clipChildren = false
+            binding.fabUploadContainer.clipToPadding = false
             binding.fabUpload.backgroundTintList = android.content.res.ColorStateList.valueOf(colors.primary)
-            binding.fabUpload.compatElevation = legacyFabElevation
-            binding.fabUpload.compatPressedTranslationZ = legacyFabPressedTranslationZ
-            binding.fabUpload.compatHoveredFocusedTranslationZ = legacyFabHoveredFocusedTranslationZ
             binding.toolbar.setTitleTextColor(colors.onPrimary)
             tintToolbarNavigationIcon(colors.onPrimary)
             binding.toolbar.overflowIcon?.setTint(colors.onPrimary)
@@ -882,10 +895,11 @@ class MainActivity : AppCompatActivity() {
             binding.bottomNavigation.menu.findItem(R.id.tab_profile)?.isChecked == true -> R.id.tab_profile
             else -> R.id.tab_home
         }
-        syncNavigationIndicator(selectedId, animate = false)
+        updateFabSize()
+        syncNavigationSelection(selectedId)
         updateShellGlass()
         if (modeChanged) {
-            listOf(binding.appBarLayout, binding.bottomNavigation, binding.fabUploadContainer).forEach { island ->
+            listOf(binding.appBarLayout, if (enabled) binding.glassBottomNavigation else binding.bottomNavigation, binding.fabUploadContainer).forEach { island ->
                 island.animate().cancel()
                 island.alpha = 0.88f
                 island.animate().alpha(1f).setDuration(Ui2DesignSystem.Motion.stateChangeMs).start()

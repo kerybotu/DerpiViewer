@@ -3,6 +3,12 @@ package com.kerybotu.derpibooru.mirror.ui
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.content.Context
+import android.graphics.Color
+import android.view.View
+import android.view.MotionEvent
+import android.widget.FrameLayout
+import com.example.liquidglass.LiquidGlassListItem
+import com.example.liquidglass.LiquidGlassView
 import android.graphics.drawable.GradientDrawable
 import androidx.core.graphics.ColorUtils
 import androidx.recyclerview.widget.RecyclerView
@@ -19,7 +25,9 @@ class ImageAdapter(
     initialItems: List<Image>,
     private val onClick: (Image) -> Unit,
     private val onSelectionChanged: ((Int) -> Unit)? = null,
-    private val settingsContext: Context
+    private val settingsContext: Context,
+    private val glassBackdrop: View? = null,
+    private val onGlassCreated: ((LiquidGlassView) -> Unit)? = null
 ) : RecyclerView.Adapter<ImageAdapter.ImageViewHolder>() {
     private var allItems: List<Image> = initialItems
     private var items: List<Image> = filterForDisplay(initialItems)
@@ -30,7 +38,48 @@ class ImageAdapter(
         val binding = ItemImageBinding.inflate(
             LayoutInflater.from(parent.context), parent, false
         )
-        return ImageViewHolder(binding)
+        if (glassBackdrop == null) return ImageViewHolder(binding)
+        val card = LiquidGlassListItem(parent.context).apply {
+            layoutParams = binding.root.layoutParams
+            backdropSource = glassBackdrop
+            groupCornerRadius = 16f * resources.displayMetrics.density
+            isClickable = false
+            isFocusable = false
+        }
+        binding.root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        card.contentView = binding.root
+        val surfaces = mutableListOf<LiquidGlassView>(card)
+        // Capture artwork together with its spoiler cover; never sample hidden
+        // artwork directly into a visible metadata badge.
+        val artwork = FrameLayout(parent.context).apply {
+            setBackgroundColor(PaletteManager.colors(context).surface)
+        }
+        binding.thumbnailContainer.removeView(binding.imageThumbnail)
+        binding.thumbnailContainer.removeView(binding.thumbnailSpoilerCover)
+        artwork.addView(binding.imageThumbnail)
+        artwork.addView(binding.thumbnailSpoilerCover)
+        binding.thumbnailContainer.addView(artwork, 0, FrameLayout.LayoutParams(-1, -1))
+        val overlays = mutableMapOf<View, LiquidGlassView>()
+        listOf(binding.infoBar, binding.statsBar, binding.selectionMark, binding.mediaTypeBadge).forEach { overlay ->
+            val index = binding.thumbnailContainer.indexOfChild(overlay)
+            val params = overlay.layoutParams
+            binding.thumbnailContainer.removeView(overlay)
+            val glass = object : LiquidGlassView(parent.context) {
+                // Decorative badges must not consume the card's click or long press.
+                override fun onTouchEvent(event: MotionEvent): Boolean = false
+            }.apply {
+                backdropSource = artwork
+                addView(overlay, FrameLayout.LayoutParams(
+                    if (params.width > 0) -1 else -2,
+                    if (params.height > 0) -1 else -2
+                ))
+            }
+            binding.thumbnailContainer.addView(glass, index, params)
+            overlays[overlay] = glass
+            surfaces += glass
+        }
+        surfaces.forEach { GlassWidgetStyle.apply(it, 16f); onGlassCreated?.invoke(it) }
+        return ImageViewHolder(binding, card, surfaces, overlays)
     }
 
     override fun onBindViewHolder(holder: ImageViewHolder, position: Int) {
@@ -85,19 +134,40 @@ class ImageAdapter(
     }
 
     class ImageViewHolder(
-        val binding: ItemImageBinding
-    ) : RecyclerView.ViewHolder(binding.root) {
+        val binding: ItemImageBinding,
+        root: View = binding.root,
+        private val glassSurfaces: List<LiquidGlassView> = emptyList(),
+        private val glassOverlays: Map<View, LiquidGlassView> = emptyMap()
+    ) : RecyclerView.ViewHolder(root) {
 
         fun bind(image: Image, onClick: (Image) -> Unit, selectionActive: Boolean, selected: Boolean, toggle: (Image, android.view.View) -> Unit) {
             val palette = PaletteManager.colors(binding.root.context)
-            (binding.root as? androidx.cardview.widget.CardView)?.setCardBackgroundColor(palette.surface)
-            styleOverlay(binding.infoBar, palette)
-            styleOverlay(binding.statsBar, palette)
-            binding.textUpvotes.setTextColor(palette.onSurface)
-            binding.textComments.setTextColor(palette.onSurface)
-            binding.textFaves.setTextColor(palette.onSurface)
-            tintInfoIcons(binding.infoBar, palette.onSurface)
-            tintInfoIcons(binding.statsBar, palette.onSurface)
+            val glass = glassSurfaces.isNotEmpty()
+            (binding.root as? androidx.cardview.widget.CardView)?.apply {
+                setCardBackgroundColor(if (glass) Color.TRANSPARENT else palette.surface)
+                if (glass) cardElevation = 0f
+            }
+            if (glass) {
+                glassSurfaces.forEach { GlassWidgetStyle.apply(it, 16f) }
+                (binding.imageThumbnail.parent as? View)?.setBackgroundColor(palette.surface)
+                binding.infoBar.background = null
+                binding.statsBar.background = null
+                binding.selectionMark.background = null
+                binding.mediaTypeBadge.background = null
+            } else {
+                styleOverlay(binding.infoBar, palette)
+                styleOverlay(binding.statsBar, palette)
+            }
+            val foreground = if (glass) GlassWidgetStyle.foreground(binding.root) else palette.onSurface
+            if (glass) {
+                binding.selectionMark.setTextColor(foreground)
+                binding.mediaTypeBadge.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
+            }
+            binding.textUpvotes.setTextColor(foreground)
+            binding.textComments.setTextColor(foreground)
+            binding.textFaves.setTextColor(foreground)
+            tintInfoIcons(binding.infoBar, foreground)
+            tintInfoIcons(binding.statsBar, foreground)
             CdnImageGate.load(binding.imageThumbnail, image.thumbnailUrl, AppSettings.getCdnThreads(binding.root.context))
             bindMediaTypeBadge(image)
             when (AppSettings.getSpoilerDisplayMode(binding.root.context)) {
@@ -115,6 +185,7 @@ class ImageAdapter(
             binding.textDimensions.visibility = android.view.View.GONE
 
             binding.selectionMark.visibility = if (selected) android.view.View.VISIBLE else android.view.View.GONE
+            glassOverlays.forEach { (content, surface) -> surface.visibility = content.visibility }
             binding.root.setOnClickListener {
                 if (selectionActive) toggle(image, binding.root) else onClick(image)
             }
@@ -122,7 +193,7 @@ class ImageAdapter(
                 toggle(image, binding.root)
                 true
             }
-            Ui2DesignSystem.applyPressFeedback(binding.root)
+            if (!glass) Ui2DesignSystem.applyPressFeedback(binding.root)
         }
 
         private fun bindMediaTypeBadge(image: Image) {

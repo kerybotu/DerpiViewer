@@ -124,12 +124,11 @@
             android:visibility="gone"
             android:background="?attr/colorSurface" />
 
-        <com.kerybotu.derpibooru.mirror.ui.BottomNavigationIndicator
-            android:id="@+id/bottom_navigation_indicator"
+        <com.kerybotu.derpibooru.mirror.ui.HomeGlassTabBar
+            android:id="@+id/glass_bottom_navigation"
             android:layout_width="match_parent"
-            android:layout_height="60dp"
+            android:layout_height="wrap_content"
             android:layout_gravity="bottom|center_horizontal"
-            android:importantForAccessibility="no"
             android:visibility="gone"
             android:elevation="0dp" />
 
@@ -166,11 +165,12 @@
             android:clipToPadding="false"
             android:elevation="10dp">
 
-            <com.kerybotu.derpibooru.mirror.ui.IslandGlassView
+            <com.example.liquidglass.LiquidGlassFab
                 android:id="@+id/fab_upload_glass"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:importantForAccessibility="no"
+                android:contentDescription="上传"
+                android:src="@drawable/ic_add"
                 android:visibility="gone" />
 
             <com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -180,6 +180,8 @@
                 android:contentDescription="上传"
                 android:src="@drawable/ic_add"
                 app:backgroundTint="?attr/colorPrimary"
+                app:borderWidth="0dp"
+                app:useCompatPadding="false"
                 app:elevation="10dp" />
         </FrameLayout>
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
