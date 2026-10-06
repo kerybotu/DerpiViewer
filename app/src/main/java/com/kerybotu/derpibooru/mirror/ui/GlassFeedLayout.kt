@@ -12,6 +12,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.liquidglass.LiquidGlassListItem
+import com.example.liquidglass.LiquidGlassTabBar
 import com.example.liquidglass.LiquidGlassView
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.R
@@ -61,6 +62,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
     private var systemRight = 0
     private var navigationRight = 0
     private var navigationBottom = 0
+    private var tabs: HomeGlassTabBar? = null
 
     init {
         addView(pageBackdrop, LayoutParams(-1, -1))
@@ -104,6 +106,24 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         updateContentInsets()
     }
 
+    /** Optional fixed library tabs; list content and pull indicator both clear this row. */
+    fun setTabs(titles: List<String>, onSelected: (Int) -> Unit): HomeGlassTabBar {
+        tabs?.let { old ->
+            old.setRenderingActive(false, refresh)
+            removeView(old)
+        }
+        val tabBar = HomeGlassTabBar(context).apply {
+            configureTabs(titles.map { LiquidGlassTabBar.TabItem(it) })
+            onItemSelected = onSelected
+            elevation = header.elevation
+        }
+        tabs = tabBar
+        addView(tabBar, LayoutParams(-1, dp(64), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        updateContentInsets()
+        updateGlassRendering()
+        return tabBar
+    }
+
     fun showLoading(visible: Boolean, centered: Boolean = true) {
         centeredLoading = centered
         loadingPanel.visibility = if (visible) View.VISIBLE else View.GONE
@@ -137,7 +157,16 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         }
         val contentWidth = AdaptiveLayoutPolicy.contentIslandWidthPx(context, available)
         val gutter = (safeWidth - contentWidth) / 2
-        val contentTop = top + dp(60 + Ui2DesignSystem.Spacing.islandGap)
+        val headerBottom = top + dp(60 + Ui2DesignSystem.Spacing.islandGap)
+        tabs?.let { tabBar ->
+            tabBar.layoutParams = (tabBar.layoutParams as LayoutParams).apply {
+                width = AdaptiveLayoutPolicy.topIslandWidthPx(context, available)
+                topMargin = headerBottom
+                leftMargin = systemLeft + dp(16)
+                rightMargin = right + dp(16)
+            }
+        }
+        val contentTop = headerBottom + if (tabs != null) dp(64 + Ui2DesignSystem.Spacing.islandGap) else 0
         val bottom = maxOf(systemBottom, navigationBottom) + dp(16)
         results.setPadding(systemLeft + gutter, contentTop, right + gutter, bottom)
         refresh.contentTopInset = contentTop
@@ -178,6 +207,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
     fun updateGlassRendering(forceInactive: Boolean = false) {
         val visible = !forceInactive && isActive && isAttachedToWindow && isShown
         headerGlass.setRenderingActive(visible, refresh)
+        tabs?.setRenderingActive(visible, refresh)
         attachedGlass.keys.toList().forEach { glass ->
             val render = visible && glass.isShown && glass.getGlobalVisibleRect(visibleRect)
             glass.enableDynamicBackground = render
@@ -199,6 +229,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         for (index in 0 until toolbar.menu.size()) toolbar.menu.getItem(index).icon?.mutate()?.setTint(iconColor)
         progress.applyPalette(colors)
         refresh.applyPalette(colors)
+        tabs?.applyPalette()
         attachedGlass.toMap().forEach { (view, radius) -> GlassWidgetStyle.apply(view, radius) }
         onPaletteChanged?.invoke()
         updateGlassRendering()
