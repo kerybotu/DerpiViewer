@@ -71,6 +71,7 @@ class MainActivity : AppCompatActivity() {
     private var featuredPanel: com.kerybotu.derpibooru.mirror.ui.FeaturedPanel? = null
     private var lastPaletteSignature: String? = null
     private var lastUi2Enabled: Boolean? = null
+    private var shellGlassResumed = false
     private var embeddedVideo: com.kerybotu.derpibooru.mirror.ui.EmbeddedVideoView? = null
     private var embeddedFeatured: com.kerybotu.derpibooru.mirror.ui.FeaturedPanel? = null
     private var embeddedMessages: com.kerybotu.derpibooru.mirror.ui.EmbeddedMessagesView? = null
@@ -98,6 +99,12 @@ class MainActivity : AppCompatActivity() {
 
         binding.bottomNavigation.setOnItemSelectedListener { item -> handlePrimaryNavigation(item.itemId) }
         binding.sideNavigation.setOnItemSelectedListener { item -> handlePrimaryNavigation(item.itemId) }
+        binding.bottomNavigationIndicator.glassAppearanceListener = { isOverLight ->
+            if (AppSettings.isNewUiBetaEnabled(this)) updateGlassNavigationTint(isOverLight)
+        }
+        binding.headerGlass.glassAppearanceListener = { isOverLight ->
+            if (AppSettings.isNewUiBetaEnabled(this)) updateGlassHeaderTint(isOverLight)
+        }
         binding.bottomNavigation.setOnItemReselectedListener { item ->
             if (item.itemId == R.id.tab_home) resetHomeAndRefresh()
         }
@@ -192,6 +199,7 @@ class MainActivity : AppCompatActivity() {
                     binding.appBarLayout.scaleY = 1f
                 }
 
+                updateShellGlass()
                 if (dy <= 0 || loading) return
                 val lm = rv.layoutManager as GridLayoutManager
                 val firstPrefetch = lm.findLastVisibleItemPosition() + 1
@@ -267,6 +275,10 @@ class MainActivity : AppCompatActivity() {
      * 处理窗口 insets，动态设置 Toolbar 的顶部 padding 等于状态栏高度。
      */
     private fun applyWindowInsets() {
+        // The root listener below already places the island above the system bar
+        // and supplies legacy padding. Material must not add that inset again
+        // inside the 64dp island, where it would clip the navigation labels.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.bottomNavigation) { _, insets -> insets }
         toolbarBasePaddingLeft = binding.toolbar.paddingLeft
         toolbarBasePaddingRight = binding.toolbar.paddingRight
         toolbarBasePaddingBottom = binding.toolbar.paddingBottom
@@ -326,7 +338,7 @@ class MainActivity : AppCompatActivity() {
             binding.sideNavigation.layoutParams = sideParams
             binding.sideNavigation.visibility = if (landscapeIslandLayout) View.VISIBLE else View.GONE
             binding.bottomNavigation.visibility = if (landscapeIslandLayout) View.GONE else View.VISIBLE
-            binding.bottomNavigationIndicator.visibility = if (betaUi && !landscapeIslandLayout) View.VISIBLE else View.GONE
+            updateShellGlass()
 
             val refreshParams = binding.homeRefresh.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
             refreshParams.behavior = if (betaUi) null else com.google.android.material.appbar.AppBarLayout.ScrollingViewBehavior()
@@ -449,6 +461,7 @@ class MainActivity : AppCompatActivity() {
             (topMargin + dp(Ui2DesignSystem.Spacing.islandGap)).toFloat()
         }
         appBar.translationY = -extraTravel * progress
+        updateShellGlass()
     }
 
     private fun cycleDensity() {
@@ -581,6 +594,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         embeddedScreenId = itemId
+        updateShellGlass()
     }
 
     private suspend fun applyAntiEmbarrassmentFilterIfNeeded() {
@@ -663,6 +677,9 @@ class MainActivity : AppCompatActivity() {
             binding.btnSearch.visibility = View.VISIBLE
             configureUploadFab()
         }
+        if (AppSettings.isNewUiBetaEnabled(this)) {
+            updateGlassHeaderTint(binding.headerGlass.isOverLightBackground)
+        }
     }
 
     private fun animateFabAction(icon: Int, selected: Boolean) {
@@ -695,6 +712,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        shellGlassResumed = true
         if (::adapter.isInitialized) adapter.refreshDisplayMode()
         featuredPanel?.refreshDisplayMode()
         PaletteManager.apply(this)
@@ -714,6 +732,51 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        shellGlassResumed = false
+        updateShellGlass()
+        super.onPause()
+    }
+
+    private fun updateShellGlass() {
+        if (!::binding.isInitialized) return
+        val enabled = AppSettings.isNewUiBetaEnabled(this)
+        val visible = enabled && !AdaptiveLayoutPolicy.isLandscape(this)
+        val source = if (embeddedScreenId == R.id.tab_home) binding.homeRefresh else binding.mainContentHost
+        binding.bottomNavigationIndicator.visibility = if (visible) View.VISIBLE else View.GONE
+        binding.bottomNavigationIndicator.setRenderingActive(visible && shellGlassResumed, source)
+
+        binding.headerGlass.visibility = if (enabled) View.VISIBLE else View.GONE
+        val headerVisible = enabled && embeddedScreenId == R.id.tab_home &&
+            binding.appBarLayout.visibility == View.VISIBLE && binding.appBarLayout.alpha > 0f
+        // Sample only the opaque page content; the header must never capture itself.
+        binding.headerGlass.setRenderingActive(headerVisible && shellGlassResumed, binding.homeRefresh)
+    }
+
+    private fun updateGlassHeaderTint(isOverLight: Boolean) {
+        val foreground = if (isOverLight) android.graphics.Color.rgb(25, 28, 34) else android.graphics.Color.WHITE
+        binding.toolbar.setTitleTextColor(foreground)
+        binding.toolbar.setSubtitleTextColor(foreground)
+        tintToolbarNavigationIcon(foreground)
+        binding.toolbar.overflowIcon?.setTint(foreground)
+        binding.btnDensity.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
+        binding.btnSearch.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
+    }
+
+    private fun updateGlassNavigationTint(isOverLight: Boolean) {
+        val foreground = if (isOverLight) android.graphics.Color.rgb(25, 28, 34) else android.graphics.Color.WHITE
+        val background = if (isOverLight) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+        val primary = PaletteManager.colors(this).primary
+        val selected = if (androidx.core.graphics.ColorUtils.calculateContrast(primary, background) >= 3.0) primary
+            else androidx.core.graphics.ColorUtils.blendARGB(primary, foreground, 0.65f)
+        val tint = android.content.res.ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(selected, foreground)
+        )
+        binding.bottomNavigation.itemIconTintList = tint
+        binding.bottomNavigation.itemTextColor = tint
+    }
+
     private fun paletteSignature(): String = "${AppSettings.getPalette(this)}:${AppSettings.getAccentColor(this)}:${resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK}"
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -724,6 +787,11 @@ class MainActivity : AppCompatActivity() {
         val modeChanged = lastUi2Enabled != null && lastUi2Enabled != enabled
         lastUi2Enabled = enabled
         val colors = PaletteManager.colors(this)
+        // Glass captures these views directly, without their ancestors' background.
+        // Paint the page surface into the capture so gaps between cards stay opaque
+        // and retain the current theme color instead of sampling transparent black.
+        binding.homeRefresh.setBackgroundColor(colors.surface)
+        binding.mainContentHost.setBackgroundColor(colors.surface)
         if (enabled) {
             window.statusBarColor = colors.surface
             window.navigationBarColor = colors.surface
@@ -731,32 +799,27 @@ class MainActivity : AppCompatActivity() {
         val appBarParams = binding.appBarLayout.layoutParams as? android.view.ViewGroup.MarginLayoutParams
         val bottomParams = binding.bottomNavigation.layoutParams as? android.view.ViewGroup.MarginLayoutParams
         if (enabled) {
-            // The AppBar itself is the bounded island. Styling the full-width
-            // Toolbar leaves its parent looking like a rectangular backdrop.
-            Ui2DesignSystem.styleIsland(binding.appBarLayout, colors, Ui2DesignSystem.Shape.topIsland)
+            // Glass and toolbar move together inside the bounded AppBar. Keep the
+            // old surface fill off both ancestors so the live backdrop stays visible.
+            binding.appBarLayout.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+            binding.appBarLayout.clipToOutline = false
+            binding.appBarLayout.elevation = dp(Ui2DesignSystem.Elevation.islandDp.toInt()).toFloat()
+            binding.headerGlass.cornerRadius = Ui2DesignSystem.Shape.topIsland * resources.displayMetrics.density
+            binding.headerGlass.setPalette(colors)
             binding.toolbar.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
             binding.toolbar.elevation = 0f
             Ui2DesignSystem.styleIsland(binding.sideNavigation, colors, Ui2DesignSystem.Shape.navigationIsland)
             Ui2DesignSystem.styleIsland(binding.fabUpload, colors, Ui2DesignSystem.Shape.fabIsland)
             binding.bottomNavigation.labelVisibilityMode = com.google.android.material.bottomnavigation.LabelVisibilityMode.LABEL_VISIBILITY_LABELED
             // Keep the icon and its label centered inside the compact island.
-            binding.bottomNavigation.itemPaddingTop = 0
-            binding.bottomNavigation.itemPaddingBottom = 0
-            binding.bottomNavigation.post { centerBetaNavigationItems() }
-            val navigationTint = android.content.res.ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(colors.primary, colors.onSurface)
-            )
-            binding.bottomNavigation.itemIconTintList = navigationTint
-            binding.bottomNavigation.itemTextColor = navigationTint
+            binding.bottomNavigation.itemPaddingTop = dp(8)
+            binding.bottomNavigation.itemPaddingBottom = dp(8)
+            binding.bottomNavigation.isItemActiveIndicatorEnabled = false
             binding.bottomNavigation.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+            binding.bottomNavigation.elevation = 0f
             binding.bottomNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
-            binding.bottomNavigationIndicator.setColors(
-                Ui2DesignSystem.colors(this).glassTint,
-                Ui2DesignSystem.colors(this).glassBorder,
-                Ui2DesignSystem.colors(this).surfaceVariant,
-                Ui2DesignSystem.colors(this).glassHighlight
-            )
+            binding.bottomNavigationIndicator.setPalette(colors)
+            updateGlassNavigationTint(android.graphics.Color.luminance(colors.surface) > 0.5f)
             binding.sideNavigation.itemIconTintList = android.content.res.ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                 intArrayOf(colors.primary, colors.onSurface)
@@ -764,11 +827,7 @@ class MainActivity : AppCompatActivity() {
             binding.sideNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(colors.surfaceVariant)
             binding.sideNavigation.itemActiveIndicatorShapeAppearance = com.google.android.material.shape.ShapeAppearanceModel.builder()
                 .setAllCornerSizes(dp(Ui2DesignSystem.Shape.pill.toInt()).toFloat()).build()
-            binding.toolbar.setTitleTextColor(colors.onSurface)
-            tintToolbarNavigationIcon(colors.onSurface)
-            binding.toolbar.overflowIcon?.setTint(colors.onSurface)
-            binding.btnDensity.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-            binding.btnSearch.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+            updateGlassHeaderTint(android.graphics.Color.luminance(colors.surface) > 0.5f)
             binding.fabUpload.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
             binding.fabUpload.backgroundTintList = android.content.res.ColorStateList.valueOf(Ui2DesignSystem.colors(this).glassTint)
             binding.toolbar.alpha = 1f
@@ -776,11 +835,21 @@ class MainActivity : AppCompatActivity() {
             binding.appBarLayout.setBackgroundColor(colors.primary)
             binding.appBarLayout.elevation = dp(4).toFloat()
             binding.appBarLayout.translationY = 0f
+            binding.appBarLayout.alpha = 1f
+            binding.appBarLayout.scaleX = 1f
+            binding.appBarLayout.scaleY = 1f
+            headerOffset = 0f
             binding.toolbar.background = android.graphics.drawable.ColorDrawable(colors.primary)
             binding.toolbar.alpha = 1f
             binding.toolbar.elevation = 0f
             binding.bottomNavigation.background = android.graphics.drawable.ColorDrawable(colors.surface)
             binding.bottomNavigation.elevation = dp(8).toFloat()
+            val navigationTint = android.content.res.ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(colors.primary, colors.onSurface)
+            )
+            binding.bottomNavigation.itemIconTintList = navigationTint
+            binding.bottomNavigation.itemTextColor = navigationTint
             binding.fabUpload.backgroundTintList = android.content.res.ColorStateList.valueOf(colors.primary)
             binding.toolbar.setTitleTextColor(colors.onPrimary)
             tintToolbarNavigationIcon(colors.onPrimary)
@@ -791,6 +860,7 @@ class MainActivity : AppCompatActivity() {
             binding.bottomNavigation.labelVisibilityMode = com.google.android.material.bottomnavigation.LabelVisibilityMode.LABEL_VISIBILITY_LABELED
             binding.bottomNavigation.itemPaddingTop = dp(4)
             binding.bottomNavigation.itemPaddingBottom = dp(4)
+            binding.bottomNavigation.isItemActiveIndicatorEnabled = true
             binding.bottomNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(colors.surfaceVariant)
             binding.appBarLayout.layoutParams?.let { it.width = -1; (it as? android.view.ViewGroup.MarginLayoutParams)?.let { lp -> lp.marginStart = 0; lp.marginEnd = 0 }; binding.appBarLayout.layoutParams = it }
             binding.bottomNavigation.layoutParams?.let { it.width = -1; (it as? android.view.ViewGroup.MarginLayoutParams)?.let { lp -> lp.marginStart = 0; lp.marginEnd = 0 }; binding.bottomNavigation.layoutParams = it }
@@ -819,8 +889,9 @@ class MainActivity : AppCompatActivity() {
             else -> R.id.tab_home
         }
         syncNavigationIndicator(selectedId, animate = false)
+        updateShellGlass()
         if (modeChanged) {
-            listOf(binding.toolbar, binding.bottomNavigation, binding.fabUpload).forEach { island ->
+            listOf(binding.appBarLayout, binding.bottomNavigation, binding.fabUpload).forEach { island ->
                 island.animate().cancel()
                 island.alpha = 0.88f
                 island.animate().alpha(1f).setDuration(Ui2DesignSystem.Motion.stateChangeMs).start()
@@ -836,58 +907,6 @@ class MainActivity : AppCompatActivity() {
         val tintedIcon = androidx.core.graphics.drawable.DrawableCompat.wrap(icon.mutate())
         androidx.core.graphics.drawable.DrawableCompat.setTint(tintedIcon, color)
         binding.toolbar.navigationIcon = tintedIcon
-    }
-
-    /**
-     * Material's unlabeled item view can retain label-oriented padding between
-     * library versions. Normalize the actual child containers after measurement
-     * so the icon occupies the center of the island's full touch target.
-     */
-    private fun centerBetaNavigationItems() {
-        if (!::binding.isInitialized || !AppSettings.isNewUiBetaEnabled(this)) return
-        val menuView = binding.bottomNavigation.getChildAt(0) as? android.view.ViewGroup ?: return
-        for (index in 0 until menuView.childCount) {
-            val item = menuView.getChildAt(index) as? com.google.android.material.navigation.NavigationBarItemView
-                ?: continue
-
-            // The Material item has its own internal spacing fields. Changing
-            // the outer view padding does not affect the icon/label gap.
-            item.setItemPaddingTop(0)
-            item.setItemPaddingBottom(0)
-            item.setActiveIndicatorLabelPadding(0)
-            item.minimumHeight = 0
-            item.layoutParams = item.layoutParams.apply { height = android.view.ViewGroup.LayoutParams.MATCH_PARENT }
-
-            // The compact pair is optically a little high in the 64dp island;
-            // move only its content, leaving the item's touch bounds unchanged.
-            item.findViewById<android.view.View>(
-                com.google.android.material.R.id.navigation_bar_item_content_container
-            )?.translationY = dp(8).toFloat()
-
-            val iconContainer = item.findViewById<android.view.View>(
-                com.google.android.material.R.id.navigation_bar_item_icon_container
-            )
-            val labelsGroup = item.findViewById<android.view.View>(
-                com.google.android.material.R.id.navigation_bar_item_labels_group
-            )
-            compactBetaNavigationChild(iconContainer)
-            compactBetaNavigationChild(labelsGroup)
-            // Material keeps a small label gap even after its padding is reset.
-            // Lift only the label group so the icon/label pair is tighter while
-            // retaining the same overall content position and touch bounds.
-            labelsGroup?.translationY = -dp(5).toFloat()
-        }
-        menuView.requestLayout()
-    }
-
-    private fun compactBetaNavigationChild(child: android.view.View?) {
-        child ?: return
-        child.setPadding(child.paddingLeft, 0, child.paddingRight, 0)
-        (child.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { lp ->
-            lp.topMargin = 0
-            lp.bottomMargin = 0
-            child.layoutParams = lp
-        }
     }
 
     private fun applyStartupPalette() {

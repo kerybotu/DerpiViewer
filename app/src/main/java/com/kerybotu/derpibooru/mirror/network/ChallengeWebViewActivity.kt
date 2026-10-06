@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.util.Log
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -20,12 +21,14 @@ import androidx.webkit.WebViewFeature
 abstract class ChallengeWebViewActivity : AppCompatActivity() {
     protected lateinit var webView: WebView
     protected var mainFrameHttpError = false
+    protected var mainFrameNavigationId = 0L
     private var resolved = false
 
     @SuppressLint("SetJavaScriptEnabled")
     protected fun createChallengeWebView(backgroundColor: Int): WebView = WebView(this).apply {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
+        NetworkManager.userAgent()?.let { settings.userAgentString = it }
         setBackgroundColor(backgroundColor)
         alpha = 0f
     }
@@ -37,6 +40,7 @@ abstract class ChallengeWebViewActivity : AppCompatActivity() {
     ) {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                mainFrameNavigationId++
                 mainFrameHttpError = false
                 loading.visibility = View.VISIBLE
                 super.onPageStarted(view, url, favicon)
@@ -97,15 +101,23 @@ abstract class ChallengeWebViewActivity : AppCompatActivity() {
     protected fun finishChallenge(success: Boolean) {
         if (resolved) return
         resolved = true
-        ChallengeCoordinator.notifyResolved(success)
+        if (success) CookieManager.getInstance().flush()
+        ChallengeCoordinator.notifyResolved(intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L), success)
         finish()
     }
+
+    protected fun isCurrentPage(view: WebView, url: String, navigationId: Long): Boolean =
+        !resolved && !isFinishing && !isDestroyed && !mainFrameHttpError &&
+            mainFrameNavigationId == navigationId && view.url == url
 
     override fun onBackPressed() {
         finishChallenge(false)
     }
 
     override fun onDestroy() {
+        if (!resolved && !isChangingConfigurations) {
+            ChallengeCoordinator.notifyResolved(intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L), false)
+        }
         if (::webView.isInitialized) webView.destroy()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
             ProxyController.getInstance().clearProxyOverride(ContextCompat.getMainExecutor(this)) { }

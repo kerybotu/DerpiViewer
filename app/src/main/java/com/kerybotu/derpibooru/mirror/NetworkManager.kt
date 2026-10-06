@@ -2,6 +2,7 @@ package com.kerybotu.derpibooru.mirror.network
 
 import android.content.Context
 import android.util.Log
+import android.webkit.WebSettings
 import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.IpOptimizer
 import com.kerybotu.derpibooru.mirror.LocalProxyServer
@@ -26,6 +27,7 @@ object NetworkManager {
     private const val TAG = "NetworkManager"
     private var localProxyServer: LocalProxyServer? = null
     private var okHttpClient: OkHttpClient? = null
+    @Volatile private var httpUserAgent: String? = null
     @Volatile private var preferredRouteIps: Map<String, String> = emptyMap()
     private val rateLimiter = ApiRateLimiter()
 
@@ -45,8 +47,14 @@ object NetworkManager {
     ) {
         try {
             val targetDomain = AppSettings.getTargetDomain(context)
+            // Clearance cookies belong to the browser identity used for verification.
+            val userAgent = withContext(Dispatchers.Main) { WebSettings.getDefaultUserAgent(context) }
+            httpUserAgent = userAgent
             val builder = OkHttpClient.Builder()
                 .cookieJar(SharedCookieJar())
+                .addInterceptor { chain ->
+                    chain.proceed(chain.request().newBuilder().header("User-Agent", userAgent).build())
+                }
                 .addInterceptor(ChallengeInterceptor(context.applicationContext))
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
@@ -103,7 +111,6 @@ object NetworkManager {
             }
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 .header("Accept", "application/json")
                 .build()
 
@@ -141,6 +148,8 @@ object NetworkManager {
                         }
                     }
                 }
+            } catch (e: ChallengeCancelledException) {
+                return null
             } catch (e: Exception) {
                 Log.e(TAG, "请求异常", e)
                 delay(2000)
@@ -155,6 +164,8 @@ object NetworkManager {
         IpOptimizer.getBestIpSmart(context, forceRefresh = true)
 
     fun isReady(): Boolean = okHttpClient != null
+
+    fun userAgent(): String? = httpUserAgent
 
     /**
      * 图片加载器与 API 复用同一个客户端，因而会复用本地代理、TLS/HTTP2 连接池。

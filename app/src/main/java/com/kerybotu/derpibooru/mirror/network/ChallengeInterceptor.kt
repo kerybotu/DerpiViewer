@@ -4,13 +4,17 @@ import android.content.Context
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.Response
+import java.io.IOException
+
+internal class ChallengeCancelledException : IOException("Verification was cancelled")
 
 /** Detects Derpibooru's HTML challenge and waits for a real user interaction. */
 class ChallengeInterceptor(private val appContext: Context) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         runBlocking { ChallengeBackoff.awaitReady() }
         val request = chain.request()
-        var response = chain.proceed(request)
+        val requestVersion = ChallengeCoordinator.requestVersion(request.url)
+        val response = chain.proceed(request)
         if (response.code == 501) {
             // The documented challenge window requires a complete 5-second quiet period.
             ChallengeBackoff.blockFor(5_000L)
@@ -19,23 +23,19 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
             // Do not let any queued image/API request reset the remote 15-minute ban timer.
             ChallengeBackoff.blockFor(15 * 60 * 1_000L)
         }
-        var retried = false
         val challengeType = detectChallengeType(response)
-        while (challengeType != null && !retried) {
+        if (challengeType != null) {
             response.close()
             val challengeUrl = request.url.newBuilder()
                 .removeAllQueryParameters("key")
                 .build()
                 .toString()
             val resolved = runBlocking {
-                ChallengeCoordinator.awaitResolved(appContext, challengeUrl, challengeType)
+                ChallengeCoordinator.awaitResolved(appContext, challengeUrl, challengeType, requestVersion)
             }
-            if (!resolved) {
-                retried = true
-                return chain.proceed(request)
-            }
-            response = chain.proceed(request)
-            retried = true
+            if (!resolved) throw ChallengeCancelledException()
+            // BridgeInterceptor reads the shared cookie store again for this retry.
+            return chain.proceed(request)
         }
         return response
     }

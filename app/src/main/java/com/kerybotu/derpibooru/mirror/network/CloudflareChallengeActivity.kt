@@ -12,8 +12,6 @@ import com.kerybotu.derpibooru.mirror.PaletteManager
 
 /** A separate Cloudflare/Turnstile verification screen and state machine. */
 class CloudflareChallengeActivity : ChallengeWebViewActivity() {
-    private var cloudflareChallengeObserved = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val palette = PaletteManager.colors(this)
@@ -75,27 +73,31 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
     }
 
     private fun checkCloudflareChallengeState(view: android.webkit.WebView, url: String) {
-        if (mainFrameHttpError) return
+        val navigationId = mainFrameNavigationId
+        if (!isCurrentPage(view, url, navigationId)) return
         view.evaluateJavascript(
-            "(function(){var h=(document.documentElement&&document.documentElement.outerHTML||'').toLowerCase();return h.includes('/cdn-cgi/challenge-platform/')&&(h.includes('window._cf_chl_opt')||h.includes('challenges.cloudflare.com/turnstile')||h.includes('cf-turnstile-response'))})()"
+            """
+                (function(){
+                    return !!document.querySelector('script[src*="/cdn-cgi/challenge-platform/"], script[src*="challenges.cloudflare.com/turnstile"], input[name="cf-turnstile-response"], iframe[src*="challenges.cloudflare.com"]') ||
+                        Array.prototype.some.call(document.scripts, function(s) {
+                            return (s.textContent || '').indexOf('window._cf_chl_opt') !== -1;
+                        });
+                })()
+            """.trimIndent()
         ) { result ->
-            if (result == "true") {
-                cloudflareChallengeObserved = true
-                return@evaluateJavascript
-            }
-            if (!cloudflareChallengeObserved) return@evaluateJavascript
-            val expectedHost = android.net.Uri.parse(
-                intent.getStringExtra(ChallengeActivity.EXTRA_URL).orEmpty()
-            ).host
-            val currentUri = android.net.Uri.parse(url)
-            val passedChallengeUrl = currentUri.host.equals(expectedHost, ignoreCase = true) &&
-                !url.contains("__cf_chl", ignoreCase = true) &&
-                !url.contains("/cdn-cgi/challenge-platform/", ignoreCase = true)
-            if (!passedChallengeUrl) return@evaluateJavascript
+            if (result != "false" || !isCurrentPage(view, url, navigationId)) return@evaluateJavascript
             view.evaluateJavascript(
-                "(function(){try{var t=(document.body&&document.body.innerText||'').trim();var v=JSON.parse(t);return !!v && typeof v==='object' && !Array.isArray(v)}catch(e){return false}})()"
+                ChallengeCompletionPolicy.JSON_OBJECT_SCRIPT
             ) { jsonResult ->
-                if (jsonResult == "true" && !mainFrameHttpError) finishChallenge(true)
+                if (isCurrentPage(view, url, navigationId) && ChallengeCompletionPolicy.isResolved(
+                        expectedUrl = intent.getStringExtra(ChallengeActivity.EXTRA_URL).orEmpty(),
+                        currentUrl = url,
+                        hasHttpError = mainFrameHttpError,
+                        hasChallenge = false,
+                        isJsonObject = jsonResult == "true"
+                    )) {
+                    finishChallenge(true)
+                }
             }
         }
     }
