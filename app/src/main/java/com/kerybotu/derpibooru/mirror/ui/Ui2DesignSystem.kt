@@ -117,18 +117,18 @@ object Ui2DesignSystem {
         view.clipToOutline = true
     }
 
-    fun applyPressFeedback(view: View) {
-        view.setOnTouchListener { target, event ->
+    fun applyPressFeedback(view: View, animatedView: View = view) {
+        view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 android.view.MotionEvent.ACTION_DOWN -> {
-                    target.animate().cancel()
-                    target.animate().scaleX(0.97f).scaleY(0.97f)
+                    animatedView.animate().cancel()
+                    animatedView.animate().scaleX(0.97f).scaleY(0.97f)
                         .setDuration(Motion.fastMs).setInterpolator(Motion.standard).start()
                 }
                 android.view.MotionEvent.ACTION_UP,
                 android.view.MotionEvent.ACTION_CANCEL -> {
-                    target.animate().cancel()
-                    target.animate().scaleX(1f).scaleY(1f)
+                    animatedView.animate().cancel()
+                    animatedView.animate().scaleX(1f).scaleY(1f)
                         .setDuration(Motion.normalMs).setInterpolator(Motion.spring).start()
                 }
             }

@@ -9,7 +9,7 @@ import com.example.liquidglass.GlassMaterial
 import com.example.liquidglass.LiquidGlassView
 import com.kerybotu.derpibooru.mirror.PaletteDefinitions
 
-/** Shared glass material for the home header and bottom navigation surfaces. */
+/** Shared glass material for the header, navigation bar and floating action button. */
 open class IslandGlassView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
