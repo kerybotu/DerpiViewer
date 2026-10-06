@@ -33,7 +33,7 @@ class ChallengeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         val palette = PaletteManager.colors(this)
         val hint = TextView(this).apply {
-            text = "请完成网页中的机器人验证，完成后会自动继续请求"
+            text = "请完成 Derpibooru 验证，完成后会自动继续请求"
             setPadding(24, 20, 24, 12)
             setTextColor(palette.onSurface)
             setBackgroundColor(palette.surface)

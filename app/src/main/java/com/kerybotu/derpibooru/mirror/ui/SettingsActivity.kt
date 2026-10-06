@@ -18,6 +18,9 @@ import android.graphics.drawable.GradientDrawable
 import com.kerybotu.derpibooru.mirror.theme.AccentColor
 import com.kerybotu.derpibooru.mirror.theme.ThemeGenerator
 import com.kerybotu.derpibooru.mirror.theme.ThemeMode
+import com.kerybotu.derpibooru.mirror.update.AppUpdateManager
+import com.kerybotu.derpibooru.mirror.update.UpdateUi
+import com.kerybotu.derpibooru.mirror.update.UpdateFrequency
 
 class SettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySettingsBinding
@@ -38,6 +41,7 @@ class SettingsActivity : AppCompatActivity() {
         bindValues()
         buildAccentSwatches()
         bindActions()
+        bindUpdateSettings()
         updateAccountStatus()
         refreshNetworkStatus()
     }
@@ -45,17 +49,26 @@ class SettingsActivity : AppCompatActivity() {
     private fun bindValues() {
         val s = this
         when (AppSettings.getPalette(s)) {
+            AppSettings.Palette.SYSTEM -> binding.paletteSystem.isChecked = true
             AppSettings.Palette.DARK -> binding.paletteDark.isChecked = true
             AppSettings.Palette.LIGHT -> binding.paletteLight.isChecked = true
             AppSettings.Palette.COLORFUL -> binding.paletteColorful.isChecked = true
         }
+        binding.switchNewUiBeta.isChecked = AppSettings.isNewUiBetaEnabled(s)
         binding.switchHighRes.isChecked = AppSettings.isHighResolution(s)
         binding.switchVideoThumb.isChecked = AppSettings.isVideoThumbnailsEnabled(s)
         binding.switchVideoAudio.isChecked = AppSettings.isVideoAudioEnabled(s)
         binding.switchVideoWifiOnly.isChecked = AppSettings.isVideoWifiOnly(s)
         binding.switchHideUploader.isChecked = AppSettings.isUploaderHidden(s)
         binding.switchHideScore.isChecked = AppSettings.isScoreHidden(s)
+        binding.switchTagTranslation.isChecked = AppSettings.isTagTranslationEnabled(s)
+        val spoilerModes = AppSettings.SpoilerDisplayMode.values().toList()
+        binding.spinnerSpoilerMode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, spoilerModes.map { it.label })
+        binding.spinnerSpoilerMode.setSelection(spoilerModes.indexOf(AppSettings.getSpoilerDisplayMode(s)).coerceAtLeast(0))
+        binding.switchAntiEmbarrassment.isChecked = AppSettings.isAntiEmbarrassmentEnabled(s)
+        updateAntiEmbarrassmentFilterLabel()
         binding.switchIp.isChecked = AppSettings.isIpOptimizationEnabled(s)
+        binding.switchCdnDirect.isChecked = AppSettings.isCdnDirect(s)
         binding.manualIp.setText(AppSettings.getManualIp(s) ?: "")
         binding.customDomain.setText(AppSettings.getCustomDomain(s) ?: "")
         when (AppSettings.getSelectedSite(s)) {
@@ -69,14 +82,16 @@ class SettingsActivity : AppCompatActivity() {
         val selected = AppSettings.getAccentColor(this)
         binding.accentSwatches.removeAllViews()
         val palette = AppSettings.getPalette(this)
-        val visibleAccents = if (palette == AppSettings.Palette.DARK) {
+        val systemDark = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val darkPalette = palette == AppSettings.Palette.DARK || (palette == AppSettings.Palette.SYSTEM && systemDark)
+        val visibleAccents = if (darkPalette) {
             setOf(AccentColor.BLUE, AccentColor.PURPLE, AccentColor.GREEN, AccentColor.TEAL, AccentColor.ORANGE, AccentColor.ROSE)
         } else {
             AccentColor.values().toSet()
         }
         // Dark mode intentionally exposes only the muted accents tuned for the #121212 surface.
         visibleAccents.forEach { accent ->
-            val scheme = ThemeGenerator.generate(accent, if (AppSettings.getPalette(this) == AppSettings.Palette.DARK) ThemeMode.DARK else ThemeMode.LIGHT)
+            val scheme = ThemeGenerator.generate(accent, if (darkPalette) ThemeMode.DARK else ThemeMode.LIGHT)
             val swatch = TextView(this).apply {
                 text = if (accent == selected) "✓" else ""
                 gravity = android.view.Gravity.CENTER
@@ -106,19 +121,52 @@ class SettingsActivity : AppCompatActivity() {
         }
         binding.accountLogout.setOnClickListener { confirmClearCredentials() }
         binding.paletteGroup.setOnCheckedChangeListener { _, id ->
-            val palette = when (id) { binding.paletteDark.id -> AppSettings.Palette.DARK; binding.paletteLight.id -> AppSettings.Palette.LIGHT; else -> AppSettings.Palette.COLORFUL }
+            val palette = when (id) {
+                binding.paletteSystem.id -> AppSettings.Palette.SYSTEM
+                binding.paletteDark.id -> AppSettings.Palette.DARK
+                binding.paletteLight.id -> AppSettings.Palette.LIGHT
+                else -> AppSettings.Palette.COLORFUL
+            }
             AppSettings.setPalette(this, palette)
             PaletteManager.apply(this)
             applyPalette()
             buildAccentSwatches()
         }
         binding.switchHighRes.setOnCheckedChangeListener { _, v -> AppSettings.setHighResolution(this, v) }
+        binding.switchNewUiBeta.setOnCheckedChangeListener { _, enabled ->
+            AppSettings.setNewUiBetaEnabled(this, enabled)
+            binding.settingsToolbar.appToolbar.applyUi2Appearance()
+            androidx.core.view.ViewCompat.requestApplyInsets(binding.settingsToolbar.appToolbar)
+            Toast.makeText(this, if (enabled) "新版界面已启用" else "已切换回旧版界面", Toast.LENGTH_SHORT).show()
+        }
         binding.switchVideoThumb.setOnCheckedChangeListener { _, v -> AppSettings.setVideoThumbnailsEnabled(this, v) }
         binding.switchVideoAudio.setOnCheckedChangeListener { _, v -> AppSettings.setVideoAudioEnabled(this, v) }
         binding.switchVideoWifiOnly.setOnCheckedChangeListener { _, v -> AppSettings.setVideoWifiOnly(this, v) }
         binding.switchHideUploader.setOnCheckedChangeListener { _, v -> AppSettings.setUploaderHidden(this, v) }
         binding.switchHideScore.setOnCheckedChangeListener { _, v -> AppSettings.setScoreHidden(this, v) }
+        binding.switchTagTranslation.setOnCheckedChangeListener { _, v ->
+            AppSettings.setTagTranslationEnabled(this, v)
+            Toast.makeText(this, if (v) "标签翻译已开启" else "标签翻译已关闭", Toast.LENGTH_SHORT).show()
+        }
+        binding.spinnerSpoilerMode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                AppSettings.setSpoilerDisplayMode(this@SettingsActivity, AppSettings.SpoilerDisplayMode.values()[position])
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        binding.spoilerModeInfo.setOnClickListener { showSpoilerModeInfo() }
+        binding.switchAntiEmbarrassment.setOnCheckedChangeListener { _, enabled ->
+            AppSettings.setAntiEmbarrassmentEnabled(this, enabled)
+            Toast.makeText(this, if (enabled) "防社死已开启：下次启动将自动切换过滤器" else "防社死已关闭", Toast.LENGTH_SHORT).show()
+        }
+        binding.antiEmbarrassmentInfo.setOnClickListener { showAntiEmbarrassmentInfo() }
+        binding.antiEmbarrassmentFilter.setOnClickListener { showAntiEmbarrassmentFilterDialog() }
         binding.switchIp.setOnCheckedChangeListener { _, v -> AppSettings.setIpOptimizationEnabled(this, v) }
+        binding.switchCdnDirect.setOnCheckedChangeListener { _, v ->
+            AppSettings.setCdnDirect(this, v)
+            NetworkManager.shutdown()
+            binding.networkStatus.text = "CDN 直连设置已保存，网络客户端将在下次请求前重建"
+        }
         binding.siteGroup.setOnCheckedChangeListener { _, id -> when (id) { binding.siteDerpi.id -> AppSettings.setSelectedSite(this, AppSettings.Site.DERPIBOORU); binding.siteTrixie.id -> AppSettings.setSelectedSite(this, AppSettings.Site.TRIXIEBOORU); binding.siteCustom.id -> saveCustomDomain() } }
         binding.saveNetwork.setOnClickListener { saveNetwork() }
         binding.restoreAutoIp.setOnClickListener { AppSettings.setManualIp(this, null); binding.manualIp.setText(""); binding.networkStatus.text = "已恢复自动优选" }
@@ -132,6 +180,83 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
         binding.clearCache.setOnClickListener { clearCache() }
+    }
+
+    private fun bindUpdateSettings() {
+        val options = UpdateFrequency.values().toList()
+        binding.updateFrequency.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options.map { it.label })
+        binding.updateFrequency.setSelection(options.indexOf(AppUpdateManager.frequency(this)).coerceAtLeast(0))
+        binding.updateFrequency.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) { AppUpdateManager.setFrequency(this@SettingsActivity, options[position]) }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+        })
+        binding.checkUpdate.setOnClickListener {
+            binding.checkUpdate.isEnabled = false
+            scope.launch {
+                try {
+                    when (val result = AppUpdateManager.checkDetailed(this@SettingsActivity, force = true)) {
+                        is com.kerybotu.derpibooru.mirror.update.UpdateCheckResult.Available ->
+                            UpdateUi.show(this@SettingsActivity, result.info, scope)
+                        com.kerybotu.derpibooru.mirror.update.UpdateCheckResult.NoUpdate ->
+                            Toast.makeText(this@SettingsActivity, "当前已是最新版本", Toast.LENGTH_SHORT).show()
+                        is com.kerybotu.derpibooru.mirror.update.UpdateCheckResult.Failed ->
+                            Toast.makeText(this@SettingsActivity, result.reason, Toast.LENGTH_LONG).show()
+                    }
+                } finally {
+                    binding.checkUpdate.isEnabled = true
+                }
+            }
+        }
+    }
+
+    private fun updateAntiEmbarrassmentFilterLabel() {
+        binding.antiEmbarrassmentFilter.text = "指定过滤器：${AppSettings.getAntiEmbarrassmentFilterName(this)}"
+    }
+
+    private fun showAntiEmbarrassmentInfo() {
+        AlertDialog.Builder(this)
+            .setTitle("防社死")
+            .setMessage("开启后，每次打开 APP 时都会自动设置为指定过滤器，有效防止在公共场合因展示不合适内容而社死。\n\n默认使用官方 Default 过滤器；你也可以在下方“指定过滤器”中填写自己的过滤器 ID。关闭本开关后，应用不会在启动时改动当前过滤器。")
+            .setPositiveButton("知道了", null)
+            .show()
+    }
+
+    private fun showSpoilerModeInfo() {
+        AlertDialog.Builder(this)
+            .setTitle("剧透内容显示方式")
+            .setMessage("直接隐藏：从图片列表中移除剧透图片卡片。\n\n点击显示：卡片显示遮罩，点击遮罩上的“显示”按钮后查看缩略图；点击其它区域仍可进入详情页。\n\n直接显示：不显示剧透遮罩。此设置只影响图片卡片，详情页和全屏大图仍可按页面操作查看。")
+            .setPositiveButton("知道了", null)
+            .show()
+    }
+
+    private fun showAntiEmbarrassmentFilterDialog() {
+        val currentId = AppSettings.getAntiEmbarrassmentFilterId(this)
+        val input = EditText(this).apply {
+            hint = "过滤器 ID（留空使用 Default）"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(currentId?.toString().orEmpty())
+            setSelectAllOnFocus(false)
+            setPadding(dp(24), dp(8), dp(24), dp(8))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("指定防社死过滤器")
+            .setMessage("留空时使用官方 Default 过滤器；填写 ID 后，每次启动会自动切换到该过滤器。")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setNeutralButton("使用 Default") { _, _ ->
+                AppSettings.setAntiEmbarrassmentFilter(this, null, "Default")
+                updateAntiEmbarrassmentFilterLabel()
+            }
+            .setPositiveButton("保存") { _, _ ->
+                val id = input.text.toString().trim().toIntOrNull()
+                if (input.text.toString().trim().isNotEmpty() && (id == null || id <= 0)) {
+                    Toast.makeText(this, "请输入有效的过滤器 ID", Toast.LENGTH_SHORT).show()
+                } else {
+                    AppSettings.setAntiEmbarrassmentFilter(this, id)
+                    updateAntiEmbarrassmentFilterLabel()
+                }
+            }
+            .show()
     }
 
     private fun saveCustomDomain() {
@@ -200,6 +325,27 @@ class SettingsActivity : AppCompatActivity() {
         listOf(binding.customDomain, binding.manualIp).forEach {
             it.setTextColor(c.onSurface)
             it.setHintTextColor(c.muted)
+        }
+        // Settings is an XML view hierarchy populated partly after the initial
+        // palette pass (for example Spinner adapters). Re-apply the semantic
+        // text color here so light and colorful modes never inherit white text
+        // from a system dark Material theme.
+        val palette = AppSettings.getPalette(this)
+        val systemDark = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val dark = palette == AppSettings.Palette.DARK || (palette == AppSettings.Palette.SYSTEM && systemDark)
+        applySettingsTextColor(binding.root, if (dark) c.onSurface else Color.BLACK)
+        binding.root.post {
+            applySettingsTextColor(binding.root, if (dark) c.onSurface else Color.BLACK)
+        }
+    }
+
+    private fun applySettingsTextColor(view: android.view.View, textColor: Int) {
+        // Keep the toolbar title/navigation icon and accent swatch checkmarks
+        // controlled by PaletteManager and buildAccentSwatches respectively.
+        if (view.id == com.kerybotu.derpibooru.mirror.R.id.app_toolbar || view === binding.accentSwatches) return
+        if (view is TextView) view.setTextColor(textColor)
+        if (view is android.view.ViewGroup) {
+            for (index in 0 until view.childCount) applySettingsTextColor(view.getChildAt(index), textColor)
         }
     }
 

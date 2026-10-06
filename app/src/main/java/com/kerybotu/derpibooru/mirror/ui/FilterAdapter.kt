@@ -20,6 +20,7 @@ class FilterAdapter(private var items: List<Filter>, private val currentId: () -
     inner class Holder(private val b: ItemFilterBinding) : RecyclerView.ViewHolder(b.root) {
         fun bind(filter: Filter) {
             b.filterName.text = filter.name
+            b.filterId.text = "过滤器 ID：${filter.id}"
             b.filterOwner.text = if (filter.system) "官方维护" else "维护者：${filter.userId ?: "未知"}"
             b.filterDescription.text = filter.description.ifBlank { "公共场合可用的安全过滤器" }
             b.filterChips.removeAllViews()

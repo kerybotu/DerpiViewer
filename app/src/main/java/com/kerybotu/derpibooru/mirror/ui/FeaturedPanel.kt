@@ -36,6 +36,8 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
     private lateinit var refreshLayout: PullRefreshLayout
     private var page = 1
     private var loading = false
+    private var hasLoadedOnce = false
+    private var lastDetailsClickAt = 0L
     var onRefreshFinished: (() -> Unit)? = null
     var onSelectionChanged: ((Int) -> Unit)? = null
 
@@ -60,9 +62,9 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         }, LinearLayout.LayoutParams(-1, dp(1)))
         val grid = RecyclerView(context).apply {
             isNestedScrollingEnabled = false
-            layoutManager = GridLayoutManager(context, 2)
+            layoutManager = GridLayoutManager(context, AdaptiveLayoutPolicy.artworkColumnCount(context))
         }
-        adapter = ImageAdapter(emptyList(), { openDetails(it) }) { count -> onSelectionChanged?.invoke(count) }
+        adapter = ImageAdapter(emptyList(), { openDetails(it) }, { count -> onSelectionChanged?.invoke(count) }, context)
         grid.adapter = adapter
         content.addView(grid, LinearLayout.LayoutParams(-1, -2))
         scroll.addView(content)
@@ -78,11 +80,23 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
     }
 
     fun refresh() {
+        // Avoid clearing visible content when a refresh gesture arrives while
+        // the initial request is still running.
+        if (loading) return
         page = 1
         items.clear()
         adapter.updateData(emptyList())
         heroBox.visibility = View.GONE
         loadPage()
+    }
+
+    /** Loads the panel only when it has not produced its first result yet. */
+    fun ensureLoaded() {
+        if (!hasLoadedOnce && !loading) loadPage()
+    }
+
+    fun refreshDisplayMode() {
+        adapter.refreshDisplayMode()
     }
 
     private fun loadPage() {
@@ -105,6 +119,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
                 }
             } finally {
                 loading = false
+                hasLoadedOnce = true
                 progress.visibility = View.GONE
                 refreshLayout.isRefreshing = false
                 onRefreshFinished?.invoke()
@@ -152,7 +167,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
     private fun parseImage(o: JSONObject, highResolution: Boolean): Image {
         val reps = o.optJSONObject("representations")
         val thumb = if (highResolution) reps?.optString("large", null) ?: reps?.optString("medium", null) else reps?.optString("small", null) ?: reps?.optString("thumb", null)
-        return Image(o.optInt("id"), "", thumb, o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), tags(o), reps?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1L).takeIf { it > 0L })
+        return Image(o.optInt("id"), "", thumb, o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), tags(o), reps?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1L).takeIf { it > 0L }, o.optBoolean("spoilered", false))
     }
 
     private fun tags(o: JSONObject): List<String> {
@@ -160,7 +175,12 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         return List(a.length()) { a.optString(it) }
     }
 
-    private fun openDetails(image: Image) { context.startActivity(Intent(context, ImageDetailActivity::class.java).putExtra("image", image)) }
+    private fun openDetails(image: Image) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastDetailsClickAt < 500L) return
+        lastDetailsClickAt = now
+        context.startActivity(Intent(context, ImageDetailActivity::class.java).putExtra("image", image))
+    }
     fun selectedImages(): List<Image> = adapter.selectedItems()
     fun clearSelection() = adapter.clearSelection()
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

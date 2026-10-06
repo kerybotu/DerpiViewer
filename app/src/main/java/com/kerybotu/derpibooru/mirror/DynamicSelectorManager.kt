@@ -21,7 +21,7 @@ object DynamicSelectorManager {
     // 复用同一份 sources.json 清单（里面的 dynamicUrls 字段），
     // 不再单独维护一份 dynamic_manifest.json
     private const val MANIFEST_URL =
-        "https://derpiboorumobileiupdate.495648.xyz/kerybotu/DerpibooruMobileDataBase/refs/heads/main/sources.json"
+        "https://kerybotu.github.io/appuploads/sources.json"
 
     @Volatile private var cachedSelectors: List<String>? = null
 

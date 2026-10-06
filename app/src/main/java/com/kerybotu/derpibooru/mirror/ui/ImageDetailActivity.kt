@@ -4,7 +4,15 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import android.graphics.Matrix
+import android.graphics.drawable.Drawable
+import android.widget.ImageView
 import android.widget.PopupMenu
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,8 +27,10 @@ import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.databinding.ActivityImageDetailBinding
 import com.kerybotu.derpibooru.mirror.model.Image
+import com.kerybotu.derpibooru.mirror.model.Comment
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import com.kerybotu.derpibooru.mirror.dict.TagDictionary
+import com.kerybotu.derpibooru.mirror.dict.TagEntry
 import com.kerybotu.derpibooru.mirror.translate.NiuTransService
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import com.kerybotu.derpibooru.mirror.favorites.FavoriteItem
@@ -43,6 +53,15 @@ class ImageDetailActivity : AppCompatActivity() {
     private var tagJob: Job? = null
     private var descriptionOriginal = ""
     private var descriptionTranslation: String? = null
+    private var dragStartX = 0f
+    private var dragStartY = 0f
+    private var draggingMedia = false
+    private var velocityTracker: VelocityTracker? = null
+    private var spoilerRevealed = false
+    private val imageMatrix = Matrix()
+    private var baseScale = 1f
+    private var maxScale = 5f
+    private var matrixDrawable: Drawable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,6 +97,7 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun bindInitial() {
+        spoilerRevealed = false
         b.detailFaves.text = image.faves.toString(); b.detailUpvotes.text = image.upvotes.toString()
         b.detailCommentsCount.text = image.commentCount.toString()
         b.detailUploader.text = image.uploader ?: "未知上传者"; b.detailCreatedAt.text = image.createdAt?.take(10) ?: ""
@@ -93,18 +113,27 @@ class ImageDetailActivity : AppCompatActivity() {
         val palette = PaletteManager.colors(this)
         tagJob?.cancel()
         tagJob = scope.launch {
-            val translated = withContext(Dispatchers.IO) { TagDictionary.sortAndTranslate(this@ImageDetailActivity, tags) }
+            val translated = if (AppSettings.isTagTranslationEnabled(this@ImageDetailActivity)) {
+                withContext(Dispatchers.IO) { TagDictionary.sortAndTranslate(this@ImageDetailActivity, tags) }
+            } else {
+                tags.map { TagEntry(it, it, -1, 0, emptyList(), sourceName = it) }
+            }
             // Initial feed data and full detail data can arrive in either order.
             // Only the newest binding owns the group, preventing duplicate chips and mixed sort orders.
             b.detailTagsGroup.removeAllViews()
             translated.forEach { entry -> b.detailTagsGroup.addView(Chip(this@ImageDetailActivity).apply {
-            text = entry.chineseName; contentDescription = entry.englishName; isCheckable = false
+            text = entry.chineseName
+            // The dictionary stores spaces as underscores for lookup. Search must
+            // use the exact tag returned by the API, such as "oc:frostwing blade".
+            val apiTag = entry.sourceName ?: entry.englishName
+            contentDescription = apiTag
+            isCheckable = false
             setTextColor(palette.onSurface)
             chipBackgroundColor = ColorStateList.valueOf(palette.surfaceVariant)
             rippleColor = ColorStateList.valueOf(palette.primary)
             setOnClickListener {
                 startActivity(Intent(this@ImageDetailActivity, SearchActivity::class.java)
-                    .putExtra(SearchActivity.EXTRA_INITIAL_QUERY, entry.englishName))
+                    .putExtra(SearchActivity.EXTRA_INITIAL_QUERY, apiTag))
             }
             }) }
         }
@@ -130,27 +159,84 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun setGestures() {
+        b.detailImage.scaleType = ImageView.ScaleType.MATRIX
+        b.detailImage.viewTreeObserver.addOnPreDrawListener {
+            val drawable = b.detailImage.drawable
+            if (drawable != null && drawable !== matrixDrawable && b.detailImage.width > 0 && b.detailImage.height > 0) {
+                matrixDrawable = drawable
+                fitImageToScreen(drawable.intrinsicWidth, drawable.intrinsicHeight)
+            }
+            true
+        }
+        var lastFocusX = 0f
+        var lastFocusY = 0f
+        val scaleGesture = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                draggingMedia = false
+                lastFocusX = detector.focusX
+                lastFocusY = detector.focusY
+                b.detailImage.parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val current = currentImageScale()
+                val target = (current * detector.scaleFactor).coerceIn(baseScale, maxScale)
+                if (current > 0f) {
+                    imageMatrix.postScale(target / current, target / current, detector.focusX, detector.focusY)
+                    val dx = detector.focusX - lastFocusX
+                    val dy = detector.focusY - lastFocusY
+                    imageMatrix.postTranslate(dx, dy)
+                    lastFocusX = detector.focusX
+                    lastFocusY = detector.focusY
+                    clampImageMatrix()
+                    b.detailImage.imageMatrix = imageMatrix
+                }
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                b.detailImage.parent?.requestDisallowInterceptTouchEvent(currentImageScale() > baseScale * 1.05f)
+            }
+        })
         val gesture = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             // Consume the complete gesture stream so the ImageView's native long-click
             // scheduler cannot compete with horizontal swipes.
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                openLargePreview()
+                if (!isImageZoomed()) openLargePreview()
                 return true
             }
 
             override fun onLongPress(e: MotionEvent) {
-                showMore()
+                if (!scaleGesture.isInProgress) {
+                    showMore()
+                }
             }
 
-            override fun onDoubleTap(e: MotionEvent): Boolean = false
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (b.detailImage.visibility != View.VISIBLE) return false
+                val current = currentImageScale()
+                val target = if (current > baseScale * 1.2f) baseScale else (baseScale * 2.5f).coerceAtMost(maxScale)
+                imageMatrix.postScale(target / current, target / current, e.x, e.y)
+                clampImageMatrix()
+                b.detailImage.imageMatrix = imageMatrix
+                b.detailImage.parent?.requestDisallowInterceptTouchEvent(target > baseScale * 1.05f)
+                return true
+            }
             override fun onScroll(
                 downEvent: MotionEvent?,
                 currentEvent: MotionEvent,
                 distanceX: Float,
                 distanceY: Float
             ): Boolean {
+                if (isImageZoomed()) {
+                    imageMatrix.postTranslate(-distanceX, -distanceY)
+                    clampImageMatrix()
+                    b.detailImage.imageMatrix = imageMatrix
+                    return true
+                }
                 // Treat horizontal movement as an active gesture immediately. This
                 // cancels the detector's long-press timeout even for a slow swipe.
                 return downEvent != null &&
@@ -159,6 +245,7 @@ class ImageDetailActivity : AppCompatActivity() {
 
             override fun onFling(a: MotionEvent?, c: MotionEvent, vx: Float, vy: Float): Boolean {
                 if (a == null) return false
+                if (isImageZoomed()) return false
                 if (kotlin.math.abs(vx) > kotlin.math.abs(vy) && kotlin.math.abs(vx) > 500f) {
                     loadAdjacent(if (vx < 0f) 1 else -1)
                     return true
@@ -167,18 +254,103 @@ class ImageDetailActivity : AppCompatActivity() {
                 return false
             }
         })
-        b.detailImage.setOnTouchListener { view, event ->
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                view.parent?.requestDisallowInterceptTouchEvent(true)
-            } else if (event.actionMasked == MotionEvent.ACTION_UP ||
-                event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                view.parent?.requestDisallowInterceptTouchEvent(false)
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
+        val handleTouch: (View, MotionEvent) -> Boolean = { view, event ->
+            if (view === b.detailImage) scaleGesture.onTouchEvent(event)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragStartX = event.rawX
+                    dragStartY = event.rawY
+                    draggingMedia = false
+                    velocityTracker?.recycle()
+                    velocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
+                    view.animate().cancel()
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (view === b.detailImage && (scaleGesture.isInProgress || event.pointerCount > 1)) {
+                        draggingMedia = false
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    velocityTracker?.addMovement(event)
+                    val dx = event.rawX - dragStartX
+                    val dy = event.rawY - dragStartY
+                    if (!draggingMedia && !isImageZoomed() && kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.15f) {
+                        draggingMedia = true
+                        view.animate().cancel()
+                    }
+                    if (draggingMedia && !isImageZoomed()) {
+                        val width = view.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)
+                        val damped = dx * (1f - (kotlin.math.abs(dx) / width.toFloat()).coerceIn(0f, 1f) * 0.12f)
+                        view.translationX = damped
+                        view.alpha = 1f - (kotlin.math.abs(damped) / width) * 0.22f
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    velocityTracker?.addMovement(event)
+                    velocityTracker?.computeCurrentVelocity(1000)
+                    val dx = event.rawX - dragStartX
+                    val width = view.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)
+                    if (draggingMedia && !isImageZoomed()) {
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
+                        val velocityX = velocityTracker?.xVelocity ?: 0f
+                        val threshold = width * 0.22f
+                        val commit = kotlin.math.abs(dx) > threshold || kotlin.math.abs(velocityX) > 900f
+                        if (commit) {
+                            loadAdjacent(if (dx < 0f) 1 else -1, view, dx)
+                        } else {
+                            view.animate().translationX(0f).alpha(1f).setDuration(260L)
+                                .setInterpolator(OvershootInterpolator(1.05f)).start()
+                        }
+                        draggingMedia = false
+                        velocityTracker?.recycle()
+                        velocityTracker = null
+                        true
+                    } else {
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
+                        velocityTracker?.recycle()
+                        velocityTracker = null
+                    }
+                }
             }
-            // Always consume the stream. Long-press handling is implemented by the
-            // detector above, which is cancelled automatically once a fling starts.
-            gesture.onTouchEvent(event)
+            // Keep tap and long-press behavior while horizontal movement is handled above.
+            if (view !== b.detailImage || (!scaleGesture.isInProgress && event.pointerCount <= 1)) gesture.onTouchEvent(event)
             true
         }
+        b.detailImage.setOnTouchListener(View.OnTouchListener { view, event -> handleTouch(view, event) })
+        b.detailVideoPlayer.setOnTouchListener(View.OnTouchListener { view, event -> handleTouch(view, event) })
+    }
+
+    private fun currentImageScale(): Float {
+        val values = FloatArray(9)
+        imageMatrix.getValues(values)
+        return kotlin.math.sqrt(values[Matrix.MSCALE_X] * values[Matrix.MSCALE_X] + values[Matrix.MSKEW_Y] * values[Matrix.MSKEW_Y])
+    }
+
+    private fun isImageZoomed() = b.detailImage.visibility == View.VISIBLE && currentImageScale() > baseScale * 1.05f
+
+    private fun fitImageToScreen(width: Int, height: Int) {
+        if (width <= 0 || height <= 0 || b.detailImage.width <= 0 || b.detailImage.height <= 0) return
+        baseScale = minOf(b.detailImage.width.toFloat() / width, b.detailImage.height.toFloat() / height).coerceAtLeast(0.01f)
+        maxScale = baseScale * 5f
+        imageMatrix.reset()
+        imageMatrix.postScale(baseScale, baseScale)
+        imageMatrix.postTranslate((b.detailImage.width - width * baseScale) / 2f, (b.detailImage.height - height * baseScale) / 2f)
+        b.detailImage.imageMatrix = imageMatrix
+    }
+
+    private fun clampImageMatrix() {
+        val drawable = b.detailImage.drawable ?: return
+        val values = FloatArray(9)
+        imageMatrix.getValues(values)
+        val scale = currentImageScale()
+        val contentWidth = drawable.intrinsicWidth * scale
+        val contentHeight = drawable.intrinsicHeight * scale
+        val minX = if (contentWidth <= b.detailImage.width) (b.detailImage.width - contentWidth) / 2f else b.detailImage.width - contentWidth
+        val maxX = if (contentWidth <= b.detailImage.width) minX else 0f
+        val minY = if (contentHeight <= b.detailImage.height) (b.detailImage.height - contentHeight) / 2f else b.detailImage.height - contentHeight
+        val maxY = if (contentHeight <= b.detailImage.height) minY else 0f
+        imageMatrix.postTranslate((values[Matrix.MTRANS_X].coerceIn(minX, maxX) - values[Matrix.MTRANS_X]), (values[Matrix.MTRANS_Y].coerceIn(minY, maxY) - values[Matrix.MTRANS_Y]))
     }
 
     private fun loadDetails() {
@@ -192,6 +364,7 @@ class ImageDetailActivity : AppCompatActivity() {
             val item = JSONObject(json).getJSONObject("image")
             val mime = item.optString("mime_type", image.mimeType)
             mediaMimeType = mime
+            image = image.copy(spoilered = item.optBoolean("spoilered", image.spoilered))
             fullUrl = item.optJSONObject("representations")?.optString("full", null)
             showPreview(mime, if (mime?.startsWith("video/") == true) fullUrl ?: image.fullUrl ?: image.thumbnailUrl else fullUrl ?: image.fullUrl ?: image.thumbnailUrl)
             b.detailUploader.text = item.optString("uploader", "未知上传者"); b.detailCreatedAt.text = item.optString("created_at", "").take(10)
@@ -212,9 +385,17 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     /** Loads the nearest image in the current gallery/search space for a horizontal swipe. */
-    private fun loadAdjacent(direction: Int) {
+    private fun loadAdjacent(direction: Int, outgoing: View? = null, dragOffset: Float = 0f) {
         if (adjacentLoading) return
         adjacentLoading = true
+        val media = outgoing ?: if (b.detailVideoPlayer.visibility == View.VISIBLE) b.detailVideoPlayer else b.detailImage
+        val width = (media.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)).toFloat()
+        val exitX = if (direction > 0) -width else width
+        // Continue from the finger position immediately while the adjacent item loads.
+        if (outgoing != null) {
+            media.animate().translationX(exitX).alpha(0f).setDuration(150L)
+                .setInterpolator(DecelerateInterpolator(1.6f)).start()
+        }
         scope.launch {
             val comparator = if (direction > 0) "gt" else "lt"
             val sortDirection = if (direction > 0) "asc" else "desc"
@@ -225,8 +406,10 @@ class ImageDetailActivity : AppCompatActivity() {
             }
             val next = runCatching { JSONObject(raw.orEmpty()).optJSONArray("images")?.optJSONObject(0)?.let(::parseImage) }.getOrNull()
             if (next != null) {
-                animateToAdjacent(next, direction)
+                animateToAdjacent(next, direction, media, exitX)
             } else {
+                media.animate().translationX(0f).alpha(1f).setDuration(300L)
+                    .setInterpolator(OvershootInterpolator(1.05f)).start()
                 Toast.makeText(this@ImageDetailActivity, if (direction > 0) "已经是最后一张" else "已经是第一张", Toast.LENGTH_SHORT).show()
                 adjacentLoading = false
             }
@@ -234,14 +417,10 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     /** Slides the current media away, swaps data, then slides the new media in. */
-    private fun animateToAdjacent(next: Image, direction: Int) {
-        val outgoing = if (b.detailVideoPlayer.visibility == View.VISIBLE) {
-            b.detailVideoPlayer
-        } else {
-            b.detailImage
-        }
+    private fun animateToAdjacent(next: Image, direction: Int, outgoing: View? = null, exitXOverride: Float? = null) {
+        val outgoing = outgoing ?: if (b.detailVideoPlayer.visibility == View.VISIBLE) b.detailVideoPlayer else b.detailImage
         val distance = (outgoing.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)).toFloat()
-        val exitX = if (direction > 0) -distance else distance
+        val exitX = exitXOverride ?: if (direction > 0) -distance else distance
         val enterX = -exitX
         outgoing.animate()
             .translationX(exitX)
@@ -250,9 +429,10 @@ class ImageDetailActivity : AppCompatActivity() {
             .withEndAction {
                 image = next
                 uploaderId = next.uploaderId
-                fullUrl = null
+                fullUrl = next.fullUrl ?: next.thumbnailUrl
                 mediaMimeType = next.mimeType
                 expanded = false
+                spoilerRevealed = false
                 bindInitial()
                 loadDetails()
 
@@ -276,7 +456,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun parseImage(o: JSONObject): Image {
         val reps = o.optJSONObject("representations")
         val tags = o.optJSONArray("tags")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty()
-        return Image(o.optInt("id"), "", reps?.optString("small", null) ?: reps?.optString("thumb", null), o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), tags, reps?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1L).takeIf { it > 0L })
+        return Image(o.optInt("id"), "", reps?.optString("small", null) ?: reps?.optString("thumb", null), o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), tags, reps?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1L).takeIf { it > 0L }, o.optBoolean("spoilered", false))
     }
 
     private fun bindUploaderClick() {
@@ -302,29 +482,11 @@ class ImageDetailActivity : AppCompatActivity() {
         }
         b.detailCommentsPreview.removeAllViews()
         for (index in 0 until comments.length()) {
-            val comment = comments.optJSONObject(index) ?: continue
-            val block = LinearLayout(this@ImageDetailActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                setBackgroundResource(com.kerybotu.derpibooru.mirror.R.drawable.bg_comment_block)
-                layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
-                    bottomMargin = dp(10)
-                }
-            }
-            block.addView(TextView(this@ImageDetailActivity).apply {
-                text = "${comment.optString("author", "匿名用户")} · ${comment.optString("created_at", "").take(10)}"
-                setTextColor(resolveThemeColor(com.google.android.material.R.attr.colorOnSurface))
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-            })
-            val body = comment.optString("body", "")
-            val bodyView = TextView(this@ImageDetailActivity).apply {
-                text = body
-                setTextColor(resolveThemeColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
-                setPadding(0, dp(6), 0, 0)
-            }
-            block.addView(bodyView)
-            addTranslateAction(block, bodyView, body)
-            b.detailCommentsPreview.addView(block)
+            val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
+            b.detailCommentsPreview.addView(
+                CommentCardRenderer.create(this@ImageDetailActivity, comment, scope),
+                CommentCardRenderer.layoutParams(this@ImageDetailActivity)
+            )
         }
     }
 
@@ -358,26 +520,6 @@ class ImageDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun addTranslateAction(parent: LinearLayout, content: TextView, original: String) {
-        if (!NiuTransService.shouldTranslate(original)) return
-        val palette = PaletteManager.colors(this)
-        parent.addView(android.widget.Button(this).apply {
-            text = "翻译"; textSize = 12f
-            backgroundTintList = ColorStateList.valueOf(palette.primary); setTextColor(palette.onPrimary)
-            setOnClickListener {
-                if (tag as? String != null) {
-                    content.text = original; tag = null; text = "翻译"; return@setOnClickListener
-                }
-                isEnabled = false; text = "翻译中…"
-                scope.launch {
-                    NiuTransService.translate(original).onSuccess { translated -> content.text = translated; tag = translated; this@apply.text = "原文" }
-                        .onFailure { Toast.makeText(this@ImageDetailActivity, "翻译失败", Toast.LENGTH_SHORT).show(); this@apply.text = "翻译" }
-                    this@apply.isEnabled = true
-                }
-            }
-        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
-    }
-
     private fun resolveThemeColor(attribute: Int): Int {
         val typed = android.util.TypedValue()
         theme.resolveAttribute(attribute, typed, true)
@@ -390,10 +532,18 @@ class ImageDetailActivity : AppCompatActivity() {
             b.detailVideoPlayer.visibility = View.VISIBLE
             previewPlayer?.release()
             previewPlayer = MediaPreviewPlayer(this, b.detailVideoPlayer).also { it.load(url) }
+            SpoilerCover.bind(b.detailSpoilerCover, b.detailVideoPlayer, image.spoilered, spoilerRevealed) {
+                spoilerRevealed = true
+            }
         } else {
             b.detailVideoPlayer.visibility = View.GONE
             b.detailImage.visibility = View.VISIBLE
-            url?.let { CdnImageGate.load(b.detailImage, it, AppSettings.getCdnThreads(this)) }
+            matrixDrawable = null
+            imageMatrix.reset()
+            url?.let { CdnImageGate.load(b.detailImage, it, image.thumbnailUrl, AppSettings.getCdnThreads(this)) }
+            SpoilerCover.bind(b.detailSpoilerCover, b.detailImage, image.spoilered, spoilerRevealed) {
+                spoilerRevealed = true
+            }
         }
     }
 
@@ -420,7 +570,9 @@ class ImageDetailActivity : AppCompatActivity() {
                         Toast.makeText(this@ImageDetailActivity, "已加入下载队列", Toast.LENGTH_SHORT).show()
                     }
                 }
-                "查看原图" -> fullUrl?.let { url -> startActivity(Intent(this@ImageDetailActivity, FullScreenImageActivity::class.java).putExtra("full_url", url).putExtra("image_id", image.id)) }
+                "查看原图" -> fullUrl?.let { url -> startActivity(Intent(this@ImageDetailActivity, FullScreenImageActivity::class.java)
+                    .putExtra("full_url", url)
+                    .putExtra("image_id", image.id)) }
                 "复制链接" -> getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("图片链接", "https://${AppSettings.getTargetDomain(this@ImageDetailActivity)}/images/${image.id}"))
             }
             true

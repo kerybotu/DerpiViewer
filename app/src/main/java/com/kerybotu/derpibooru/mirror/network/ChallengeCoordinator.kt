@@ -10,11 +10,19 @@ object ChallengeCoordinator {
     private val inProgress = AtomicBoolean(false)
     @Volatile private var pending: CompletableDeferred<Boolean>? = null
 
-    suspend fun awaitResolved(context: Context, requestUrl: String): Boolean {
+    suspend fun awaitResolved(
+        context: Context,
+        requestUrl: String,
+        type: ChallengePageType
+    ): Boolean {
         if (inProgress.compareAndSet(false, true)) {
             val result = CompletableDeferred<Boolean>()
             pending = result
-            val intent = Intent(context, ChallengeActivity::class.java).apply {
+            val targetActivity = when (type) {
+                ChallengePageType.DERPI_FORM -> ChallengeActivity::class.java
+                ChallengePageType.CLOUDFLARE_TURNSTILE -> CloudflareChallengeActivity::class.java
+            }
+            val intent = Intent(context, targetActivity).apply {
                 putExtra(ChallengeActivity.EXTRA_URL, requestUrl)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }

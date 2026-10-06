@@ -20,14 +20,15 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
             ChallengeBackoff.blockFor(15 * 60 * 1_000L)
         }
         var retried = false
-        while (isChallengePage(response) && !retried) {
+        val challengeType = detectChallengeType(response)
+        while (challengeType != null && !retried) {
             response.close()
             val challengeUrl = request.url.newBuilder()
                 .removeAllQueryParameters("key")
                 .build()
                 .toString()
             val resolved = runBlocking {
-                ChallengeCoordinator.awaitResolved(appContext, challengeUrl)
+                ChallengeCoordinator.awaitResolved(appContext, challengeUrl, challengeType)
             }
             if (!resolved) {
                 retried = true
@@ -39,16 +40,12 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
         return response
     }
 
-    private fun isChallengePage(response: Response): Boolean {
+    private fun detectChallengeType(response: Response): ChallengePageType? {
         val contentType = response.header("Content-Type").orEmpty()
-        if (!contentType.contains("text/html", ignoreCase = true)) return false
-        // Only the actual Derpibooru challenge form may open the user-facing verifier.
-        // Do not treat generic HTML errors, challenge-like text, or status codes as a click challenge.
+        if (!contentType.contains("text/html", ignoreCase = true)) return null
+        // Keep the body bounded: challenge markers are emitted in the document head and
+        // there is no reason to retain a complete error page in memory.
         val snippet = runCatching { response.peekBody(64L * 1024L).string() }.getOrDefault("")
-        return snippet.contains(CHALLENGE_FORM_SIGNATURE)
-    }
-
-    private companion object {
-        const val CHALLENGE_FORM_SIGNATURE = "<form class=\"derpi-challenge\" action=\"/challenge\" method=\"post\">"
+        return ChallengePageDetector.detect(contentType, snippet)
     }
 }

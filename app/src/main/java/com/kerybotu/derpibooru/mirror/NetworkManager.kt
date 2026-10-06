@@ -61,11 +61,17 @@ object NetworkManager {
                     ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = targetDomain) { tested, total ->
                         onOptimizationProgress?.invoke(targetDomain, tested, total)
                     }.ip
-                val cdnIp = AppSettings.getManualIp(context) ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = CDN_DOMAIN) { tested, total ->
-                    onOptimizationProgress?.invoke(CDN_DOMAIN, tested, total)
-                }.ip
-                preferredRouteIps = mapOf(targetDomain to bestIp, CDN_DOMAIN to cdnIp)
-                Log.d(TAG, "使用优选 IP: $targetDomain=$bestIp, $CDN_DOMAIN=$cdnIp")
+                val routes = mutableMapOf(targetDomain to bestIp)
+                if (!AppSettings.isCdnDirect(context)) {
+                    val cdnIp = AppSettings.getManualIp(context) ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = CDN_DOMAIN) { tested, total ->
+                        onOptimizationProgress?.invoke(CDN_DOMAIN, tested, total)
+                    }.ip
+                    routes[CDN_DOMAIN] = cdnIp
+                } else {
+                    Log.d(TAG, "derpicdn.net 使用直连，不设置 CDN 优选 IP")
+                }
+                preferredRouteIps = routes
+                Log.d(TAG, "使用优选 IP 路由: $routes")
                 localProxyServer = LocalProxyServer(preferredRouteIps).apply { start() }
                 builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", localProxyServer!!.port)))
             } else {

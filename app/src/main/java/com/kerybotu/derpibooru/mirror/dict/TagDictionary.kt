@@ -4,7 +4,15 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-data class TagEntry(val englishName: String, val chineseName: String, val priority: Int, val imageCount: Int, val aliases: List<String>)
+data class TagEntry(
+    val englishName: String,
+    val chineseName: String,
+    val priority: Int,
+    val imageCount: Int,
+    val aliases: List<String>,
+    /** Original API spelling, retained when the dictionary key uses underscores. */
+    val sourceName: String? = null
+)
 
 /** In-memory read-only snapshot of the bundled 2024 tag export. */
 object TagDictionary {
@@ -65,7 +73,10 @@ object TagDictionary {
 
     suspend fun sortAndTranslate(context: Context, tags: List<String>): List<TagEntry> {
         val all = all(context).associateBy { normalize(it.englishName) }
-        return tags.map { name -> all[normalize(name)] ?: TagEntry(name, name, -1, 0, emptyList()) }
+        return tags.map { name ->
+            all[normalize(name)]?.copy(sourceName = name)
+                ?: TagEntry(name, name, -1, 0, emptyList(), sourceName = name)
+        }
             .sortedWith(tagComparator())
     }
 

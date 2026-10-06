@@ -36,6 +36,7 @@ class FeaturedActivity : AppCompatActivity() {
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var page = 1
     private var loading = false
+    private var lastDetailsClickAt = 0L
     private var sortField = "score"
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,12 +60,16 @@ class FeaturedActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(12, 0, 12, 24)
         }
-        val toolbar = androidx.appcompat.widget.Toolbar(this).apply {
+        val toolbar = SafeToolbar(this).apply {
             title = "热门精选"
             setNavigationIcon(R.drawable.ic_arrow_back)
             setNavigationOnClickListener { finish() }
         }
-        content.addView(toolbar, LinearLayout.LayoutParams(-1, dp(56)))
+        content.addView(toolbar, LinearLayout.LayoutParams(-1, dp(56)).apply {
+            val margin = dp(Ui2DesignSystem.Spacing.md)
+            marginStart = margin
+            marginEnd = margin
+        })
 
         heroContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         heroImage = ImageView(this).apply {
@@ -83,9 +88,10 @@ class FeaturedActivity : AppCompatActivity() {
 
         grid = RecyclerView(this).apply {
             isNestedScrollingEnabled = false
-            layoutManager = GridLayoutManager(this@FeaturedActivity, 2)
+            layoutManager = GridLayoutManager(this@FeaturedActivity, AdaptiveLayoutPolicy.artworkColumnCount(this@FeaturedActivity))
         }
-        adapter = ImageAdapter(emptyList(), { openDetails(it) })
+        AdaptiveLayoutPolicy.configureArtworkGrid(this, grid)
+        adapter = ImageAdapter(emptyList(), { openDetails(it) }, settingsContext = this)
         grid.adapter = adapter
         content.addView(grid, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
         rootScroll.addView(content)
@@ -162,16 +168,25 @@ class FeaturedActivity : AppCompatActivity() {
                 upvotes = obj.optInt("upvotes"), downvotes = obj.optInt("downvotes"), commentCount = obj.optInt("comment_count"),
                 tags = List(obj.optJSONArray("tags")?.length() ?: 0) { obj.optJSONArray("tags")!!.optString(it) },
                 fullUrl = reps?.optString("full", null), uploader = obj.optString("uploader", null),
-                createdAt = obj.optString("created_at", null), description = obj.optString("description", null), mimeType = obj.optString("mime_type", null)
+                createdAt = obj.optString("created_at", null), description = obj.optString("description", null), mimeType = obj.optString("mime_type", null),
+                spoilered = obj.optBoolean("spoilered", false)
             )
         }
     }
 
     private fun openDetails(image: Image) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastDetailsClickAt < 500L) return
+        lastDetailsClickAt = now
         startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image", image))
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    override fun onResume() {
+        super.onResume()
+        if (::adapter.isInitialized) adapter.refreshDisplayMode()
+    }
 
     override fun onDestroy() {
         scope.cancel()

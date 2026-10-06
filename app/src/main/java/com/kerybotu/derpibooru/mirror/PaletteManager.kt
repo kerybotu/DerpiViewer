@@ -36,7 +36,7 @@ object PaletteManager {
             is FloatingActionButton -> view.backgroundTintList = android.content.res.ColorStateList.valueOf(c.primary)
             is Button -> {
                 view.backgroundTintList = android.content.res.ColorStateList.valueOf(c.primary)
-                view.setTextColor(c.onSurface)
+                view.setTextColor(c.onPrimary)
             }
             is CompoundButton -> {
                 view.buttonTintList = android.content.res.ColorStateList.valueOf(c.primary)

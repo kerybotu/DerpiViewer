@@ -31,10 +31,15 @@ data class AppColorScheme(
 )
 
 object ThemeGenerator {
-    fun generate(accent: AccentColor, mode: ThemeMode): AppColorScheme {
+    fun generate(accent: AccentColor, mode: ThemeMode, colorful: Boolean = false): AppColorScheme {
         val hue = if (mode == ThemeMode.LIGHT) accent.lightHue else accent.darkHue
-        // The product spec expresses chroma as a normalized 0..1 value; HCT uses 0..100.
-        val chroma = (if (mode == ThemeMode.LIGHT) accent.lightChroma else accent.darkChroma) * 100.0
+        val rawChroma = if (mode == ThemeMode.LIGHT) accent.lightChroma else accent.darkChroma
+        val effectiveChroma = if (mode == ThemeMode.LIGHT) {
+            if (colorful) minOf(1.0, rawChroma * 1.25) else rawChroma * 0.45
+        } else {
+            rawChroma
+        }
+        val chroma = effectiveChroma * 100.0
         val tone = if (mode == ThemeMode.DARK) 55.0 else 50.0
         val scheme = SchemeTonalSpot(Hct.from(hue.toDouble(), chroma, tone), mode == ThemeMode.DARK, 0.0)
         val primary = if (mode == ThemeMode.DARK) accent.darkPrimary ?: scheme.primary else scheme.primary

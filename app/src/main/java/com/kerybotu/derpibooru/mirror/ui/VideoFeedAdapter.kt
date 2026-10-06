@@ -12,6 +12,10 @@ import com.kerybotu.derpibooru.mirror.databinding.ItemVideoFeedBinding
 data class VideoPost(
     val id: Int,
     val url: String,
+    val thumbnailUrl: String? = null,
+    val mimeType: String = "video/mp4",
+    val width: Int = 0,
+    val height: Int = 0,
     val uploader: String,
     val tags: List<String>,
     var upvotes: Int,

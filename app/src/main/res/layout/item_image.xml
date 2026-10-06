@@ -5,8 +5,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_margin="4dp"
-    app:cardCornerRadius="10dp"
-    app:cardElevation="3dp">
+    app:cardCornerRadius="16dp"
+    app:cardElevation="1dp">
 
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
@@ -29,6 +29,12 @@
                 android:scaleType="centerCrop"
                 android:contentDescription="缩略图" />
 
+            <FrameLayout
+                android:id="@+id/thumbnail_spoiler_cover"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/selection_mark"
                 android:layout_width="30dp"
@@ -43,13 +49,26 @@
                 android:background="@drawable/bg_selection_mark"
                 android:visibility="gone" />
 
+            <ImageView
+                android:id="@+id/media_type_badge"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="top|end"
+                android:layout_margin="8dp"
+                android:padding="4dp"
+                android:background="#88000000"
+                android:scaleType="centerInside"
+                android:contentDescription="媒体类型"
+                android:visibility="gone" />
+
             <LinearLayout
+                android:id="@+id/stats_bar"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="bottom|end"
                 android:layout_margin="8dp"
                 android:orientation="horizontal"
-                android:background="#88000000"
+                android:background="@drawable/bg_image_overlay"
                 android:paddingHorizontal="8dp"
                 android:paddingVertical="4dp"
                 android:gravity="center_vertical">
@@ -57,7 +76,7 @@
                 <ImageView
                     android:layout_width="16dp"
                     android:layout_height="16dp"
-                    android:src="@drawable/ic_favorite"
+                    android:src="@drawable/ic_star"
                     android:contentDescription="收藏" />
 
                 <TextView
@@ -69,41 +88,23 @@
                     android:textSize="12sp"
                     android:text="0" />
 
-                <TextView
-                    android:id="@+id/text_score"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="10dp"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:text="0" />
             </LinearLayout>
-        </FrameLayout>
-
-        <!-- 互动栏 -->
-        <LinearLayout
-            android:id="@+id/info_bar"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="6dp"
-            android:gravity="center_vertical"
-            android:background="?attr/colorSurfaceVariant"
-            app:layout_constraintTop_toBottomOf="@id/thumbnail_container"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:id="@+id/info_bar"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
+                android:layout_gravity="bottom|start"
+                android:layout_margin="8dp"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:background="@drawable/bg_image_overlay"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp">
 
                 <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
                     android:src="@drawable/ic_arrow_up"
                     android:contentDescription="点赞" />
 
@@ -113,19 +114,13 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="4dp"
                     android:text="0"
+                    android:textColor="@android:color/white"
                     android:textSize="12sp" />
-            </LinearLayout>
-
-                <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="horizontal"
-                    android:gravity="center_vertical">
 
                 <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="10dp"
                     android:src="@drawable/ic_comment"
                     android:contentDescription="评论" />
 
@@ -135,16 +130,15 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="4dp"
                     android:text="0"
+                    android:textColor="@android:color/white"
                     android:textSize="12sp" />
-                </LinearLayout>
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/text_dimensions"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:textSize="11sp"
-                android:textColor="@android:color/darker_gray" />
-        </LinearLayout>
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+        </FrameLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 </androidx.cardview.widget.CardView>

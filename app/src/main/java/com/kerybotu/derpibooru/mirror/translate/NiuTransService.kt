@@ -10,7 +10,7 @@ import java.net.URLEncoder
 
 object NiuTransService {
     private const val ENDPOINT = "https://api.niutrans.com/NiuTransServer/translation"
-    private const val API_KEY = ""
+    private const val API_KEY = "84346cd57431f76f59fd63bd33b27dfd"
     private const val APP_ID = "YaM1786642324207"
     private val cache = LruCache<String, String>(1024 * 1024)
 

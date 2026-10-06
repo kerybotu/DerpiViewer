@@ -10,56 +10,16 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <com.google.android.material.appbar.AppBarLayout
-            android:id="@+id/app_bar_layout"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="?attr/colorPrimary"
-            app:elevation="4dp">
-
-            <androidx.appcompat.widget.Toolbar
-                android:id="@+id/toolbar"
-                android:layout_width="match_parent"
-                android:layout_height="?attr/actionBarSize"
-                android:background="?attr/colorPrimary"
-                android:theme="?attr/actionBarTheme"
-                app:title="DerpiViewer"
-                app:titleTextColor="@android:color/white"
-                app:navigationIcon="@drawable/ic_menu"
-                app:layout_scrollFlags="scroll|enterAlways">
-
-                <ImageView
-                    android:id="@+id/btn_density"
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_gravity="end"
-                    android:layout_marginEnd="12dp"
-                    android:contentDescription="调整排列密度"
-                    android:src="@drawable/ic_grid" />
-
-                <ImageView
-                    android:id="@+id/btn_search"
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_gravity="end"
-                    android:layout_marginEnd="12dp"
-                    android:contentDescription="搜索"
-                    android:src="@drawable/ic_search" />
-            </androidx.appcompat.widget.Toolbar>
-        </com.google.android.material.appbar.AppBarLayout>
-
         <com.kerybotu.derpibooru.mirror.ui.PullRefreshLayout
             android:id="@+id/home_refresh"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            app:layout_behavior="@string/appbar_scrolling_view_behavior">
+            android:layout_height="match_parent">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/recycler_view"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:padding="4dp"
-                android:paddingBottom="68dp"
                 android:clipToPadding="false"
                 android:scrollbars="vertical" />
 
@@ -104,18 +64,82 @@
             </LinearLayout>
         </com.kerybotu.derpibooru.mirror.ui.PullRefreshLayout>
 
+        <com.google.android.material.appbar.AppBarLayout
+            android:id="@+id/app_bar_layout"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:background="@android:color/transparent"
+            app:elevation="12dp">
+
+            <androidx.appcompat.widget.Toolbar
+                android:id="@+id/toolbar"
+                android:layout_width="match_parent"
+                android:layout_height="?attr/actionBarSize"
+                android:background="@android:color/transparent"
+                android:theme="?attr/actionBarTheme"
+                app:title="DerpiViewer"
+                app:titleTextColor="@android:color/white"
+                app:navigationIcon="@drawable/ic_menu">
+
+                <ImageView
+                    android:id="@+id/btn_density"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="end"
+                    android:layout_marginEnd="4dp"
+                    android:padding="12dp"
+                    android:contentDescription="调整排列密度"
+                    android:src="@drawable/ic_grid" />
+
+                <ImageView
+                    android:id="@+id/btn_search"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="end"
+                    android:layout_marginEnd="4dp"
+                    android:padding="12dp"
+                    android:contentDescription="搜索"
+                    android:src="@drawable/ic_search" />
+            </androidx.appcompat.widget.Toolbar>
+        </com.google.android.material.appbar.AppBarLayout>
+
+        <FrameLayout
+            android:id="@+id/main_content_host"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone"
+            android:background="?attr/colorSurface" />
+
+        <com.kerybotu.derpibooru.mirror.ui.BottomNavigationIndicator
+            android:id="@+id/bottom_navigation_indicator"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:importantForAccessibility="no"
+            android:elevation="0dp" />
+
         <com.google.android.material.bottomnavigation.BottomNavigationView
             android:id="@+id/bottom_navigation"
             android:layout_width="match_parent"
-            android:layout_height="64dp"
-            android:minHeight="64dp"
-            android:layout_gravity="bottom"
-            android:background="?attr/colorSurface"
+            android:layout_height="60dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:background="@android:color/transparent"
+            android:minHeight="0dp"
             app:itemIconSize="24dp"
             app:itemTextAppearanceActive="@style/BottomNavText"
             app:itemTextAppearanceInactive="@style/BottomNavText"
             app:labelVisibilityMode="labeled"
             app:menu="@menu/bottom_nav_menu"
+            app:elevation="0dp" />
+
+        <com.google.android.material.navigationrail.NavigationRailView
+            android:id="@+id/side_navigation"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            app:menu="@menu/bottom_nav_menu"
+            app:itemIconSize="24dp"
             app:elevation="8dp" />
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton

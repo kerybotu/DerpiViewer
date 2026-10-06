@@ -2,6 +2,9 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.content.Context
+import android.graphics.drawable.GradientDrawable
+import androidx.core.graphics.ColorUtils
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.kerybotu.derpibooru.mirror.R
@@ -13,10 +16,13 @@ import com.google.android.material.snackbar.Snackbar
 import com.kerybotu.derpibooru.mirror.PaletteManager
 
 class ImageAdapter(
-    private var items: List<Image>,
+    initialItems: List<Image>,
     private val onClick: (Image) -> Unit,
-    private val onSelectionChanged: ((Int) -> Unit)? = null
+    private val onSelectionChanged: ((Int) -> Unit)? = null,
+    private val settingsContext: Context
 ) : RecyclerView.Adapter<ImageAdapter.ImageViewHolder>() {
+    private var allItems: List<Image> = initialItems
+    private var items: List<Image> = filterForDisplay(initialItems)
     private val selectedIds = mutableSetOf<Int>()
     private var selectionSnackbar: Snackbar? = null
 
@@ -39,11 +45,37 @@ class ImageAdapter(
     }
 
     fun updateData(newItems: List<Image>) {
-        items = newItems
-        selectedIds.retainAll(newItems.map { it.id }.toSet())
+        allItems = newItems
+        items = filterForDisplay(newItems)
+        selectedIds.retainAll(items.map { it.id }.toSet())
         onSelectionChanged?.invoke(selectedIds.size)
         notifyDataSetChanged()
     }
+
+    fun appendData(newItems: List<Image>) {
+        if (newItems.isEmpty()) return
+        allItems = allItems + newItems
+        val visibleItems = filterForDisplay(newItems)
+        if (visibleItems.isEmpty()) return
+        val start = items.size
+        items = items + visibleItems
+        notifyItemRangeInserted(start, visibleItems.size)
+    }
+
+    /** Re-evaluates cards after the user changes the global spoiler setting. */
+    fun refreshDisplayMode() {
+        val refreshed = filterForDisplay(allItems)
+        if (refreshed == items) return
+        items = refreshed
+        selectedIds.retainAll(items.map { it.id }.toSet())
+        onSelectionChanged?.invoke(selectedIds.size)
+        notifyDataSetChanged()
+    }
+
+    private fun filterForDisplay(source: List<Image>): List<Image> =
+        if (AppSettings.getSpoilerDisplayMode(settingsContext) == AppSettings.SpoilerDisplayMode.HIDE) {
+            source.filterNot { it.spoilered }
+        } else source
 
     fun selectedItems(): List<Image> = items.filter { selectedIds.contains(it.id) }
     fun clearSelection() {
@@ -59,22 +91,28 @@ class ImageAdapter(
         fun bind(image: Image, onClick: (Image) -> Unit, selectionActive: Boolean, selected: Boolean, toggle: (Image, android.view.View) -> Unit) {
             val palette = PaletteManager.colors(binding.root.context)
             (binding.root as? androidx.cardview.widget.CardView)?.setCardBackgroundColor(palette.surface)
-            binding.infoBar.setBackgroundColor(palette.surfaceVariant)
+            styleOverlay(binding.infoBar, palette)
+            styleOverlay(binding.statsBar, palette)
             binding.textUpvotes.setTextColor(palette.onSurface)
             binding.textComments.setTextColor(palette.onSurface)
-            binding.textDimensions.setTextColor(palette.muted)
-            for (index in 0 until binding.infoBar.childCount) {
-                val child = binding.infoBar.getChildAt(index)
-                tintInfoIcons(child, palette.onSurface)
-            }
+            binding.textFaves.setTextColor(palette.onSurface)
+            tintInfoIcons(binding.infoBar, palette.onSurface)
+            tintInfoIcons(binding.statsBar, palette.onSurface)
             CdnImageGate.load(binding.imageThumbnail, image.thumbnailUrl, AppSettings.getCdnThreads(binding.root.context))
+            bindMediaTypeBadge(image)
+            when (AppSettings.getSpoilerDisplayMode(binding.root.context)) {
+                AppSettings.SpoilerDisplayMode.SHOW ->
+                    SpoilerCover.bind(binding.thumbnailSpoilerCover, binding.imageThumbnail, false, interactive = false)
+                AppSettings.SpoilerDisplayMode.HIDE ->
+                    SpoilerCover.bind(binding.thumbnailSpoilerCover, binding.imageThumbnail, image.spoilered, interactive = false, showRevealButton = false, showLabel = false)
+                AppSettings.SpoilerDisplayMode.CLICK_TO_SHOW ->
+                    SpoilerCover.bind(binding.thumbnailSpoilerCover, binding.imageThumbnail, image.spoilered, interactive = false, showRevealButton = true, showLabel = false)
+            }
 
             binding.textFaves.text = image.faves.toString()
             binding.textUpvotes.text = image.upvotes.toString()
             binding.textComments.text = image.commentCount.toString()
-            binding.textScore.text = "评分 ${image.score}"
-            binding.textDimensions.text = "${image.width}×${image.height}"
-            binding.textScore.visibility = if (AppSettings.isScoreHidden(binding.root.context)) android.view.View.GONE else android.view.View.VISIBLE
+            binding.textDimensions.visibility = android.view.View.GONE
 
             binding.selectionMark.visibility = if (selected) android.view.View.VISIBLE else android.view.View.GONE
             binding.root.setOnClickListener {
@@ -84,11 +122,37 @@ class ImageAdapter(
                 toggle(image, binding.root)
                 true
             }
+            Ui2DesignSystem.applyPressFeedback(binding.root)
+        }
+
+        private fun bindMediaTypeBadge(image: Image) {
+            val mime = image.mimeType.orEmpty().lowercase()
+            val url = image.thumbnailUrl.orEmpty().substringBefore('?').lowercase()
+            val isVideo = mime.startsWith("video/") || url.endsWith(".webm") || url.endsWith(".mp4") || url.endsWith(".mov")
+            val isGif = !isVideo && (mime == "image/gif" || url.endsWith(".gif"))
+            binding.mediaTypeBadge.visibility = if (isVideo || isGif) android.view.View.VISIBLE else android.view.View.GONE
+            if (isVideo) {
+                binding.mediaTypeBadge.setImageResource(R.drawable.ic_video)
+                binding.mediaTypeBadge.contentDescription = "视频"
+            } else if (isGif) {
+                binding.mediaTypeBadge.setImageResource(R.drawable.ic_gif)
+                binding.mediaTypeBadge.contentDescription = "GIF 动图"
+            }
         }
 
         private fun tintInfoIcons(view: android.view.View, color: Int) {
             if (view is android.widget.ImageView) view.imageTintList = android.content.res.ColorStateList.valueOf(color)
             if (view is android.view.ViewGroup) for (index in 0 until view.childCount) tintInfoIcons(view.getChildAt(index), color)
+        }
+
+        private fun styleOverlay(view: android.view.View, palette: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) {
+            val density = view.resources.displayMetrics.density
+            view.background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 12f * density
+                setColor(ColorUtils.setAlphaComponent(palette.surfaceVariant, 232))
+                setStroke((density).toInt().coerceAtLeast(1), ColorUtils.setAlphaComponent(palette.divider, 176))
+            }
         }
     }
 

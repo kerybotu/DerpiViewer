@@ -20,12 +20,17 @@ object CdnImageGate {
     private val prefetchTargets = mutableListOf<Target<*>>()
 
     fun load(view: ImageView, url: String?, @Suppress("UNUSED_PARAMETER") maxConcurrent: Int = 0) {
+        load(view, url, null, maxConcurrent)
+    }
+
+    fun load(view: ImageView, url: String?, placeholderUrl: String?, @Suppress("UNUSED_PARAMETER") maxConcurrent: Int = 0) {
         ensureRegistered(view.context)
-        Glide.with(view)
-            .load(url)
-            .priority(Priority.HIGH)
+        var req = Glide.with(view).load(url).priority(Priority.HIGH)
             .placeholder(R.drawable.ic_image_placeholder)
-            .into(view)
+        if (!placeholderUrl.isNullOrBlank()) {
+            req = req.thumbnail(Glide.with(view).load(placeholderUrl))
+        }
+        req.into(view)
     }
 
     fun prefetch(context: Context, urls: List<String?>, limit: Int = 8) {

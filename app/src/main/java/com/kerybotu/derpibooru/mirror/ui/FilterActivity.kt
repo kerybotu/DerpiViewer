@@ -187,7 +187,7 @@ class FilterActivity : AppCompatActivity() {
     private fun useFilter(filter: Filter) {
         prefs.edit().putInt("current_id", filter.id).putString("current_name", filter.name).apply()
         binding.currentFilterName.text = filter.name
-        com.kerybotu.derpibooru.mirror.AppSettings.setCurrentFilterId(this, filter.id)
+        com.kerybotu.derpibooru.mirror.AppSettings.setCurrentFilter(this, filter.id, filter.name)
         adapter.notifyDataSetChanged()
         Toast.makeText(this, "已使用过滤器：${filter.name}", Toast.LENGTH_SHORT).show()
     }

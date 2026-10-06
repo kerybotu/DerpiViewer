@@ -3,6 +3,7 @@ package com.kerybotu.derpibooru.mirror
 import com.kerybotu.derpibooru.mirror.theme.AccentColor
 import com.kerybotu.derpibooru.mirror.theme.ThemeGenerator
 import com.kerybotu.derpibooru.mirror.theme.ThemeMode
+import android.content.res.Configuration
 
 /** Central semantic colors for every selectable app palette. */
 object PaletteDefinitions {
@@ -12,7 +13,12 @@ object PaletteDefinitions {
     )
 
     fun forPalette(context: android.content.Context, palette: AppSettings.Palette): Scheme {
-        val mode = if (palette == AppSettings.Palette.DARK) ThemeMode.DARK else ThemeMode.LIGHT
+        val systemDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val mode = when (palette) {
+            AppSettings.Palette.DARK -> ThemeMode.DARK
+            AppSettings.Palette.SYSTEM -> if (systemDark) ThemeMode.DARK else ThemeMode.LIGHT
+            else -> ThemeMode.LIGHT
+        }
         val accent = AppSettings.getAccentColor(context)
         val generated = ThemeGenerator.generate(accent, mode)
         val surface = if (mode == ThemeMode.DARK) 0xFF121212.toInt() else generated.surface

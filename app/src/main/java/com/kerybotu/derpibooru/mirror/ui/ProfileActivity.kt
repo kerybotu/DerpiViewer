@@ -17,6 +17,7 @@ import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.auth.ApiKeyStore
 import com.kerybotu.derpibooru.mirror.auth.LoginActivity
 import com.kerybotu.derpibooru.mirror.model.Image
+import com.kerybotu.derpibooru.mirror.model.Comment
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import kotlinx.coroutines.*
 import org.json.JSONObject
@@ -66,8 +67,9 @@ class ProfileActivity : AppCompatActivity() {
         links = LinearLayout(this)
         tabs = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(16), 0, dp(8)) }; content.addView(tabs)
         commentsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }; content.addView(commentsBox)
-        val list = RecyclerView(this).apply { layoutManager = GridLayoutManager(this@ProfileActivity, 2); isNestedScrollingEnabled = false }
-        adapter = ImageAdapter(emptyList(), { startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image", it)) }); list.adapter = adapter; content.addView(list, LinearLayout.LayoutParams(-1, -2))
+        val list = RecyclerView(this).apply { layoutManager = GridLayoutManager(this@ProfileActivity, AdaptiveLayoutPolicy.artworkColumnCount(this@ProfileActivity)); isNestedScrollingEnabled = false }
+        AdaptiveLayoutPolicy.configureArtworkGrid(this, list)
+        adapter = ImageAdapter(emptyList(), { startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image", it)) }, settingsContext = this); list.adapter = adapter; content.addView(list, LinearLayout.LayoutParams(-1, -2))
         root.addView(NestedScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
         progress = ProgressBar(this); root.addView(progress, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
         return root
@@ -137,7 +139,7 @@ class ProfileActivity : AppCompatActivity() {
         progress.visibility = View.VISIBLE; val q = URLEncoder.encode(query, "UTF-8")
         val raw = withContext(Dispatchers.IO) { NetworkManager.getApi(this@ProfileActivity, "search/images?q=$q&sf=first_seen_at&sd=desc&per_page=50${NetworkManager.currentFilterParam(this@ProfileActivity)}") }
         val array = runCatching { JSONObject(raw.orEmpty()).optJSONArray("images") }.getOrNull()
-        adapter.updateData((0 until (array?.length() ?: 0)).mapNotNull { i -> array?.optJSONObject(i)?.let { o -> val r = o.optJSONObject("representations"); Image(o.optInt("id"), "", r?.optString("small", null), o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), emptyList(), r?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1).takeIf { it > 0 }) } }); progress.visibility = View.GONE
+        adapter.updateData((0 until (array?.length() ?: 0)).mapNotNull { i -> array?.optJSONObject(i)?.let { o -> val r = o.optJSONObject("representations"); Image(o.optInt("id"), "", r?.optString("small", null), o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), emptyList(), r?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1).takeIf { it > 0 }, o.optBoolean("spoilered", false)) } }); progress.visibility = View.GONE
     }
     private fun comments() = scope.launch {
         val id = viewedUserId ?: return@launch
@@ -148,9 +150,14 @@ class ProfileActivity : AppCompatActivity() {
         val raw = withContext(Dispatchers.IO) { NetworkManager.getApi(this@ProfileActivity, "search/comments?q=$q&page=1&per_page=50") }
         val array = runCatching { JSONObject(raw.orEmpty()).optJSONArray("comments") }.getOrNull()
         if (array == null || array.length() == 0) { commentsBox.addView(TextView(this@ProfileActivity).apply { text = "暂无评论"; setTextColor(colors.muted) }); return@launch }
-        repeat(array.length()) { index -> array.optJSONObject(index)?.let { comment ->
-            val card = TextView(this@ProfileActivity).apply { text = "${comment.optString("created_at").take(10)}\n${comment.optString("body")}"; textSize = 14f; setTextColor(colors.onSurface); setPadding(dp(12), dp(10), dp(12), dp(10)); setBackgroundColor(colors.surfaceVariant) }
-            commentsBox.addView(card, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) })
+        repeat(array.length()) { index -> array.optJSONObject(index)?.let { rawComment ->
+            val comment = Comment.fromJson(rawComment)
+            commentsBox.addView(
+                CommentCardRenderer.create(this@ProfileActivity, comment, scope) { imageId ->
+                    startActivity(Intent(this@ProfileActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId))
+                },
+                CommentCardRenderer.layoutParams(this@ProfileActivity)
+            )
         } }
     }
     private fun loadAwardSvg(target: WebView, url: String) = scope.launch {
@@ -174,7 +181,7 @@ class ProfileActivity : AppCompatActivity() {
             if (!ApiKeyStore.isLoggedIn(this) && viewedUserId == null) startActivity(Intent(this, LoginActivity::class.java)) else loadProfile()
         }
     }
-    override fun onResume() { super.onResume(); if (viewedUserId == null && ownUserId == null && ApiKeyStore.isLoggedIn(this)) { ownUserId = ApiKeyStore.getUserId(this); loadProfile() } }
+    override fun onResume() { super.onResume(); if (::adapter.isInitialized) adapter.refreshDisplayMode(); if (viewedUserId == null && ownUserId == null && ApiKeyStore.isLoggedIn(this)) { ownUserId = ApiKeyStore.getUserId(this); loadProfile() } }
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     override fun onDestroy() { scope.cancel(); super.onDestroy() }

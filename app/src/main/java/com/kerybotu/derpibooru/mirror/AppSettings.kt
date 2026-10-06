@@ -16,10 +16,18 @@ object AppSettings {
     private const val KEY_VIDEO_WIFI_ONLY = "video_wifi_only"
     private const val KEY_HIDE_UPLOADER = "hide_uploader"
     private const val KEY_HIDE_SCORE = "hide_score"
+    private const val KEY_TAG_TRANSLATION = "tag_translation_enabled"
+    private const val KEY_NEW_UI_BETA = "new_ui_beta_enabled"
+    private const val KEY_SPOILER_MODE = "spoiler_display_mode"
     private const val KEY_PALETTE = "palette"
     private const val KEY_ACCENT = "accent_color"
     private const val KEY_CDN_MODE = "cdn_concurrency_mode"
     private const val KEY_CDN_THREADS = "cdn_concurrency_threads"
+    private const val KEY_CDN_DIRECT = "cdn_direct_connection"
+    private const val KEY_ANTI_EMBARRASSMENT = "anti_embarrassment_filter_enabled"
+    private const val KEY_ANTI_EMBARRASSMENT_FILTER_ID = "anti_embarrassment_filter_id"
+    private const val KEY_ANTI_EMBARRASSMENT_FILTER_NAME = "anti_embarrassment_filter_name"
+    private const val FILTER_PREFS_NAME = "filter_state"
 
     enum class Site(val domain: String, val displayName: String) {
         DERPIBOORU("derpibooru.org", "Derpibooru"),
@@ -27,8 +35,13 @@ object AppSettings {
         CUSTOM("", "自定义站点")
     }
 
-    enum class Palette { DARK, LIGHT, COLORFUL }
+    enum class Palette { SYSTEM, DARK, LIGHT, COLORFUL }
     enum class CdnConcurrencyMode { AUTO, CUSTOM }
+    enum class SpoilerDisplayMode(val label: String) {
+        HIDE("直接隐藏"),
+        CLICK_TO_SHOW("点击显示"),
+        SHOW("直接显示")
+    }
 
     fun getSelectedSite(context: Context): Site {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -74,6 +87,8 @@ object AppSettings {
 
     fun isIpOptimizationEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_USE_IP_OPTIMIZATION, true)
     fun setIpOptimizationEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY_USE_IP_OPTIMIZATION, enabled).apply()
+    fun isCdnDirect(context: Context): Boolean = prefs(context).getBoolean(KEY_CDN_DIRECT, false)
+    fun setCdnDirect(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY_CDN_DIRECT, enabled).apply()
     fun isHighResolution(context: Context): Boolean = prefs(context).getBoolean(KEY_HIGH_RES, false)
     fun setHighResolution(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIGH_RES, value).apply()
     fun isVideoThumbnailsEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_VIDEO_THUMBNAILS, true)
@@ -86,14 +101,52 @@ object AppSettings {
     fun setUploaderHidden(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIDE_UPLOADER, value).apply()
     fun isScoreHidden(context: Context): Boolean = prefs(context).getBoolean(KEY_HIDE_SCORE, false)
     fun setScoreHidden(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIDE_SCORE, value).apply()
-    fun getPalette(context: Context): Palette = runCatching { Palette.valueOf(prefs(context).getString(KEY_PALETTE, Palette.COLORFUL.name)!!) }.getOrDefault(Palette.COLORFUL)
+    fun isTagTranslationEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_TAG_TRANSLATION, true)
+    fun setTagTranslationEnabled(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_TAG_TRANSLATION, value).apply()
+    fun isNewUiBetaEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_NEW_UI_BETA, false)
+    fun setNewUiBetaEnabled(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_NEW_UI_BETA, value).apply()
+    fun getSpoilerDisplayMode(context: Context): SpoilerDisplayMode = runCatching {
+        SpoilerDisplayMode.valueOf(prefs(context).getString(KEY_SPOILER_MODE, SpoilerDisplayMode.CLICK_TO_SHOW.name)!!)
+    }.getOrDefault(SpoilerDisplayMode.CLICK_TO_SHOW)
+    fun setSpoilerDisplayMode(context: Context, mode: SpoilerDisplayMode) =
+        prefs(context).edit().putString(KEY_SPOILER_MODE, mode.name).apply()
+    fun getPalette(context: Context): Palette = runCatching { Palette.valueOf(prefs(context).getString(KEY_PALETTE, Palette.SYSTEM.name)!!) }.getOrDefault(Palette.SYSTEM)
     fun setPalette(context: Context, palette: Palette) = prefs(context).edit().putString(KEY_PALETTE, palette.name).apply()
     fun getAccentColor(context: Context): AccentColor = runCatching {
         AccentColor.valueOf(prefs(context).getString(KEY_ACCENT, AccentColor.BLUE.name)!!)
     }.getOrDefault(AccentColor.BLUE)
     fun setAccentColor(context: Context, accent: AccentColor) = prefs(context).edit().putString(KEY_ACCENT, accent.name).apply()
-    fun getCurrentFilterId(context: Context): Int? = context.getSharedPreferences("filter_state", Context.MODE_PRIVATE).getInt("current_id", -1).takeIf { it > 0 }
-    fun setCurrentFilterId(context: Context, id: Int?) = context.getSharedPreferences("filter_state", Context.MODE_PRIVATE).edit().putInt("current_id", id ?: -1).apply()
+    private fun filterPrefs(context: Context) = context.getSharedPreferences(FILTER_PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun getCurrentFilterId(context: Context): Int? = filterPrefs(context).getInt("current_id", -1).takeIf { it > 0 }
+    fun getCurrentFilterName(context: Context): String? = filterPrefs(context).getString("current_name", null)?.trim()?.ifBlank { null }
+
+    fun setCurrentFilter(context: Context, id: Int?, name: String? = null) {
+        filterPrefs(context).edit()
+            .putInt("current_id", id ?: -1)
+            .apply {
+                if (name.isNullOrBlank()) remove("current_name") else putString("current_name", name.trim())
+            }
+            .apply()
+    }
+
+    fun setCurrentFilterId(context: Context, id: Int?) = setCurrentFilter(context, id)
+
+    /**
+     * When enabled, the home screen restores this filter at every app launch.
+     * A null ID means the built-in "Default" system filter, which is resolved
+     * from the server and then cached as its numeric ID.
+     */
+    fun isAntiEmbarrassmentEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ANTI_EMBARRASSMENT, false)
+    fun setAntiEmbarrassmentEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY_ANTI_EMBARRASSMENT, enabled).apply()
+    fun getAntiEmbarrassmentFilterId(context: Context): Int? = prefs(context).getInt(KEY_ANTI_EMBARRASSMENT_FILTER_ID, -1).takeIf { it > 0 }
+    fun getAntiEmbarrassmentFilterName(context: Context): String = prefs(context).getString(KEY_ANTI_EMBARRASSMENT_FILTER_NAME, "Default")?.trim()?.ifBlank { "Default" } ?: "Default"
+    fun setAntiEmbarrassmentFilter(context: Context, id: Int?, name: String = if (id == null) "Default" else "过滤器 #$id") {
+        prefs(context).edit()
+            .putInt(KEY_ANTI_EMBARRASSMENT_FILTER_ID, id ?: -1)
+            .putString(KEY_ANTI_EMBARRASSMENT_FILTER_NAME, name.trim().ifBlank { if (id == null) "Default" else "过滤器 #$id" })
+            .apply()
+    }
     fun getCdnConcurrencyMode(context: Context): CdnConcurrencyMode = runCatching { CdnConcurrencyMode.valueOf(prefs(context).getString(KEY_CDN_MODE, CdnConcurrencyMode.AUTO.name)!!) }.getOrDefault(CdnConcurrencyMode.AUTO)
     fun setCdnConcurrencyMode(context: Context, mode: CdnConcurrencyMode) = prefs(context).edit().putString(KEY_CDN_MODE, mode.name).apply()
     fun getCustomCdnThreads(context: Context): Int = prefs(context).getInt(KEY_CDN_THREADS, 3).coerceIn(1, 8)

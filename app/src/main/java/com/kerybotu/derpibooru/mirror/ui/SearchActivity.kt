@@ -1,8 +1,10 @@
 package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Intent
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.os.Bundle
-import android.os.SystemClock
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
@@ -29,6 +31,7 @@ import com.kerybotu.derpibooru.mirror.dict.TagEntry
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.net.URLEncoder
+import kotlin.math.roundToInt
 
 private enum class SearchFieldType { NUMERIC, DATE, LITERAL, BOOLEAN }
 private data class SearchFieldDef(val key: String, val label: String, val type: SearchFieldType)
@@ -63,9 +66,9 @@ class SearchActivity : AppCompatActivity() {
     private var suggestionEntries: List<TagEntry> = emptyList()
     private lateinit var searchRoot: View
     private lateinit var headerExtras: LinearLayout
-    private var headerCollapsed = false
-    private var scrollDistance = 0
-    private var ignoreScrollUntil = 0L
+    private var headerContentHeight = 0
+    private var headerHiddenPixels = 0f
+    private var headerSnapAnimator: ValueAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -107,8 +110,14 @@ class SearchActivity : AppCompatActivity() {
         sortRow.addView(sortField, LinearLayout.LayoutParams(0, -2, 1f)); sortRow.addView(sortDirection, LinearLayout.LayoutParams(0, -2, 1f))
         headerExtras.addView(sortRow)
         root.addView(headerExtras)
-        results = RecyclerView(this).apply { layoutManager = GridLayoutManager(this@SearchActivity, 2) }
-        adapter = ImageAdapter(emptyList(), { startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image", it)) })
+        // Capture the natural height before any interactive collapsing starts.
+        headerExtras.post {
+            headerContentHeight = headerExtras.height
+            setHeaderProgress(0f)
+        }
+        results = RecyclerView(this).apply { layoutManager = GridLayoutManager(this@SearchActivity, AdaptiveLayoutPolicy.artworkColumnCount(this@SearchActivity)) }
+        AdaptiveLayoutPolicy.configureArtworkGrid(this, results)
+        adapter = ImageAdapter(emptyList(), { startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image", it)) }, settingsContext = this)
         results.adapter = adapter
         val resultContainer = FrameLayout(this)
         resultContainer.addView(results, FrameLayout.LayoutParams(-1, -1))
@@ -120,14 +129,16 @@ class SearchActivity : AppCompatActivity() {
         root.addView(resultContainer, LinearLayout.LayoutParams(-1, 0, 1f))
         results.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                if (SystemClock.elapsedRealtime() < ignoreScrollUntil || dy == 0) return
-                val threshold = dp(28)
-                scrollDistance = when {
-                    dy > 0 -> (scrollDistance + dy).coerceAtMost(threshold)
-                    else -> (scrollDistance + dy).coerceAtLeast(-threshold)
-                }
-                if (!headerCollapsed && scrollDistance >= threshold) setSearchPanelsCollapsed(true)
-                else if (headerCollapsed && scrollDistance <= -threshold) setSearchPanelsCollapsed(false)
+                if (dy == 0 || headerContentHeight <= 0) return
+                headerSnapAnimator?.cancel()
+                headerHiddenPixels = (headerHiddenPixels + dy.toFloat())
+                    .coerceIn(0f, headerContentHeight.toFloat())
+                setHeaderProgress(headerHiddenPixels)
+            }
+
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                if (newState != RecyclerView.SCROLL_STATE_IDLE || headerContentHeight <= 0) return
+                setSearchPanelsCollapsed(headerHiddenPixels >= headerContentHeight * 0.5f)
             }
         })
         addQuickChip("安全", "safe"); addQuickChip("动图", "animated:true")
@@ -250,26 +261,36 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun setSearchPanelsCollapsed(collapsed: Boolean) {
-        if (headerCollapsed == collapsed) return
-        headerCollapsed = collapsed
-        scrollDistance = 0
-        ignoreScrollUntil = SystemClock.elapsedRealtime() + 220L
-        headerExtras.animate().cancel()
-        if (collapsed) {
-            headerExtras.animate().alpha(0f).translationY(-dp(12).toFloat()).setDuration(180L)
-                .withEndAction {
-                    if (headerCollapsed) {
-                        headerExtras.visibility = View.GONE
-                        headerExtras.alpha = 1f
-                        headerExtras.translationY = 0f
-                    }
-                }.start()
-        } else {
-            headerExtras.visibility = View.VISIBLE
-            headerExtras.alpha = 0f
-            headerExtras.translationY = -dp(12).toFloat()
-            headerExtras.animate().alpha(1f).translationY(0f).setDuration(180L).start()
+        val target = if (collapsed) headerContentHeight.toFloat() else 0f
+        headerSnapAnimator?.cancel()
+        headerSnapAnimator = ValueAnimator.ofFloat(headerHiddenPixels, target).apply {
+            duration = 180L
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { animator ->
+                headerHiddenPixels = animator.animatedValue as Float
+                setHeaderProgress(headerHiddenPixels)
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    headerSnapAnimator = null
+                }
+            })
+            start()
         }
+    }
+
+    /** Change the panel's real layout height; the weighted results view fills the released space. */
+    private fun setHeaderProgress(hiddenPixels: Float) {
+        if (headerContentHeight <= 0) return
+        val hidden = hiddenPixels.coerceIn(0f, headerContentHeight.toFloat())
+        val params = headerExtras.layoutParams ?: return
+        val targetHeight = (headerContentHeight - hidden).roundToInt()
+        if (params.height != targetHeight) {
+            params.height = targetHeight
+            headerExtras.layoutParams = params
+        }
+        headerExtras.translationY = 0f
+        headerExtras.alpha = (1f - hidden / headerContentHeight.toFloat()).coerceIn(0f, 1f)
     }
 
     private fun applyQuickChipPalette(chip: Chip) {
