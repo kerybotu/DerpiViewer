@@ -81,10 +81,10 @@ class DownloadManagerActivity : AppCompatActivity() {
         val status = when (selectedTab) { 0 -> setOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING); 1 -> setOf(DownloadStatus.COMPLETED); else -> setOf(DownloadStatus.FAILED) }
         val tasks = all.filter { it.status in status }
         if (selectedTab == 1 && tasks.isNotEmpty()) {
-            list.addView(Button(this).apply { text = "清空已完成记录（不会删除文件）"; setOnClickListener { queue.clearCompleted() } })
+            list.addView(Button(this).apply { text = "清空已完成记录（不会删除文件）"; PaletteManager.styleButton(this); setOnClickListener { queue.clearCompleted() } })
         }
         if (selectedTab == 2 && tasks.isNotEmpty()) {
-            list.addView(Button(this).apply { text = "全部重试"; setOnClickListener { tasks.forEach { queue.retry(it.taskId) } } })
+            list.addView(Button(this).apply { text = "全部重试"; PaletteManager.styleButton(this); setOnClickListener { tasks.forEach { queue.retry(it.taskId) } } })
         }
         if (tasks.isEmpty()) {
             list.addView(TextView(this).apply { text = when (selectedTab) { 0 -> "暂无进行中的下载"; 1 -> "暂无已完成下载"; else -> "暂无失败任务" }; gravity = Gravity.CENTER; setPadding(0, dp(36), 0, dp(36)); setTextColor(PaletteManager.colors(this@DownloadManagerActivity).muted) })

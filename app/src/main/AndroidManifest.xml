@@ -48,6 +48,10 @@
               android:name=".network.CloudflareChallengeActivity"
               android:exported="false"
               android:theme="@style/Theme.DerpiViewer" />
+          <activity
+              android:name=".network.AnubisChallengeActivity"
+              android:exported="false"
+              android:theme="@style/Theme.DerpiViewer" />
         <activity
             android:name=".ui.FilterActivity"
             android:exported="false" />

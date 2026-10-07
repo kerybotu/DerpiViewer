@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.CookieManager
 import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -41,6 +42,7 @@ class ChallengeActivity : AppCompatActivity() {
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.userAgentString = NetworkManager.userAgent()
             setBackgroundColor(palette.surface)
             alpha = 0f
         }
@@ -125,6 +127,7 @@ class ChallengeActivity : AppCompatActivity() {
     private fun finishChallenge(success: Boolean) {
         if (resolved) return
         resolved = true
+        CookieManager.getInstance().flush()
         ChallengeCoordinator.notifyResolved(success)
         finish()
     }

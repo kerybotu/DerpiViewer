@@ -72,8 +72,7 @@ object SpoilerCover {
             minimumHeight = 0
             minWidth = dp(context, 76)
             minimumWidth = 0
-            backgroundTintList = ColorStateList.valueOf(palette.primary)
-            setTextColor(palette.onPrimary)
+            PaletteManager.styleButton(this, palette)
         }
         if (showRevealButton) {
             content.addView(reveal, LinearLayout.LayoutParams(-2, dp(context, 40)).apply { topMargin = dp(context, 8); gravity = Gravity.CENTER_HORIZONTAL })

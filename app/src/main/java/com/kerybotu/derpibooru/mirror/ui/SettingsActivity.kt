@@ -54,7 +54,6 @@ class SettingsActivity : AppCompatActivity() {
             AppSettings.Palette.LIGHT -> binding.paletteLight.isChecked = true
             AppSettings.Palette.COLORFUL -> binding.paletteColorful.isChecked = true
         }
-        binding.switchNewUiBeta.isChecked = AppSettings.isNewUiBetaEnabled(s)
         binding.switchHighRes.isChecked = AppSettings.isHighResolution(s)
         binding.switchVideoThumb.isChecked = AppSettings.isVideoThumbnailsEnabled(s)
         binding.switchVideoAudio.isChecked = AppSettings.isVideoAudioEnabled(s)
@@ -133,12 +132,6 @@ class SettingsActivity : AppCompatActivity() {
             buildAccentSwatches()
         }
         binding.switchHighRes.setOnCheckedChangeListener { _, v -> AppSettings.setHighResolution(this, v) }
-        binding.switchNewUiBeta.setOnCheckedChangeListener { _, enabled ->
-            AppSettings.setNewUiBetaEnabled(this, enabled)
-            binding.settingsToolbar.appToolbar.applyUi2Appearance()
-            androidx.core.view.ViewCompat.requestApplyInsets(binding.settingsToolbar.appToolbar)
-            Toast.makeText(this, if (enabled) "新版界面已启用" else "已切换回旧版界面", Toast.LENGTH_SHORT).show()
-        }
         binding.switchVideoThumb.setOnCheckedChangeListener { _, v -> AppSettings.setVideoThumbnailsEnabled(this, v) }
         binding.switchVideoAudio.setOnCheckedChangeListener { _, v -> AppSettings.setVideoAudioEnabled(this, v) }
         binding.switchVideoWifiOnly.setOnCheckedChangeListener { _, v -> AppSettings.setVideoWifiOnly(this, v) }

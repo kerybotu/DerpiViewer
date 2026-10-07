@@ -99,8 +99,8 @@ class SearchActivity : AppCompatActivity() {
         chips = ChipGroup(this).apply { isSingleLine = true; setPadding(dp(16), dp(8), dp(16), 0) }
         headerExtras.addView(chips)
         val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(4), dp(16), dp(4)) }
-        actions.addView(Button(this).apply { text = "高级筛选"; setOnClickListener { showAdvanced() } }, LinearLayout.LayoutParams(0, -2, 1f))
-        actions.addView(Button(this).apply { text = "搜索"; setOnClickListener { runSearch() } })
+        actions.addView(Button(this).apply { text = "高级筛选"; PaletteManager.styleButton(this); setOnClickListener { showAdvanced() } }, LinearLayout.LayoutParams(0, -2, 1f))
+        actions.addView(Button(this).apply { text = "搜索"; PaletteManager.styleButton(this); setOnClickListener { runSearch() } })
         headerExtras.addView(actions)
         val sortRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(16), dp(8)) }
         sortField = Spinner(this); sortDirection = Spinner(this)

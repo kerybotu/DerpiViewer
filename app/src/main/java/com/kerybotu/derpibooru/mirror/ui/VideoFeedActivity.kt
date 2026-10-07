@@ -36,6 +36,9 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         ResourceCoordinator.enterVideoTab()
         CdnImageGate.pausePrefetch(this)
         PaletteManager.apply(this)
+        applyVideoPalette()
+        Ui2DesignSystem.applyPressFeedback(binding.videoAudio)
+        Ui2DesignSystem.applyPressFeedback(binding.videoSort)
         adapter = VideoFeedAdapter(this)
         binding.videoPager.apply {
             orientation = ViewPager2.ORIENTATION_VERTICAL
@@ -53,7 +56,6 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
                 binding.videoEmpty.visibility = if (loading && adapter.itemCount == 0) View.VISIBLE else View.GONE
             }
         )
-        binding.videoBack.setOnClickListener { finish() }
         binding.videoAudio.setOnClickListener { controller.toggleMute() }
         binding.videoSort.setOnClickListener { controller.showSortMenu(it) }
         binding.videoPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
@@ -104,11 +106,27 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
     override fun onMore(position: Int, anchor: View) = controller.onMore(position, anchor)
 
     override fun onPause() { progressHandler.removeCallbacks(progressTick); controller.playerPool.pauseAll(); super.onPause() }
-    override fun onResume() { super.onResume(); progressHandler.post(progressTick); controller.activate(controller.currentPosition, automatic = true) }
+    override fun onResume() {
+        super.onResume()
+        PaletteManager.apply(this)
+        applyVideoPalette()
+        progressHandler.post(progressTick)
+        controller.activate(controller.currentPosition, automatic = true)
+    }
     override fun onDestroy() {
         progressHandler.removeCallbacks(progressTick)
         controller.dispose()
         ResourceCoordinator.exitVideoTab()
         super.onDestroy()
+    }
+
+    private fun applyVideoPalette() {
+        val colors = PaletteManager.colors(this)
+        Ui2DesignSystem.styleIsland(binding.videoTopIsland, colors, Ui2DesignSystem.Shape.topIsland)
+        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoMenu.visibility = View.GONE
+        if (::adapter.isInitialized) adapter.refreshPalette()
     }
 }

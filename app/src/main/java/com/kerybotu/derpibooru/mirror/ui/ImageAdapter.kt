@@ -147,11 +147,14 @@ class ImageAdapter(
 
         private fun styleOverlay(view: android.view.View, palette: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) {
             val density = view.resources.displayMetrics.density
+            val lightSurface = ColorUtils.calculateLuminance(palette.surface) > 0.5
+            val fillAlpha = if (lightSurface) 190 else 170
+            val borderAlpha = if (lightSurface) 140 else 112
             view.background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 12f * density
-                setColor(ColorUtils.setAlphaComponent(palette.surfaceVariant, 232))
-                setStroke((density).toInt().coerceAtLeast(1), ColorUtils.setAlphaComponent(palette.divider, 176))
+                setColor(ColorUtils.setAlphaComponent(palette.surfaceVariant, fillAlpha))
+                setStroke((density).toInt().coerceAtLeast(1), ColorUtils.setAlphaComponent(palette.divider, borderAlpha))
             }
         }
     }

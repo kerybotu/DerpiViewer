@@ -29,6 +29,39 @@ class ChallengePageDetectorTest {
     }
 
     @Test
+    fun detectsAnubisProofOfWorkPage() {
+        val html = """
+            <html><head><title>Making sure you're not a bot!</title>
+            <script id="anubis-main" type="module" src="/.within.website/x/cmd/anubis/static/js/main.mjs"></script>
+            <script>window.anubis_challenge = {}</script>
+            <meta name="anubis_version" content="1.0.0"></head></html>
+        """.trimIndent()
+        assertEquals(ChallengePageType.ANUBIS, ChallengePageDetector.detect("text/html", html))
+    }
+
+    @Test
+    fun detectsCurrentDerpibooruAnubisPageWithPrecursorScript() {
+        val html = """
+            <title>Derpibooru - Making sure you're not a bot!</title>
+            <script id="anubis_version" type="application/json">"v1.27.0"</script>
+            <script id="anubis_challenge" type="application/json">{"rules":{"difficulty":2}}</script>
+            <script id="anubis-main" type="module" src="/.within.website/x/cmd/anubis/static/js/main.mjs"></script>
+            <script src="/cdn-cgi/challenge-platform/scripts/precursor/main.js"></script>
+        """.trimIndent()
+        assertEquals(ChallengePageType.ANUBIS, ChallengePageDetector.detect("text/html; charset=UTF-8", html))
+    }
+
+    @Test
+    fun ignoresLooseAnubisMarkers() {
+        assertNull(
+            ChallengePageDetector.detect(
+                "text/html",
+                "<p>Anubis challenge accepted</p><script src=\"/static/main.js\"></script>"
+            )
+        )
+    }
+
+    @Test
     fun ignoresNonHtmlResponses() {
         assertNull(
             ChallengePageDetector.detect(

@@ -19,11 +19,18 @@ import okhttp3.Request
 import java.net.InetSocketAddress
 import java.net.Proxy
 import android.net.Uri
+import android.webkit.WebSettings
 import java.util.concurrent.TimeUnit
 
 object NetworkManager {
 
     private const val TAG = "NetworkManager"
+    /** Kept identical between OkHttp and the challenge WebView because
+     * Cloudflare clearance cookies can be bound to the requesting UA. */
+    const val HTTP_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    @Volatile private var activeUserAgent: String = HTTP_USER_AGENT
     private var localProxyServer: LocalProxyServer? = null
     private var okHttpClient: OkHttpClient? = null
     @Volatile private var preferredRouteIps: Map<String, String> = emptyMap()
@@ -44,6 +51,12 @@ object NetworkManager {
         onOptimizationProgress: ((domain: String, tested: Int, total: Int) -> Unit)? = null
     ) {
         try {
+            // Keep OkHttp and the challenge WebView on the exact same device UA.
+            // A desktop UA paired with Android WebView navigator values is a common
+            // source of low Turnstile scores and repeated challenge pages.
+            activeUserAgent = runCatching {
+                WebSettings.getDefaultUserAgent(context.applicationContext)
+            }.getOrNull()?.takeIf { it.isNotBlank() } ?: HTTP_USER_AGENT
             val targetDomain = AppSettings.getTargetDomain(context)
             val builder = OkHttpClient.Builder()
                 .cookieJar(SharedCookieJar())
@@ -70,6 +83,18 @@ object NetworkManager {
                 } else {
                     Log.d(TAG, "derpicdn.net 使用直连，不设置 CDN 优选 IP")
                 }
+                // Turnstile assets and challenge callbacks are served from a
+                // different Cloudflare hostname. Keep its route independent
+                // from the site's and CDN's preferred IPs: the proxy still
+                // tunnels TLS with the original hostname/SNI.
+                val challengeIp = IpOptimizer.getBestIpSmart(
+                    context,
+                    forceRefresh = forceRefresh,
+                    domainKey = CHALLENGE_DOMAIN
+                ) { tested, total ->
+                    onOptimizationProgress?.invoke(CHALLENGE_DOMAIN, tested, total)
+                }.ip
+                routes[CHALLENGE_DOMAIN] = challengeIp
                 preferredRouteIps = routes
                 Log.d(TAG, "使用优选 IP 路由: $routes")
                 localProxyServer = LocalProxyServer(preferredRouteIps).apply { start() }
@@ -103,7 +128,7 @@ object NetworkManager {
             }
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .header("User-Agent", activeUserAgent)
                 .header("Accept", "application/json")
                 .build()
 
@@ -166,6 +191,7 @@ object NetworkManager {
 
     fun currentPreferredIps(): Map<String, String> = preferredRouteIps.toMap()
     fun localProxyPort(): Int? = localProxyServer?.port?.takeIf { it > 0 }
+    fun userAgent(): String = activeUserAgent
 
     suspend fun reinitialize(context: Context, forceRefresh: Boolean = false) {
         shutdown()
@@ -221,4 +247,5 @@ object NetworkManager {
     private const val BLOCK_DURATION_MS = 15 * 60 * 1_000L
     private const val SOFT_COOLDOWN_MS = 5 * 1_000L
     private const val CDN_DOMAIN = "derpicdn.net"
+    private const val CHALLENGE_DOMAIN = "challenges.cloudflare.com"
 }

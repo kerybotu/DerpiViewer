@@ -44,8 +44,8 @@ DerpiViewer 使用原生 Android UI 和官方 JSON API 构建，不是网页套�
 - 过滤器页支持通过过滤器 ID 调用 `GET /api/v1/json/filters/:filter_id` 查询，并显示过滤器 ID。
 - 视频流支持随机/多维度排序、筛选、收藏、评论、复制视频链接和跳转图片详情页。
 - 外观支持浅色、深色和彩色主题，并可选择跟随系统主题（默认）。
-- 设置中可启用“使用新版界面（Beta）”：当前阶段将主页顶部栏、底部导航和 FAB 切换为统一的漂浮岛式表面，并沿用首页、视频、热门、评论、我的五个入口；开关默认关闭，返回主页时即时生效，关闭后恢复旧版主页。
-- Beta 外壳使用共享的圆角、间距、表面描边和过渡参数，并适配当前主题颜色。现阶段是半透明表面效果，不包含真实背景模糊；搜索、详情、视频等独立页面尚未迁移，后续逐步接入统一设计系统。
+- DerpiViewer 统一使用 2.0 浮岛界面：主页顶部栏、底部导航和 FAB 共享圆角、间距、表面描边与过渡参数，并适配当前主题颜色。旧版界面已弃用，不再提供切换入口。
+- 现阶段采用半透明表面效果，不包含真实背景模糊；搜索、详情、视频等独立页面会继续沿用统一设计系统迁移。
 - 设置中可独立开启或关闭标签翻译，默认开启；关闭后图片详情页显示 API 返回的原始标签。
 
 ### 图片、标签与剧透
@@ -66,6 +66,7 @@ DerpiViewer 使用原生 Android UI 和官方 JSON API 构建，不是网页套�
 ### 网络与连接
 
 - Cloudflare IP 优选、深度 IP 优选和本地透明代理。
+- 本地代理为 `challenges.cloudflare.com` 单独测速并路由 Turnstile 资源；其优选 IP 使用独立缓存键，TLS 仍保留原始主机名/SNI，避免复用主站或 CDN 节点造成验证 Cookie 失效。
 - 支持手动指定 IP、主站/CDN 分开配置，以及 `derpicdn.net` 直连选项。
 - 请求包含限流、重试、Challenge 检测和 500/501 退避逻辑。
 - 人机验证页面仅在检测到 Derpibooru challenge 表单时进入验证流程，并显示加载进度。
@@ -153,3 +154,20 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+### Cloudflare 验证稳定性
+
+Cloudflare/Turnstile 验证页与旧 Derpibooru 验证页使用独立 Activity。验证页 WebView 与 OkHttp 使用同一设备 User-Agent，并继续通过 `challenges.cloudflare.com` 的独立优选 IP 路由加载资源；TLS 仍保留原始主机名和 SNI。
+
+验证完成判定不会在“页面刚出现 JSON”的同一时刻立即重试 API：页面 JSON 出现后会有限等待 WebView 的 `cf_clearance` Cookie 同步到共享 CookieJar，最多进行有限次 Cookie 传播重试；即使某些 WebView 环境延迟暴露 Cookie，只要 JSON 内容稳定仍会自动返回，且协调器会在短时间内合并后续验证请求，避免连续弹出验证窗口。若仍无法通过，通常需要更换网络、关闭不稳定代理或等待 Cloudflare 风险评分恢复。
+
+### Anubis 验证
+
+Anubis Proof-of-Work 页面通过独立的 Anubis WebView 验证界面处理；验证计算由 Anubis 官方页面脚本在浏览器环境中完成，应用等待其回跳到原 API 页面，并以有效 JSON 或 Anubis 授权 Cookie 确认完成。Anubis 检测要求页面同时包含 `anubis_challenge` 与 Anubis 专属资源标记，避免将普通 HTML 错误页误判为验证页面。Anubis、Cloudflare/Turnstile 和旧 Derpibooru 表单流程保持独立。
+
+### Home TopIsland 动画与按钮规范
+
+首页 TopIsland 使用独立的连续滚动控制器：首次进入采用轻量 Spring 入场，RecyclerView 滚动时按 1:1 位移跟手并联动缩放、透明度、阴影和内容视差；停止滚动后才按当前位置吸附到展开或完全移出状态，回到列表顶部会恢复完整岛屿。该动画只作用于 Home，不改变 Video、Hot、消息和我的页面。按钮样式由 `PaletteManager` 统一管理，使用圆角、约 86% 不透明度的主题色玻璃背景和统一按压反馈。
+
+## 致谢
+
+感谢不愿透露姓名的人士对代码的贡献，以及社区成员提供的建议。

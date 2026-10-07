@@ -11,8 +11,6 @@
             <Button android:id="@+id/account_logout" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp" android:text="清除本地凭据" />
         </LinearLayout>
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="外观" android:textStyle="bold" android:textSize="13sp" android:padding="16dp" android:textColor="?attr/colorPrimary" />
-        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_new_ui_beta" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="使用新版界面（Beta）" android:paddingHorizontal="16dp" android:minHeight="52dp" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginStart="16dp" android:layout_marginEnd="16dp" android:layout_marginBottom="8dp" android:text="启用正在迁移中的 2.0 浮岛外观。顶栏、主导航与部分共享组件会切换样式；页面布局、玻璃背板与动效仍在逐步迁移。" android:textColor="?attr/colorOnSurfaceVariant" android:textSize="12sp" />
         <RadioGroup android:id="@+id/palette_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingHorizontal="16dp">
             <RadioButton android:id="@+id/palette_system" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="跟随系统" />
             <RadioButton android:id="@+id/palette_dark" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="暗色" />

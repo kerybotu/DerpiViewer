@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="8dp">
+    <LinearLayout android:id="@+id/current_filter_card" android:layout_width="match_parent" android:layout_height="76dp" android:gravity="center_vertical" android:paddingHorizontal="16dp">
+        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:contentDescription="当前过滤器" android:src="@drawable/ic_filter" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="12dp" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/current_filter_label" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="当前过滤器" android:textSize="12sp" />
+            <TextView android:id="@+id/current_filter_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:ellipsize="end" android:maxLines="1" android:text="默认安全过滤器" android:textSize="17sp" android:textStyle="bold" />
+        </LinearLayout>
+        <TextView android:id="@+id/change_filter" android:layout_width="wrap_content" android:layout_height="44dp" android:gravity="center" android:paddingHorizontal="14dp" android:text="切换" android:textStyle="bold" android:clickable="true" android:focusable="true" />
+    </LinearLayout>
+    <com.google.android.material.tabs.TabLayout android:id="@+id/filter_tabs" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="12dp" app:tabIndicatorAnimationMode="elastic" app:tabIndicatorFullWidth="false" app:tabMode="fixed" />
+    <LinearLayout android:id="@+id/filter_search_container" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="12dp" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="14dp" android:paddingEnd="4dp">
+        <ImageView android:id="@+id/filter_search_icon" android:layout_width="22dp" android:layout_height="22dp" android:contentDescription="搜索过滤器" android:src="@drawable/ic_search" />
+        <EditText android:id="@+id/filter_search" android:layout_width="0dp" android:layout_height="match_parent" android:layout_marginStart="10dp" android:layout_weight="1" android:background="@android:color/transparent" android:ellipsize="end" android:gravity="center_vertical" android:hint="输入过滤器 ID 或名称" android:imeOptions="actionSearch" android:inputType="text" android:maxLines="1" android:singleLine="true" />
+        <ImageButton android:id="@+id/filter_search_clear" android:layout_width="48dp" android:layout_height="48dp" android:background="@android:color/transparent" android:contentDescription="清空搜索" android:padding="12dp" android:src="@drawable/ic_close" />
+        <ImageButton android:id="@+id/filter_search_action" android:layout_width="48dp" android:layout_height="48dp" android:background="@android:color/transparent" android:contentDescription="搜索" android:padding="12dp" android:src="@drawable/ic_search" />
+    </LinearLayout>
+    <TextView android:id="@+id/filter_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="可输入 ID 查询，或按名称和描述筛选" android:textSize="12sp" />
+</LinearLayout>

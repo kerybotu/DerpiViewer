@@ -4,6 +4,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.FrameLayout
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.kerybotu.derpibooru.mirror.AppSettings
@@ -19,12 +22,32 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     private lateinit var controller: VideoFeedController
     private lateinit var pagerRecycler: RecyclerView
     private var loaded = false
+    private var navigationBottomInset = 0
+    private var navigationEndInset = 0
+    private var landscapeNavigation = false
+    private var statusBarInset = 0
     private val progressTick = object : Runnable { override fun run() { updateProgress(); progressHandler.postDelayed(this, 250) } }
 
     init {
         setCardBackgroundColor(PaletteManager.colors(context).surface)
         radius = 0f; preventCornerOverlap = false
-        binding.videoBack.visibility = View.GONE
+        val colors = PaletteManager.colors(context)
+        Ui2DesignSystem.styleIsland(binding.videoTopIsland, colors, Ui2DesignSystem.Shape.topIsland)
+        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        Ui2DesignSystem.applyPressFeedback(binding.videoMenu)
+        Ui2DesignSystem.applyPressFeedback(binding.videoAudio)
+        Ui2DesignSystem.applyPressFeedback(binding.videoSort)
+        // The video canvas is edge-to-edge. Only the floating control island
+        // consumes the status-bar safe area, keeping it independent from the
+        // pager's measured bounds.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            statusBarInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            updateTopIslandPosition()
+            insets
+        }
+        ViewCompat.requestApplyInsets(binding.root)
         ResourceCoordinator.enterVideoTab()
         CdnImageGate.pausePrefetch(context)
         adapter = VideoFeedAdapter(this)
@@ -44,6 +67,7 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
             }
         )
 
+        binding.videoMenu.setOnClickListener { (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu() }
         binding.videoAudio.setOnClickListener { controller.toggleMute() }
         binding.videoSort.setOnClickListener { controller.showSortMenu(it) }
         binding.videoPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
@@ -81,7 +105,26 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
         else -> "%.0f B/s".format(bitsPerSecond / 8.0)
     }
 
-    fun setBottomInset(px: Int) { binding.videoPager.setPadding(0, 0, 0, px.coerceAtLeast(0)) }
+    /** Keeps the canvas full screen; only overlays avoid the shared navigation island. */
+    fun setBottomInset(px: Int) = setNavigationInsets(px, navigationEndInset, landscapeNavigation)
+
+    /** Rebinds persistent pager items after a global palette or accent change. */
+    fun refreshPalette() {
+        val colors = PaletteManager.colors(context)
+        Ui2DesignSystem.styleIsland(binding.videoTopIsland, colors, Ui2DesignSystem.Shape.topIsland)
+        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        adapter.refreshPalette()
+    }
+
+    fun setNavigationInsets(bottom: Int, end: Int, landscape: Boolean) {
+        navigationBottomInset = bottom.coerceAtLeast(0)
+        navigationEndInset = end.coerceAtLeast(0)
+        landscapeNavigation = landscape
+        adapter.setNavigationInsets(navigationBottomInset, navigationEndInset, landscapeNavigation)
+        updateTopIslandPosition()
+    }
     fun setActive(active: Boolean) {
         if (active) {
             if (!loaded && !controller.loading) { controller.loadNextPage(); loaded = true }
@@ -102,4 +145,20 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     override fun onComments(position: Int) = controller.onComments(position)
     override fun onDownload(position: Int) = controller.onDownload(position)
     override fun onMore(position: Int, anchor: View) = controller.onMore(position, anchor)
+
+    private fun updateTopIslandPosition() {
+        val params = binding.videoTopIsland.layoutParams as FrameLayout.LayoutParams
+        params.gravity = if (landscapeNavigation) {
+            android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+        } else {
+            android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+        }
+        params.topMargin = if (landscapeNavigation) 0 else statusBarInset + dp(12)
+        params.bottomMargin = 0
+        params.marginStart = if (landscapeNavigation) dp(16) else 0
+        params.marginEnd = 0
+        binding.videoTopIsland.layoutParams = params
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }

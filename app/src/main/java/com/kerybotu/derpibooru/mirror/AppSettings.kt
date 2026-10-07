@@ -17,7 +17,6 @@ object AppSettings {
     private const val KEY_HIDE_UPLOADER = "hide_uploader"
     private const val KEY_HIDE_SCORE = "hide_score"
     private const val KEY_TAG_TRANSLATION = "tag_translation_enabled"
-    private const val KEY_NEW_UI_BETA = "new_ui_beta_enabled"
     private const val KEY_SPOILER_MODE = "spoiler_display_mode"
     private const val KEY_PALETTE = "palette"
     private const val KEY_ACCENT = "accent_color"
@@ -103,8 +102,6 @@ object AppSettings {
     fun setScoreHidden(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIDE_SCORE, value).apply()
     fun isTagTranslationEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_TAG_TRANSLATION, true)
     fun setTagTranslationEnabled(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_TAG_TRANSLATION, value).apply()
-    fun isNewUiBetaEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_NEW_UI_BETA, false)
-    fun setNewUiBetaEnabled(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_NEW_UI_BETA, value).apply()
     fun getSpoilerDisplayMode(context: Context): SpoilerDisplayMode = runCatching {
         SpoilerDisplayMode.valueOf(prefs(context).getString(KEY_SPOILER_MODE, SpoilerDisplayMode.CLICK_TO_SHOW.name)!!)
     }.getOrDefault(SpoilerDisplayMode.CLICK_TO_SHOW)

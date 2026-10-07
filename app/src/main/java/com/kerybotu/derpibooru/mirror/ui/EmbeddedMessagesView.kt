@@ -28,7 +28,11 @@ class EmbeddedMessagesView(context: Context) : FrameLayout(context) {
         val root = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         root.addView(SafeToolbar(context).apply {
             title = "消息"
-            navigationIcon = null
+            setNavigationIcon(com.kerybotu.derpibooru.mirror.R.drawable.ic_menu)
+            setNavigationOnClickListener {
+                (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu()
+            }
+            applyUi2Appearance()
         }, LinearLayout.LayoutParams(-1, dp(56)))
         list.setPadding(dp(16), dp(8), dp(16), dp(24))
         scroll.addView(list, android.widget.FrameLayout.LayoutParams(-1, -2))

@@ -12,8 +12,9 @@ import kotlin.math.floor
 object AdaptiveLayoutPolicy {
     const val MAX_CONTENT_WIDTH_DP = 1280
     const val TOP_ISLAND_MAX_WIDTH_DP = 460
-    /** Maximum width for the icon-only bottom navigation island. */
-    const val BOTTOM_ISLAND_MAX_WIDTH_DP = 420
+    /** Maximum width for the five-item floating bottom navigation island. */
+    const val BOTTOM_ISLAND_MAX_WIDTH_DP = 520
+    const val LANDSCAPE_TOP_ISLAND_MAX_WIDTH_DP = 720
     const val MIN_ARTWORK_CELL_DP = 156
     const val GRID_GAP_DP = 8
     const val CONTENT_GUTTER_DP = 16
@@ -23,14 +24,6 @@ object AdaptiveLayoutPolicy {
 
     fun isLandscape(context: Context): Boolean =
         context.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-
-    fun landscapeIslandWidthPx(context: Context, availableWidthPx: Int): Int {
-        val density = context.resources.displayMetrics.density
-        val preferred = (availableWidthPx * 0.34f).toInt()
-        val minimum = (240 * density).toInt().coerceAtMost(availableWidthPx)
-        val maximum = (MAX_CONTENT_WIDTH_DP * density).toInt().coerceAtMost(availableWidthPx)
-        return preferred.coerceIn(minimum, maximum)
-    }
 
     fun contentIslandWidthPx(context: Context, availableWidthPx: Int): Int {
         val maxWidth = (MAX_CONTENT_WIDTH_DP * context.resources.displayMetrics.density).toInt()
@@ -43,8 +36,9 @@ object AdaptiveLayoutPolicy {
     }
 
     /** Top navigation is a self-contained island, not a full-width content bar. */
-    fun topIslandWidthPx(context: Context, availableWidthPx: Int): Int {
-        val maxWidth = (TOP_ISLAND_MAX_WIDTH_DP * context.resources.displayMetrics.density).toInt()
+    fun topIslandWidthPx(context: Context, availableWidthPx: Int, landscape: Boolean = isLandscape(context)): Int {
+        val maxWidthDp = if (landscape) LANDSCAPE_TOP_ISLAND_MAX_WIDTH_DP else TOP_ISLAND_MAX_WIDTH_DP
+        val maxWidth = (maxWidthDp * context.resources.displayMetrics.density).toInt()
         return availableWidthPx.coerceAtMost(maxWidth)
     }
 

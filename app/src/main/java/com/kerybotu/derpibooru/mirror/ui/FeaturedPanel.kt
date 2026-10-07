@@ -2,6 +2,7 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Context
 import android.content.Intent
+import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -9,6 +10,8 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.widget.NestedScrollView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.kerybotu.derpibooru.mirror.AppSettings
@@ -71,12 +74,38 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         refreshLayout.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         refreshLayout.setOnRefreshListener { refresh() }
         addView(refreshLayout, LayoutParams(-1, -1))
+        addSharedMenuIsland()
         progress = ProgressBar(context).apply { isIndeterminate = true }
         addView(progress, LayoutParams(dp(48), dp(48), android.view.Gravity.CENTER))
         scroll.setOnScrollChangeListener { _, _, y, _, _ ->
             if (!loading && y + scroll.height >= content.height - dp(500)) loadPage()
         }
-        refresh()
+        // The panel is constructed while the app's startup networking task is
+        // still running. Loading here could fail before the client exists and
+        // incorrectly mark the first visit as complete. The visible tab calls
+        // ensureLoaded() after it becomes the active primary destination.
+    }
+
+    /** Uses the same GlassMenuCard entry point as Home, Video, Messages, and Profile. */
+    private fun addSharedMenuIsland() {
+        val island = SafeToolbar(context).apply {
+            title = "热门"
+            minimumWidth = dp(220)
+            setNavigationIcon(R.drawable.ic_menu)
+            setNavigationOnClickListener {
+                (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu()
+            }
+            applyUi2Appearance()
+        }
+        addView(island, LayoutParams(-2, dp(56), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        ViewCompat.setOnApplyWindowInsetsListener(island) { view, insets ->
+            (view.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+                params.topMargin = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top + dp(12)
+                view.layoutParams = params
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(island)
     }
 
     fun refresh() {
@@ -84,6 +113,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         // the initial request is still running.
         if (loading) return
         page = 1
+        hasLoadedOnce = false
         items.clear()
         adapter.updateData(emptyList())
         heroBox.visibility = View.GONE
@@ -119,7 +149,9 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
                 }
             } finally {
                 loading = false
-                hasLoadedOnce = true
+                // A failed precondition or an empty response must remain
+                // retryable when the user first enters the Featured tab.
+                hasLoadedOnce = items.isNotEmpty() || heroBox.childCount > 0
                 progress.visibility = View.GONE
                 refreshLayout.isRefreshing = false
                 onRefreshFinished?.invoke()

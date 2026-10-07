@@ -35,6 +35,16 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
                 return chain.proceed(request)
             }
             response = chain.proceed(request)
+            // CookieManager.flush() is asynchronous on some WebView providers.
+            // Give the clearance cookie a few bounded propagation chances, without
+            // opening another Activity or turning a transient race into a loop.
+            var propagationAttempt = 0
+            while (propagationAttempt < 3 && detectChallengeType(response) != null) {
+                response.close()
+                Thread.sleep(250L)
+                response = chain.proceed(request)
+                propagationAttempt++
+            }
             retried = true
         }
         return response

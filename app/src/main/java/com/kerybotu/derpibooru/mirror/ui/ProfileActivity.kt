@@ -134,7 +134,7 @@ class ProfileActivity : AppCompatActivity() {
     }
 
     private fun stat(label: String, count: Int, action: () -> Unit) { stats.addView(TextView(this).apply { text = "$count\n$label"; gravity = Gravity.CENTER; setTextColor(PaletteManager.colors(this@ProfileActivity).onSurface); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f)) }
-    private fun tab(label: String, action: () -> Unit) { tabs.addView(Button(this).apply { text = label; setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f)) }
+    private fun tab(label: String, action: () -> Unit) { tabs.addView(Button(this).apply { text = label; PaletteManager.styleButton(this); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f)) }
     private fun loadImages(query: String) = scope.launch {
         progress.visibility = View.VISIBLE; val q = URLEncoder.encode(query, "UTF-8")
         val raw = withContext(Dispatchers.IO) { NetworkManager.getApi(this@ProfileActivity, "search/images?q=$q&sf=first_seen_at&sd=desc&per_page=50${NetworkManager.currentFilterParam(this@ProfileActivity)}") }

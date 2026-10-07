@@ -51,8 +51,7 @@ object CommentCardRenderer {
             card.addView(Button(context).apply {
                 text = "翻译"
                 textSize = 12f
-                backgroundTintList = ColorStateList.valueOf(colors.primary)
-                setTextColor(colors.onPrimary)
+                PaletteManager.styleButton(this, colors)
                 setOnClickListener {
                     val translated = tag as? String
                     if (translated != null) {

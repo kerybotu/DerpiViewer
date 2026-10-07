@@ -19,6 +19,7 @@ import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.Spinner
 import android.widget.Toast
+import com.kerybotu.derpibooru.mirror.PaletteManager
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -291,16 +292,16 @@ class VideoFeedController(
                 filters.addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     addView(android.widget.TextView(context).apply { text = "${numericFieldLabel(item.field)} ${comparatorLabel(item.comparator)} ${item.value}" }, LinearLayout.LayoutParams(0, -2, 1f))
-                    addView(android.widget.Button(context).apply { text = "删除"; setOnClickListener { numericFilters.removeAt(index); renderFilters() } })
+                    addView(android.widget.Button(context).apply { text = "删除"; PaletteManager.styleButton(this); setOnClickListener { numericFilters.removeAt(index); renderFilters() } })
                 })
             }
         }
         root.addView(android.widget.TextView(context).apply { text = "筛选条件"; textSize = 20f })
         root.addView(query)
         root.addView(featured)
-        root.addView(android.widget.Button(context).apply { text = "+ 添加数值筛选"; setOnClickListener { showNumericFilterPicker { numericFilters += it; renderFilters() } } })
+        root.addView(android.widget.Button(context).apply { text = "+ 添加数值筛选"; PaletteManager.styleButton(this); setOnClickListener { showNumericFilterPicker { numericFilters += it; renderFilters() } } })
         root.addView(filters); renderFilters()
-        val apply = android.widget.Button(context).apply { text = "应用筛选" }
+        val apply = android.widget.Button(context).apply { text = "应用筛选"; PaletteManager.styleButton(this) }
         root.addView(apply)
         BottomSheetDialog(context).apply { setContentView(root); apply.setOnClickListener { filterQuery = query.text.toString().trim(); recentFeatured = featured.isChecked; dismiss(); reloadFeed() }; show() }
     }
@@ -313,7 +314,7 @@ class VideoFeedController(
         val comparator = Spinner(context).apply { adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, comparators.map { it.first }) }
         val value = EditText(context).apply { hint = "数值"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
         row.addView(field); row.addView(comparator); row.addView(value)
-        BottomSheetDialog(context).apply { setContentView(row); setOnShowListener { row.addView(android.widget.Button(context).apply { text = "添加"; setOnClickListener { val v = value.text.toString().trim(); if (v.isNotEmpty()) { done(NumericFilter(fields[field.selectedItemPosition].second, comparators[comparator.selectedItemPosition].second, v)); dismiss() } } }) }; show() }
+        BottomSheetDialog(context).apply { setContentView(row); setOnShowListener { row.addView(android.widget.Button(context).apply { text = "添加"; PaletteManager.styleButton(this); setOnClickListener { val v = value.text.toString().trim(); if (v.isNotEmpty()) { done(NumericFilter(fields[field.selectedItemPosition].second, comparators[comparator.selectedItemPosition].second, v)); dismiss() } } }) }; show() }
     }
 
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()

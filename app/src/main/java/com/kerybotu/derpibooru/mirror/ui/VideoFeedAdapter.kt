@@ -5,8 +5,15 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.os.Build
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.graphics.Color
+import android.content.res.ColorStateList
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
+import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.databinding.ItemVideoFeedBinding
 
 data class VideoPost(
@@ -37,21 +44,87 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
     }
 
     private val items = mutableListOf<VideoPost>()
+    private var bottomInset = 0
+    private var endInset = 0
+    private var landscape = false
 
     fun replace(posts: List<VideoPost>) { items.clear(); items.addAll(posts); notifyDataSetChanged() }
     fun append(posts: List<VideoPost>) { val start = items.size; items.addAll(posts); notifyItemRangeInserted(start, posts.size) }
     fun item(position: Int): VideoPost? = items.getOrNull(position)
+    fun refreshPalette() {
+        if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size)
+    }
+    fun setBottomInset(value: Int) {
+        setNavigationInsets(value, endInset, landscape)
+    }
+
+    /** Insets occupied by the shared navigation island, never by the video canvas. */
+    fun setNavigationInsets(bottom: Int, end: Int, isLandscape: Boolean) {
+        val normalizedBottom = bottom.coerceAtLeast(0)
+        val normalizedEnd = end.coerceAtLeast(0)
+        if (bottomInset == normalizedBottom && endInset == normalizedEnd && landscape == isLandscape) return
+        bottomInset = normalizedBottom
+        endInset = normalizedEnd
+        landscape = isLandscape
+        if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size)
+    }
     override fun getItemCount(): Int = items.size
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
         ItemVideoFeedBinding.inflate(LayoutInflater.from(parent.context), parent, false)
     )
 
-    override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(items[position], position, actions)
-    override fun onViewRecycled(holder: Holder) { holder.binding.videoPlayer.player = null; super.onViewRecycled(holder) }
+    override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(
+        items[position], position, actions, bottomInset, endInset, landscape
+    )
+    override fun onViewRecycled(holder: Holder) {
+        holder.binding.videoPlayer.player = null
+        Glide.with(holder.binding.videoAmbientBackground).clear(holder.binding.videoAmbientBackground)
+        super.onViewRecycled(holder)
+    }
 
     class Holder(val binding: ItemVideoFeedBinding) : RecyclerView.ViewHolder(binding.root) {
-        fun bind(post: VideoPost, position: Int, actions: Actions) = with(binding) {
+        fun bind(
+            post: VideoPost,
+            position: Int,
+            actions: Actions,
+            bottomInset: Int,
+            endInset: Int,
+            landscape: Boolean
+        ) = with(binding) {
+            applyNavigationInsets(bottomInset, endInset, landscape)
+            val colors = PaletteManager.colors(root.context)
+            val uiColors = Ui2DesignSystem.colors(root.context)
+            Glide.with(videoAmbientBackground)
+                .load(post.thumbnailUrl ?: post.url)
+                .centerCrop()
+                .into(videoAmbientBackground)
+            val lightSurface = Color.luminance(colors.surface) > 0.5f
+            videoAmbientBackground.alpha = if (lightSurface) 0.5f else 0.42f
+            videoAmbientBackground.scaleX = 1.18f
+            videoAmbientBackground.scaleY = 1.18f
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                videoAmbientBackground.setRenderEffect(RenderEffect.createBlurEffect(24f, 24f, Shader.TileMode.CLAMP))
+            }
+            Ui2DesignSystem.styleIsland(videoActionRail, colors, Ui2DesignSystem.Shape.island)
+            Ui2DesignSystem.styleIsland(videoInfoOverlay, colors, Ui2DesignSystem.Shape.large)
+            Ui2DesignSystem.styleIsland(videoBufferLabel, colors, Ui2DesignSystem.Shape.pill)
+            Ui2DesignSystem.styleIsland(videoSpeed, colors, Ui2DesignSystem.Shape.pill)
+            videoAmbientScrim.setBackgroundColor(withAlpha(colors.scrim, 0.58f))
+            listOf(videoActionDividerPrimary, videoActionDividerSecondary, videoActionDividerTertiary).forEach {
+                it.setBackgroundColor(withAlpha(colors.divider, 0.62f))
+            }
+            videoUploader.setTextColor(colors.onSurface)
+            videoTags.setTextColor(colors.muted)
+            videoUpvoteCount.setTextColor(colors.onSurface)
+            listOf(videoUpvote, videoDownvote, videoFavorite, videoComments, videoDownload, videoMore).forEach {
+                it.imageTintList = ColorStateList.valueOf(colors.onSurface)
+                Ui2DesignSystem.applyPressFeedback(it)
+            }
+            videoPlayProgress.progressTintList = ColorStateList.valueOf(colors.primary)
+            videoPlayProgress.thumbTintList = ColorStateList.valueOf(colors.onSurface)
+            videoBufferProgress.progressTintList = ColorStateList.valueOf(uiColors.glassHighlight)
+            videoBufferProgress.backgroundTintList = ColorStateList.valueOf(uiColors.glassBorder)
             videoUploader.text = post.uploader
             videoTags.text = post.tags.take(3).joinToString("  ·  ")
             videoUpvoteCount.text = post.upvotes.toString()
@@ -74,5 +147,39 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
                 true
             }
         }
+
+        fun applyNavigationInsets(bottomInset: Int, endInset: Int, landscape: Boolean) {
+            binding.root.post {
+                val horizontalMargin = dp(binding.root, 16)
+                val infoParams = binding.videoInfoOverlay.layoutParams as android.widget.FrameLayout.LayoutParams
+                val availableWidth = (binding.root.width - horizontalMargin * 2 - if (landscape) endInset else 0)
+                    .coerceAtLeast(0)
+                val preferredWidth = dp(binding.root, if (landscape) 520 else 560)
+                infoParams.width = availableWidth.coerceAtMost(preferredWidth)
+                infoParams.gravity = if (landscape) {
+                    android.view.Gravity.BOTTOM or android.view.Gravity.START
+                } else {
+                    android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                }
+                infoParams.leftMargin = horizontalMargin
+                infoParams.rightMargin = if (landscape) endInset + horizontalMargin else horizontalMargin
+                infoParams.bottomMargin = bottomInset + dp(binding.root, 12)
+                binding.videoInfoOverlay.layoutParams = infoParams
+
+                val railParams = binding.videoActionRail.layoutParams as android.widget.FrameLayout.LayoutParams
+                railParams.rightMargin = endInset + horizontalMargin
+                binding.videoActionRail.layoutParams = railParams
+            }
+        }
+
+        private fun dp(view: View, value: Int): Int =
+            (value * view.resources.displayMetrics.density).toInt()
+
+        private fun withAlpha(color: Int, fraction: Float): Int = Color.argb(
+            (Color.alpha(color) * fraction.coerceIn(0f, 1f)).toInt(),
+            Color.red(color),
+            Color.green(color),
+            Color.blue(color)
+        )
     }
 }

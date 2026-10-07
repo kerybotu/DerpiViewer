@@ -29,6 +29,7 @@ import com.kerybotu.derpibooru.mirror.ui.FilterCache
 import com.kerybotu.derpibooru.mirror.ui.CdnImageGate
 import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
+import com.kerybotu.derpibooru.mirror.ui.HomeTopIslandController
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,18 +67,17 @@ class MainActivity : AppCompatActivity() {
     private var artworkBasePaddingRight = 0
     private var artworkBasePaddingTop = 0
     private var artworkBasePaddingBottom = 0
-    private var lastAppBarVerticalOffset = 0
     private var homeLoadJob: Job? = null
     private var featuredPanel: com.kerybotu.derpibooru.mirror.ui.FeaturedPanel? = null
     private var lastPaletteSignature: String? = null
-    private var lastUi2Enabled: Boolean? = null
     private var embeddedVideo: com.kerybotu.derpibooru.mirror.ui.EmbeddedVideoView? = null
     private var embeddedFeatured: com.kerybotu.derpibooru.mirror.ui.FeaturedPanel? = null
     private var embeddedMessages: com.kerybotu.derpibooru.mirror.ui.EmbeddedMessagesView? = null
     private var embeddedProfile: com.kerybotu.derpibooru.mirror.ui.EmbeddedProfileView? = null
     private var embeddedScreenId: Int = R.id.tab_home
     private var currentStatusBarHeight = 0
-    private var headerOffset = 0f
+    private var homeTopIslandController: HomeTopIslandController? = null
+    private var glassMenuEnabled = false
 
     private val activityJob = Job()
     private val activityScope = CoroutineScope(Dispatchers.Main + activityJob)
@@ -88,13 +88,28 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         PaletteManager.apply(this)
         lastPaletteSignature = paletteSignature()
-        lastUi2Enabled = AppSettings.isNewUiBetaEnabled(this)
         applyStartupPalette()
 
         // 处理状态栏与顶栏重叠问题
         applyWindowInsets()
+        // The top island is measured after insets are applied and can change size
+        // on rotation, window resizing, or when its visibility is restored. Keep
+        // the grid's initial content offset tied to that measured size without
+        // changing the full-screen overlay layout or touching padding while scrolling.
+        binding.appBarLayout.addOnLayoutChangeListener { _, left, top, right, bottom,
+                                                         oldLeft, oldTop, oldRight, oldBottom ->
+            if (left == oldLeft && top == oldTop && right == oldRight && bottom == oldBottom) {
+                return@addOnLayoutChangeListener
+            }
+            binding.appBarLayout.post {
+                if (isFinishing || isDestroyed) return@post
+                updateArtworkTopPadding()
+                homeTopIslandController?.onLayoutChanged()
+            }
+        }
 
         setSupportActionBar(binding.toolbar)
+        homeTopIslandController = HomeTopIslandController(binding.appBarLayout, binding.toolbar)
 
         binding.bottomNavigation.setOnItemSelectedListener { item -> handlePrimaryNavigation(item.itemId) }
         binding.sideNavigation.setOnItemSelectedListener { item -> handlePrimaryNavigation(item.itemId) }
@@ -118,9 +133,10 @@ class MainActivity : AppCompatActivity() {
         )
         drawerLayout.addDrawerListener(drawerToggle)
         drawerToggle.syncState()
+        updateNavigationMenuMode()
         val toolbarColors = PaletteManager.colors(this)
         tintToolbarNavigationIcon(
-            if (AppSettings.isNewUiBetaEnabled(this)) toolbarColors.onSurface else toolbarColors.onPrimary
+            toolbarColors.onSurface
         )
 
         binding.navView.setNavigationItemSelectedListener { menuItem ->
@@ -159,6 +175,9 @@ class MainActivity : AppCompatActivity() {
         binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    if (embeddedScreenId == R.id.tab_home) {
+                        homeTopIslandController?.onScrollIdle(rv)
+                    }
                     val lm = rv.layoutManager as GridLayoutManager
                     val distance = ResourceCoordinator.imagePreloadDistance(this@MainActivity)
                     CdnImageGate.prefetch(this@MainActivity, currentImages.drop(lm.findLastVisibleItemPosition() + 1).map { it.thumbnailUrl }, columnCount * distance)
@@ -168,29 +187,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                if (AppSettings.isNewUiBetaEnabled(this@MainActivity)) {
-                    val appBar = binding.appBarLayout
-                    val topMargin = (appBar.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.topMargin ?: dp(8)
-                    val islandHeight = if (appBar.height > 0) appBar.height.toFloat() else dp(60).toFloat()
-                    val maxTravel = islandHeight + topMargin.toFloat() + dp(12).toFloat()
-
-                    headerOffset -= dy.toFloat()
-                    headerOffset = headerOffset.coerceIn(-maxTravel, 0f)
-
-                    val progress = (-headerOffset / maxTravel).coerceIn(0f, 1f)
-                    binding.appBarLayout.translationY = headerOffset
-                    binding.appBarLayout.alpha = (1f - progress).coerceIn(0f, 1f)
-                    binding.appBarLayout.scaleX = 1f - 0.03f * progress
-                    binding.appBarLayout.scaleY = 1f - 0.03f * progress
-
-                    Log.d("TopIslandScroll", "height=$islandHeight, topMargin=$topMargin, maxTravel=$maxTravel, headerOffset=$headerOffset, progress=$progress, translationY=${binding.appBarLayout.translationY}")
-                } else {
-                    headerOffset = 0f
-                    binding.appBarLayout.translationY = 0f
-                    binding.appBarLayout.alpha = 1f
-                    binding.appBarLayout.scaleX = 1f
-                    binding.appBarLayout.scaleY = 1f
-                }
+                if (embeddedScreenId == R.id.tab_home) homeTopIslandController?.onScrolled(dy)
 
                 if (dy <= 0 || loading) return
                 val lm = rv.layoutManager as GridLayoutManager
@@ -209,12 +206,8 @@ class MainActivity : AppCompatActivity() {
             }
         })
         binding.appBarLayout.addOnOffsetChangedListener(AppBarLayout.OnOffsetChangedListener { appBar, verticalOffset ->
-            if (!AppSettings.isNewUiBetaEnabled(this)) return@OnOffsetChangedListener
-            lastAppBarVerticalOffset = verticalOffset
-            updateTopIslandTranslation()
-            val progress = (kotlin.math.abs(verticalOffset).toFloat() / appBar.totalScrollRange.coerceAtLeast(1)).coerceIn(0f, 1f)
-            binding.toolbar.alpha = 1f - progress * 0.04f
-            binding.toolbar.elevation = dp((Ui2DesignSystem.Elevation.topIslandDp * (1f - progress * 0.25f)).toInt()).toFloat()
+            // Home scrolling is controlled directly from RecyclerView dy. Avoid a
+            // second AppBarLayout offset source overwriting the finger-following state.
         })
 
         // 密度按钮点击事件：切换列数
@@ -280,56 +273,46 @@ class MainActivity : AppCompatActivity() {
             val navigationInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val navigationBarHeight = navigationInsets.bottom
             navigationBarInsetBottom = navigationBarHeight
-            val betaUi = AppSettings.isNewUiBetaEnabled(this)
-            val landscapeIslandLayout = betaUi && AdaptiveLayoutPolicy.isLandscape(this)
+            val landscape = AdaptiveLayoutPolicy.isLandscape(this)
             val safeHorizontalInsets = navigationInsets.left + navigationInsets.right
             val islandGutter = dp(Ui2DesignSystem.Spacing.islandMargin)
             val rootWidth = binding.root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val availableIslandWidth = (rootWidth - safeHorizontalInsets - islandGutter * 2).coerceAtLeast(1)
-            binding.appBarLayout.translationY = 0f
+            homeTopIslandController?.reset()
             val toolbarParams = binding.toolbar.layoutParams
-            toolbarParams.height = if (betaUi) dp(60) else resources.getDimensionPixelSize(androidx.appcompat.R.dimen.abc_action_bar_default_height_material) + statusBarHeight
+            toolbarParams.height = dp(60)
             binding.toolbar.layoutParams = toolbarParams
-            if (betaUi) {
-                binding.toolbar.minimumHeight = 0
-                binding.appBarLayout.minimumHeight = 0
-            }
+            binding.toolbar.minimumHeight = 0
+            binding.appBarLayout.minimumHeight = 0
             binding.toolbar.setPadding(
                 toolbarBasePaddingLeft,
-                if (betaUi) 0 else statusBarHeight,
+                0,
                 toolbarBasePaddingRight,
                 toolbarBasePaddingBottom
             )
 
             val appBarParams = binding.appBarLayout.layoutParams as android.view.ViewGroup.MarginLayoutParams
-            appBarParams.width = if (betaUi) {
-                if (landscapeIslandLayout) AdaptiveLayoutPolicy.landscapeIslandWidthPx(this, availableIslandWidth)
-                else AdaptiveLayoutPolicy.topIslandWidthPx(this, availableIslandWidth)
-            } else -1
+            appBarParams.width = AdaptiveLayoutPolicy.topIslandWidthPx(this, availableIslandWidth, landscape)
             appBarParams.height = -2
-            appBarParams.topMargin = if (betaUi && !landscapeIslandLayout) statusBarHeight + dp(Ui2DesignSystem.Spacing.sm) else 0
-            appBarParams.bottomMargin = if (landscapeIslandLayout) dp(Ui2DesignSystem.Spacing.islandGap) else 0
-            appBarParams.marginStart = if (betaUi && landscapeIslandLayout) islandGutter + navigationInsets.left else 0
-            appBarParams.marginEnd = if (betaUi && landscapeIslandLayout) islandGutter else 0
+            appBarParams.topMargin = statusBarHeight + dp(Ui2DesignSystem.Spacing.sm)
+            appBarParams.bottomMargin = 0
+            appBarParams.marginStart = 0
+            appBarParams.marginEnd = 0
             if (appBarParams is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
-                appBarParams.gravity = if (landscapeIslandLayout) android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
-                else android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+                appBarParams.gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
             }
             binding.appBarLayout.layoutParams = appBarParams
-            binding.appBarLayout.post { updateTopIslandTranslation() }
+            binding.appBarLayout.post { homeTopIslandController?.onLayoutChanged() }
 
-            val sideParams = binding.sideNavigation.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
-            sideParams.gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
-            sideParams.marginEnd = if (landscapeIslandLayout) navigationInsets.right + islandGutter else 0
-            sideParams.topMargin = 0
-            sideParams.bottomMargin = 0
-            binding.sideNavigation.layoutParams = sideParams
-            binding.sideNavigation.visibility = if (landscapeIslandLayout) View.VISIBLE else View.GONE
-            binding.bottomNavigation.visibility = if (landscapeIslandLayout) View.GONE else View.VISIBLE
-            binding.bottomNavigationIndicator.visibility = if (betaUi && !landscapeIslandLayout) View.VISIBLE else View.GONE
+            // Landscape uses the same bottom island as portrait. The legacy
+            // side rail was a separate layout system and caused the oversized
+            // right-hand navigation surface.
+            binding.sideNavigation.visibility = View.GONE
+            binding.bottomNavigation.visibility = View.VISIBLE
+            binding.bottomNavigationIndicator.visibility = View.VISIBLE
 
             val refreshParams = binding.homeRefresh.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
-            refreshParams.behavior = if (betaUi) null else com.google.android.material.appbar.AppBarLayout.ScrollingViewBehavior()
+            refreshParams.behavior = null
             // Top/bottom/side islands are overlays.  Keep the refresh/grid
             // surface full-screen so artwork can continue behind them.
             refreshParams.leftMargin = 0
@@ -338,28 +321,27 @@ class MainActivity : AppCompatActivity() {
 
             val bottomParams = binding.bottomNavigation.layoutParams as android.view.ViewGroup.MarginLayoutParams
             // 64dp keeps the floating island compact while fitting both icon and label.
-            bottomParams.height = if (betaUi) dp(64) else dp(64) + navigationBarHeight
-            bottomParams.width = if (betaUi) AdaptiveLayoutPolicy.bottomIslandWidthPx(this, availableIslandWidth) else -1
+            bottomParams.height = dp(64)
+            bottomParams.width = AdaptiveLayoutPolicy.bottomIslandWidthPx(this, availableIslandWidth)
             if (bottomParams is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
-                bottomParams.gravity = if (landscapeIslandLayout) android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL else android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                bottomParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
             }
             binding.bottomNavigation.setPadding(
                 binding.bottomNavigation.paddingLeft,
-                if (betaUi) 0 else dp(4),
+                0,
                 binding.bottomNavigation.paddingRight,
-                if (betaUi && !landscapeIslandLayout) 0 else navigationBarHeight + if (betaUi) 0 else dp(4)
+                0
             )
             bottomParams.marginStart = 0
             bottomParams.marginEnd = 0
-            bottomParams.bottomMargin = if (betaUi && !landscapeIslandLayout) navigationBarHeight + dp(Ui2DesignSystem.Spacing.md) else 0
+            bottomParams.bottomMargin = navigationBarHeight + dp(Ui2DesignSystem.Spacing.md)
             binding.bottomNavigation.layoutParams = bottomParams
 
             val indicatorParams = binding.bottomNavigationIndicator.layoutParams as android.view.ViewGroup.MarginLayoutParams
             indicatorParams.width = bottomParams.width
-            indicatorParams.height = if (betaUi) dp(64) else 0
+            indicatorParams.height = dp(64)
             if (indicatorParams is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
-                indicatorParams.gravity = if (landscapeIslandLayout) android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
-                else android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                indicatorParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
             }
             indicatorParams.marginStart = bottomParams.marginStart
             indicatorParams.marginEnd = bottomParams.marginEnd
@@ -368,19 +350,16 @@ class MainActivity : AppCompatActivity() {
 
             val fabParams = binding.fabUpload.layoutParams as? android.view.ViewGroup.MarginLayoutParams
             fabParams?.let {
-                it.bottomMargin = if (landscapeIslandLayout) dp(Ui2DesignSystem.Spacing.lg) else binding.bottomNavigation.height + navigationBarHeight + fabBaseMarginBottom
-                it.marginEnd = if (betaUi) {
-                    if (landscapeIslandLayout) binding.sideNavigation.measuredWidth + sideParams.marginEnd + dp(Ui2DesignSystem.Spacing.lg)
-                    else ((resources.configuration.screenWidthDp - AdaptiveLayoutPolicy.MAX_CONTENT_WIDTH_DP).coerceAtLeast(0) / 2 * resources.displayMetrics.density).toInt() + dp(Ui2DesignSystem.Spacing.xl)
-                } else 0
+                it.bottomMargin = binding.bottomNavigation.height + navigationBarHeight + fabBaseMarginBottom
+                it.marginEnd = navigationInsets.right + dp(Ui2DesignSystem.Spacing.xl)
                 if (it is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
-                    it.gravity = if (betaUi) android.view.Gravity.BOTTOM or android.view.Gravity.END else android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                    it.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
                 }
                 binding.fabUpload.layoutParams = it
             }
 
-            binding.sideNavigation.post {
-                if (!isFinishing) updateMainContentInsets(betaUi, landscapeIslandLayout, refreshParams)
+            binding.bottomNavigation.post {
+                if (!isFinishing) updateMainContentInsets(refreshParams)
             }
             insets
         }
@@ -388,67 +367,65 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateMainContentInsets(
-        betaUi: Boolean,
-        landscapeIslandLayout: Boolean,
         refreshParams: androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
     ) {
-        val sideParams = binding.sideNavigation.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
-        // Navigation islands remain visually above the content in landscape;
-        // they must not shrink the grid's measured width.
+        // Navigation islands remain visual overlays and never constrain the
+        // full-screen grid's measured width or height.
         refreshParams.leftMargin = 0
         refreshParams.rightMargin = 0
         binding.homeRefresh.layoutParams = refreshParams
 
-        val navHeight = if (landscapeIslandLayout) 0 else binding.bottomNavigation.measuredHeight
+        val navHeight = binding.bottomNavigation.measuredHeight
         val leftInset = artworkBasePaddingLeft
         val rightInset = artworkBasePaddingRight
-        val topPadding = if (betaUi) artworkBasePaddingTop else 0
-        val bottomInset = if (betaUi) artworkBasePaddingBottom else if (landscapeIslandLayout) {
-            navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.md)
-        } else {
-            navHeight + navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.xs)
-        }
+        val topPadding = topIslandContentPadding()
+        val bottomInset = artworkBasePaddingBottom
         binding.recyclerView.setPadding(leftInset, topPadding, rightInset, bottomInset)
         binding.recyclerView.clipToPadding = false
+        binding.appBarLayout.post {
+            if (!isFinishing) updateArtworkTopPadding()
+        }
         binding.homeRefresh.post {
-            if (!landscapeIslandLayout || binding.homeRefresh.width <= 0) return@post
+            if (binding.homeRefresh.width <= 0) return@post
             val availableWidthDp = (binding.homeRefresh.width / resources.displayMetrics.density).toInt()
             columnCount = AdaptiveLayoutPolicy.artworkColumnCountForWidth(availableWidthDp)
             (binding.recyclerView.layoutManager as? GridLayoutManager)?.spanCount = columnCount
         }
 
-        if (!landscapeIslandLayout) {
-            (binding.fabUpload.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-                params.bottomMargin = navHeight + navigationBarInsetBottom + if (betaUi) {
-                    dp(Ui2DesignSystem.Spacing.md + Ui2DesignSystem.Spacing.islandGap)
-                } else fabBaseMarginBottom
-                binding.fabUpload.layoutParams = params
-            }
-        } else {
-            (binding.fabUpload.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-                params.marginEnd = binding.sideNavigation.measuredWidth + sideParams.marginEnd + dp(Ui2DesignSystem.Spacing.lg)
-                binding.fabUpload.layoutParams = params
-            }
+        (binding.fabUpload.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
+            params.bottomMargin = navHeight + navigationBarInsetBottom +
+                dp(Ui2DesignSystem.Spacing.md + Ui2DesignSystem.Spacing.islandGap)
+            binding.fabUpload.layoutParams = params
         }
         // Video controls have their own relationship to the Bottom Island;
         // keep that safe-area calculation independent from the artwork grid.
-        val videoBottomInset = if (landscapeIslandLayout) 0 else {
-            navHeight + navigationBarInsetBottom + dp(if (betaUi) Ui2DesignSystem.Spacing.xl else Ui2DesignSystem.Spacing.xs)
-        }
-        embeddedVideo?.setBottomInset(videoBottomInset)
+        val videoBottomInset = navHeight + navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.xl)
+        embeddedVideo?.setNavigationInsets(videoBottomInset, 0, false)
+        embeddedProfile?.setBottomInset(videoBottomInset)
     }
 
-    private fun updateTopIslandTranslation() {
-        if (!::binding.isInitialized || !AppSettings.isNewUiBetaEnabled(this)) return
+    /** Keeps the grid full-screen while offsetting only its initial content position. */
+    private fun updateArtworkTopPadding() {
+        if (!::binding.isInitialized) return
+        val topPadding = topIslandContentPadding()
+        if (binding.recyclerView.paddingTop == topPadding) return
+        binding.recyclerView.setPadding(
+            binding.recyclerView.paddingLeft,
+            topPadding,
+            binding.recyclerView.paddingRight,
+            binding.recyclerView.paddingBottom
+        )
+        binding.recyclerView.clipToPadding = false
+    }
+
+    private fun topIslandContentPadding(): Int {
         val appBar = binding.appBarLayout
-        val progress = (kotlin.math.abs(lastAppBarVerticalOffset).toFloat() / appBar.totalScrollRange.coerceAtLeast(1)).coerceIn(0f, 1f)
-        val extraTravel = if (AdaptiveLayoutPolicy.isLandscape(this)) {
-            ((appBar.rootView.height - appBar.height) / 2f).coerceAtLeast(0f)
-        } else {
-            val topMargin = (appBar.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.topMargin ?: 0
-            (topMargin + dp(Ui2DesignSystem.Spacing.islandGap)).toFloat()
+        if (appBar.visibility != View.VISIBLE || appBar.height <= 0) {
+            return artworkBasePaddingTop
         }
-        appBar.translationY = -extraTravel * progress
+        val topMargin = (appBar.layoutParams as? android.view.ViewGroup.MarginLayoutParams)
+            ?.topMargin?.coerceAtLeast(0) ?: 0
+        return topMargin + appBar.height + dp(Ui2DesignSystem.Spacing.sm)
     }
 
     private fun cycleDensity() {
@@ -557,6 +534,11 @@ class MainActivity : AppCompatActivity() {
             binding.appBarLayout.visibility = View.VISIBLE
             binding.homeRefresh.visibility = View.VISIBLE
             binding.recyclerView.visibility = View.VISIBLE
+            binding.appBarLayout.post {
+                updateArtworkTopPadding()
+                homeTopIslandController?.onLayoutChanged()
+                homeTopIslandController?.restoreForHome()
+            }
             embeddedVideo?.setActive(false)
             // Returning to Home restores the existing adapter and scroll position.
             // A refresh is reserved for an explicit reselection of the Home tab.
@@ -658,7 +640,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.toolbar.title = "DerpiViewer"
             // Restore the drawer toggle after the temporary selection close action.
-            binding.toolbar.setNavigationOnClickListener { showGlassMenu() }
+            updateNavigationMenuMode()
             binding.btnDensity.visibility = View.VISIBLE
             binding.btnSearch.visibility = View.VISIBLE
             configureUploadFab()
@@ -700,6 +682,7 @@ class MainActivity : AppCompatActivity() {
         PaletteManager.apply(this)
         applyStartupPalette()
         applyUi2Shell()
+        embeddedVideo?.refreshPalette()
         ViewCompat.requestApplyInsets(binding.root)
         val paletteChanged = paletteSignature() != lastPaletteSignature
         if (paletteChanged) lastPaletteSignature = paletteSignature()
@@ -720,97 +703,47 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyUi2Shell() {
         if (!::binding.isInitialized) return
-        val enabled = AppSettings.isNewUiBetaEnabled(this)
-        val modeChanged = lastUi2Enabled != null && lastUi2Enabled != enabled
-        lastUi2Enabled = enabled
         val colors = PaletteManager.colors(this)
-        if (enabled) {
-            window.statusBarColor = colors.surface
-            window.navigationBarColor = colors.surface
-        }
-        val appBarParams = binding.appBarLayout.layoutParams as? android.view.ViewGroup.MarginLayoutParams
-        val bottomParams = binding.bottomNavigation.layoutParams as? android.view.ViewGroup.MarginLayoutParams
-        if (enabled) {
-            // The AppBar itself is the bounded island. Styling the full-width
-            // Toolbar leaves its parent looking like a rectangular backdrop.
-            Ui2DesignSystem.styleIsland(binding.appBarLayout, colors, Ui2DesignSystem.Shape.topIsland)
-            binding.toolbar.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
-            binding.toolbar.elevation = 0f
-            Ui2DesignSystem.styleIsland(binding.sideNavigation, colors, Ui2DesignSystem.Shape.navigationIsland)
-            Ui2DesignSystem.styleIsland(binding.fabUpload, colors, Ui2DesignSystem.Shape.fabIsland)
-            binding.bottomNavigation.labelVisibilityMode = com.google.android.material.bottomnavigation.LabelVisibilityMode.LABEL_VISIBILITY_LABELED
-            // Keep the icon and its label centered inside the compact island.
-            binding.bottomNavigation.itemPaddingTop = 0
-            binding.bottomNavigation.itemPaddingBottom = 0
-            binding.bottomNavigation.post { centerBetaNavigationItems() }
-            val navigationTint = android.content.res.ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(colors.primary, colors.onSurface)
-            )
-            binding.bottomNavigation.itemIconTintList = navigationTint
-            binding.bottomNavigation.itemTextColor = navigationTint
-            binding.bottomNavigation.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
-            binding.bottomNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
-            binding.bottomNavigationIndicator.setColors(
-                Ui2DesignSystem.colors(this).glassTint,
-                Ui2DesignSystem.colors(this).glassBorder,
-                Ui2DesignSystem.colors(this).surfaceVariant,
-                Ui2DesignSystem.colors(this).glassHighlight
-            )
-            binding.sideNavigation.itemIconTintList = android.content.res.ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(colors.primary, colors.onSurface)
-            )
-            binding.sideNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(colors.surfaceVariant)
-            binding.sideNavigation.itemActiveIndicatorShapeAppearance = com.google.android.material.shape.ShapeAppearanceModel.builder()
-                .setAllCornerSizes(dp(Ui2DesignSystem.Shape.pill.toInt()).toFloat()).build()
-            binding.toolbar.setTitleTextColor(colors.onSurface)
-            tintToolbarNavigationIcon(colors.onSurface)
-            binding.toolbar.overflowIcon?.setTint(colors.onSurface)
-            binding.btnDensity.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-            binding.btnSearch.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-            binding.fabUpload.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-            binding.fabUpload.backgroundTintList = android.content.res.ColorStateList.valueOf(Ui2DesignSystem.colors(this).glassTint)
-            binding.toolbar.alpha = 1f
-        } else {
-            binding.appBarLayout.setBackgroundColor(colors.primary)
-            binding.appBarLayout.elevation = dp(4).toFloat()
-            binding.appBarLayout.translationY = 0f
-            binding.toolbar.background = android.graphics.drawable.ColorDrawable(colors.primary)
-            binding.toolbar.alpha = 1f
-            binding.toolbar.elevation = 0f
-            binding.bottomNavigation.background = android.graphics.drawable.ColorDrawable(colors.surface)
-            binding.bottomNavigation.elevation = dp(8).toFloat()
-            binding.fabUpload.backgroundTintList = android.content.res.ColorStateList.valueOf(colors.primary)
-            binding.toolbar.setTitleTextColor(colors.onPrimary)
-            tintToolbarNavigationIcon(colors.onPrimary)
-            binding.toolbar.overflowIcon?.setTint(colors.onPrimary)
-            binding.btnDensity.imageTintList = android.content.res.ColorStateList.valueOf(colors.onPrimary)
-            binding.btnSearch.imageTintList = android.content.res.ColorStateList.valueOf(colors.onPrimary)
-            binding.fabUpload.imageTintList = android.content.res.ColorStateList.valueOf(colors.onPrimary)
-            binding.bottomNavigation.labelVisibilityMode = com.google.android.material.bottomnavigation.LabelVisibilityMode.LABEL_VISIBILITY_LABELED
-            binding.bottomNavigation.itemPaddingTop = dp(4)
-            binding.bottomNavigation.itemPaddingBottom = dp(4)
-            binding.bottomNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(colors.surfaceVariant)
-            binding.appBarLayout.layoutParams?.let { it.width = -1; (it as? android.view.ViewGroup.MarginLayoutParams)?.let { lp -> lp.marginStart = 0; lp.marginEnd = 0 }; binding.appBarLayout.layoutParams = it }
-            binding.bottomNavigation.layoutParams?.let { it.width = -1; (it as? android.view.ViewGroup.MarginLayoutParams)?.let { lp -> lp.marginStart = 0; lp.marginEnd = 0 }; binding.bottomNavigation.layoutParams = it }
-        }
-        appBarParams?.let {
-            if (!enabled) {
-                it.topMargin = 0
-                it.marginStart = 0
-                it.marginEnd = 0
-            }
-            binding.appBarLayout.layoutParams = it
-        }
-        bottomParams?.let {
-            if (!enabled) {
-                it.marginStart = 0
-                it.marginEnd = 0
-                it.bottomMargin = 0
-            }
-            binding.bottomNavigation.layoutParams = it
-        }
+        window.statusBarColor = colors.surface
+        window.navigationBarColor = colors.surface
+        Ui2DesignSystem.styleIsland(binding.appBarLayout, colors, Ui2DesignSystem.Shape.topIsland)
+        binding.toolbar.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        binding.toolbar.elevation = 0f
+        Ui2DesignSystem.styleIsland(binding.sideNavigation, colors, Ui2DesignSystem.Shape.navigationIsland)
+        Ui2DesignSystem.styleIsland(binding.fabUpload, colors, Ui2DesignSystem.Shape.fabIsland)
+        binding.bottomNavigation.labelVisibilityMode = com.google.android.material.bottomnavigation.LabelVisibilityMode.LABEL_VISIBILITY_LABELED
+        binding.bottomNavigation.itemPaddingTop = 0
+        binding.bottomNavigation.itemPaddingBottom = 0
+        binding.bottomNavigation.post { centerNavigationItems() }
+        val navigationTint = android.content.res.ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(colors.primary, colors.onSurface)
+        )
+        binding.bottomNavigation.itemIconTintList = navigationTint
+        binding.bottomNavigation.itemTextColor = navigationTint
+        binding.bottomNavigation.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        binding.bottomNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+        binding.bottomNavigationIndicator.setColors(
+            Ui2DesignSystem.colors(this).glassTint,
+            Ui2DesignSystem.colors(this).glassBorder,
+            Ui2DesignSystem.colors(this).surfaceVariant,
+            Ui2DesignSystem.colors(this).glassHighlight
+        )
+        binding.sideNavigation.itemIconTintList = navigationTint
+        binding.sideNavigation.itemActiveIndicatorColor = android.content.res.ColorStateList.valueOf(colors.surfaceVariant)
+        binding.sideNavigation.itemActiveIndicatorShapeAppearance = com.google.android.material.shape.ShapeAppearanceModel.builder()
+            .setAllCornerSizes(dp(Ui2DesignSystem.Shape.pill.toInt()).toFloat()).build()
+        binding.toolbar.setTitleTextColor(colors.onSurface)
+        tintToolbarNavigationIcon(colors.onSurface)
+        binding.toolbar.overflowIcon?.setTint(colors.onSurface)
+        // TopIsland tools are transparent icon controls, not global action buttons.
+        binding.btnDensity.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        binding.btnSearch.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+        binding.btnDensity.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.btnSearch.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.fabUpload.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.fabUpload.backgroundTintList = android.content.res.ColorStateList.valueOf(Ui2DesignSystem.colors(this).glassTint)
+        binding.toolbar.alpha = 1f
         val selectedId = when {
             binding.bottomNavigation.menu.findItem(R.id.tab_video_feed)?.isChecked == true -> R.id.tab_video_feed
             binding.bottomNavigation.menu.findItem(R.id.tab_featured)?.isChecked == true -> R.id.tab_featured
@@ -819,12 +752,17 @@ class MainActivity : AppCompatActivity() {
             else -> R.id.tab_home
         }
         syncNavigationIndicator(selectedId, animate = false)
-        if (modeChanged) {
-            listOf(binding.toolbar, binding.bottomNavigation, binding.fabUpload).forEach { island ->
-                island.animate().cancel()
-                island.alpha = 0.88f
-                island.animate().alpha(1f).setDuration(Ui2DesignSystem.Motion.stateChangeMs).start()
-            }
+    }
+
+    /** Keep the legacy drawer available during startup, then switch the same
+     * toolbar affordance to the shared GlassMenu once the home content exists. */
+    private fun updateNavigationMenuMode() {
+        if (!::binding.isInitialized || !::drawerLayout.isInitialized) return
+        val shouldUseGlassMenu = homeHasLoaded
+        glassMenuEnabled = shouldUseGlassMenu
+        binding.toolbar.setNavigationOnClickListener {
+            if (glassMenuEnabled) showGlassMenu()
+            else drawerLayout.openDrawer(GravityCompat.START)
         }
     }
 
@@ -843,8 +781,8 @@ class MainActivity : AppCompatActivity() {
      * library versions. Normalize the actual child containers after measurement
      * so the icon occupies the center of the island's full touch target.
      */
-    private fun centerBetaNavigationItems() {
-        if (!::binding.isInitialized || !AppSettings.isNewUiBetaEnabled(this)) return
+    private fun centerNavigationItems() {
+        if (!::binding.isInitialized) return
         val menuView = binding.bottomNavigation.getChildAt(0) as? android.view.ViewGroup ?: return
         for (index in 0 until menuView.childCount) {
             val item = menuView.getChildAt(index) as? com.google.android.material.navigation.NavigationBarItemView
@@ -870,8 +808,8 @@ class MainActivity : AppCompatActivity() {
             val labelsGroup = item.findViewById<android.view.View>(
                 com.google.android.material.R.id.navigation_bar_item_labels_group
             )
-            compactBetaNavigationChild(iconContainer)
-            compactBetaNavigationChild(labelsGroup)
+            compactNavigationChild(iconContainer)
+            compactNavigationChild(labelsGroup)
             // Material keeps a small label gap even after its padding is reset.
             // Lift only the label group so the icon/label pair is tighter while
             // retaining the same overall content position and touch bounds.
@@ -880,7 +818,7 @@ class MainActivity : AppCompatActivity() {
         menuView.requestLayout()
     }
 
-    private fun compactBetaNavigationChild(child: android.view.View?) {
+    private fun compactNavigationChild(child: android.view.View?) {
         child ?: return
         child.setPadding(child.paddingLeft, 0, child.paddingRight, 0)
         (child.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { lp ->
@@ -937,6 +875,7 @@ class MainActivity : AppCompatActivity() {
                 currentImages = images
                 adapter.updateData(images)
                 homeHasLoaded = true
+                updateNavigationMenuMode()
                 Toast.makeText(this, "加载成功：${images.size} 张图片", Toast.LENGTH_SHORT).show()
             } else {
                 Log.w("MainActivity", "解析成功但图片列表为空")
@@ -978,12 +917,14 @@ class MainActivity : AppCompatActivity() {
                 page = 1; currentQuery = query; allImages = images; currentImages = images
                 adapter.updateData(images)
                 homeHasLoaded = true
+                updateNavigationMenuMode()
                 lastPrefetchedFrom = -1
                 CdnImageGate.prefetch(this@MainActivity, images.map { it.thumbnailUrl }, limit = columnCount * ResourceCoordinator.imagePreloadDistance(this@MainActivity))
                 appliedFilterId = AppSettings.getCurrentFilterId(this@MainActivity)
             } else if (images.isNotEmpty()) {
                 page = targetPage; allImages = allImages + images; currentImages = allImages; adapter.updateData(allImages)
                 homeHasLoaded = true
+                updateNavigationMenuMode()
             }
             if (images.isEmpty() && !append) Toast.makeText(this, "没有找到匹配图片", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
@@ -1124,6 +1065,7 @@ class MainActivity : AppCompatActivity() {
         currentImages = mock
         adapter.updateData(mock)
         homeHasLoaded = true
+        updateNavigationMenuMode()
     }
 
     private fun updateStartup(status: String, detail: String) {
@@ -1137,6 +1079,9 @@ class MainActivity : AppCompatActivity() {
         }
         if (!json.isNullOrBlank()) FilterCache.saveSystemFilters(this, json)
     }
+
+    /** Shared 2.0 glass menu entry point for every primary destination. */
+    fun showUnifiedGlassMenu() = showGlassMenu()
 
     private fun showGlassMenu() {
         val items = listOf(

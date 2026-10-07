@@ -9,6 +9,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.CookieManager
 import android.widget.ProgressBar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -26,6 +27,15 @@ abstract class ChallengeWebViewActivity : AppCompatActivity() {
     protected fun createChallengeWebView(backgroundColor: Int): WebView = WebView(this).apply {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
+        // Use the same UA as API requests. Cloudflare's clearance cookie may be
+        // rejected when it is minted by WebView's Android UA and replayed by
+        // OkHttp's desktop UA.
+        // NetworkManager initializes this from the same WebView provider when the
+        // client is created. Keeping the value identical avoids UA-bound clearance
+        // cookies being rejected on the OkHttp retry.
+        settings.userAgentString = NetworkManager.userAgent()
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(backgroundColor)
         alpha = 0f
     }
@@ -97,6 +107,10 @@ abstract class ChallengeWebViewActivity : AppCompatActivity() {
     protected fun finishChallenge(success: Boolean) {
         if (resolved) return
         resolved = true
+        // Flush before notifying the blocked OkHttp call. Otherwise the retry
+        // can race CookieManager's asynchronous persistence and immediately
+        // receive the same challenge again.
+        CookieManager.getInstance().flush()
         ChallengeCoordinator.notifyResolved(success)
         finish()
     }

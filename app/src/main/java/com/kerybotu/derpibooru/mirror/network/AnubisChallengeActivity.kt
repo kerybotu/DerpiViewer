@@ -13,22 +13,20 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.kerybotu.derpibooru.mirror.PaletteManager
 
-/** A separate Cloudflare/Turnstile verification screen and state machine. */
-class CloudflareChallengeActivity : ChallengeWebViewActivity() {
+/** Runs Anubis's browser-side proof of work in its own verification screen. */
+class AnubisChallengeActivity : ChallengeWebViewActivity() {
     private companion object {
-        const val STATE_POLL_INTERVAL_MS = 350L
-        const val COOKIE_WAIT_TIMEOUT_MS = 5_000L
-        const val TAG = "CloudflareChallenge"
+        const val STATE_POLL_INTERVAL_MS = 400L
+        const val TAG = "AnubisChallenge"
     }
 
     private val stateHandler = Handler(Looper.getMainLooper())
     private var targetUrl: String? = null
-    private var jsonObservedAt = 0L
+    private var challengeObserved = false
+    private var redirectedAfterChallenge = false
     private val statePoll = object : Runnable {
         override fun run() {
-            if (!isFinishing && !isDestroyed) {
-                checkCloudflareChallengeState(webView)
-            }
+            if (!isFinishing && !isDestroyed) checkAnubisState(webView)
         }
     }
 
@@ -42,9 +40,9 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
             setBackgroundColor(palette.primary)
         }
         val badge = TextView(this).apply {
-            text = "CF"
+            text = "A"
             gravity = Gravity.CENTER
-            textSize = 16f
+            textSize = 18f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(palette.onPrimary)
             setBackgroundColor(palette.surfaceVariant)
@@ -54,13 +52,13 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
             setPadding(16, 0, 0, 0)
         }
         val title = TextView(this).apply {
-            text = "Cloudflare 人机验证"
+            text = "Anubis 人机验证"
             textSize = 18f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(palette.onPrimary)
         }
         val hint = TextView(this).apply {
-            text = "请在下方完成 Turnstile 检查，验证通过后将自动返回"
+            text = "正在由浏览器完成验证，通过后将自动返回"
             textSize = 13f
             setTextColor(palette.onPrimary)
             alpha = 0.86f
@@ -87,14 +85,7 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
         ViewCompat.requestApplyInsets(root)
 
         bindWebViewClient(loading = loading, onPageFinished = { view, _ ->
-            // Cloudflare often serves its interactive challenge with an HTTP error
-            // status (for example 403) while still returning a usable HTML document.
-            // onPageFinished confirms that WebView rendered that document, so an HTTP
-            // status alone must not permanently disable verification-state polling.
             mainFrameHttpError = false
-            // Cloudflare/Turnstile can replace the document body through AJAX without
-            // causing another onPageFinished callback. Start (or restart) a small,
-            // cancellable poll so the JSON response is detected in that case too.
             stateHandler.removeCallbacks(statePoll)
             statePoll.run()
         })
@@ -104,48 +95,40 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
         loadThroughOptimizedProxy(target) { webView.loadUrl(target) }
     }
 
-    private fun checkCloudflareChallengeState(view: android.webkit.WebView) {
+    private fun checkAnubisState(view: android.webkit.WebView) {
         if (isFinishing || isDestroyed) return
         view.evaluateJavascript(
             """
             (function(){
+                var html=(document.documentElement&&document.documentElement.innerHTML||'').toLowerCase();
+                var body=((document.body&&document.body.innerText)||(document.body&&document.body.textContent)||'').trim();
+                var challenge=html.indexOf('anubis_challenge')>=0 || html.indexOf('/x/cmd/anubis/')>=0 ||
+                    location.pathname.indexOf('/.within.website/')>=0;
                 var json=false;
-                try {
-                    var body=document.body;
-                    var t=((body&&body.innerText)||(body&&body.textContent)||'').trim();
-                    var v=JSON.parse(t);
-                    json=v !== null;
-                } catch(e) {}
-                return json?'1':'0';
+                try { var value=JSON.parse(body); json=value!==null && typeof value==='object'; } catch(e) {}
+                return (challenge?'1':'0')+','+(json?'1':'0');
             })()
             """.trimIndent()
         ) { result ->
-            val state = result.trim().trim('"')
-            val jsonVisible = state == "1"
-            if (jsonVisible) {
-                // The API response is rendered before CookieManager has necessarily
-                // published cf_clearance to OkHttp. Wait briefly for the token instead
-                // of reporting success immediately and reopening the challenge loop.
-                if (jsonObservedAt == 0L) jsonObservedAt = System.currentTimeMillis()
-                val url = targetUrl
-                val hasCookie = !url.isNullOrBlank() && SharedCookieJar.hasClearanceCookie(url)
-                if (hasCookie) {
-                    Log.d(TAG, "Cloudflare JSON 已出现且 clearance Cookie 可见: ${SharedCookieJar.cookieNames(url!!)}")
-                    android.webkit.CookieManager.getInstance().flush()
-                    finishChallenge(true)
-                    return@evaluateJavascript
-                }
-                if (System.currentTimeMillis() - jsonObservedAt >= COOKIE_WAIT_TIMEOUT_MS) {
-                    // Keep the original user-visible contract: a stable API JSON
-                    // document is still a successful completion signal. Some WebView
-                    // providers expose the cookie only after the activity is closed;
-                    // the coordinator's grace window prevents that propagation race
-                    // from reopening the challenge in a loop.
-                    Log.w(TAG, "Cloudflare JSON 已出现但 ${COOKIE_WAIT_TIMEOUT_MS}ms 内未发现 clearance Cookie，按 JSON 完成验证")
-                    android.webkit.CookieManager.getInstance().flush()
-                    finishChallenge(true)
-                    return@evaluateJavascript
-                }
+            val state = result.trim().trim('"').split(',')
+            val challengePresent = state.getOrNull(0) == "1"
+            val jsonVisible = state.getOrNull(1) == "1"
+            if (challengePresent) {
+                challengeObserved = true
+                redirectedAfterChallenge = false
+            } else if (challengeObserved) {
+                redirectedAfterChallenge = true
+            }
+
+            val url = targetUrl
+            val hasAuthCookie = !url.isNullOrBlank() && SharedCookieJar.hasAnubisCookie(url)
+            if (challengeObserved && redirectedAfterChallenge && !challengePresent &&
+                (jsonVisible || hasAuthCookie)
+            ) {
+                Log.d(TAG, "Anubis challenge completed; json=$jsonVisible authCookie=$hasAuthCookie")
+                android.webkit.CookieManager.getInstance().flush()
+                finishChallenge(true)
+                return@evaluateJavascript
             }
             if (!isFinishing && !isDestroyed) {
                 stateHandler.removeCallbacks(statePoll)
@@ -158,5 +141,4 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
         stateHandler.removeCallbacks(statePoll)
         super.onDestroy()
     }
-
 }
