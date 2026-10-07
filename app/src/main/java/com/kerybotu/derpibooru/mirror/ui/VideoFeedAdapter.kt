@@ -106,8 +106,10 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 videoAmbientBackground.setRenderEffect(RenderEffect.createBlurEffect(24f, 24f, Shader.TileMode.CLAMP))
             }
-            Ui2DesignSystem.styleIsland(videoActionRail, colors, Ui2DesignSystem.Shape.island)
-            Ui2DesignSystem.styleIsland(videoInfoOverlay, colors, Ui2DesignSystem.Shape.large)
+            videoActionRail.setPalette(colors)
+            videoActionRail.setRenderingActive(true, videoPlayer)
+            videoInfoOverlay.setPalette(colors)
+            videoInfoOverlay.setRenderingActive(true, videoPlayer)
             Ui2DesignSystem.styleIsland(videoBufferLabel, colors, Ui2DesignSystem.Shape.pill)
             Ui2DesignSystem.styleIsland(videoSpeed, colors, Ui2DesignSystem.Shape.pill)
             videoAmbientScrim.setBackgroundColor(withAlpha(colors.scrim, 0.58f))

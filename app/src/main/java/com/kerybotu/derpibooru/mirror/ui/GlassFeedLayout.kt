@@ -146,7 +146,8 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
 
     private fun updateContentInsets() {
         val right = maxOf(systemRight, navigationRight)
-        val safeWidth = ((width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) - systemLeft - right).coerceAtLeast(1)
+        val windowWidthPx = (resources.configuration.screenWidthDp * resources.displayMetrics.density).toInt()
+        val safeWidth = ((width.takeIf { it > 0 } ?: windowWidthPx) - systemLeft - right).coerceAtLeast(1)
         val available = (safeWidth - dp(32)).coerceAtLeast(1)
         val top = systemTop + dp(Ui2DesignSystem.Spacing.sm)
         val headerHeight = header.measuredHeight.takeIf { it > 0 } ?: dp(60)

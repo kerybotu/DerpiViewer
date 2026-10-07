@@ -138,11 +138,12 @@
             android:id="@+id/fab_upload_container"
             android:layout_width="56dp"
             android:layout_height="56dp"
-            android:layout_gravity="bottom|center_horizontal"
-            android:layout_marginBottom="8dp"
+            android:layout_gravity="top|end"
             android:clipChildren="false"
             android:clipToPadding="false"
-            android:elevation="10dp">
+            android:elevation="10dp"
+            app:layout_anchor="@id/glass_bottom_navigation"
+            app:layout_anchorGravity="top|end">
 
             <com.example.liquidglass.LiquidGlassFab
                 android:id="@+id/fab_upload_glass"

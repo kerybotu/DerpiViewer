@@ -122,7 +122,8 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
 
     private fun applyVideoPalette() {
         val colors = PaletteManager.colors(this)
-        Ui2DesignSystem.styleIsland(binding.videoTopIsland, colors, Ui2DesignSystem.Shape.topIsland)
+        binding.videoTopIsland.setPalette(colors)
+        binding.videoTopIsland.setRenderingActive(true, binding.videoPager)
         binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
         binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
         binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)

@@ -32,7 +32,8 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
         setCardBackgroundColor(PaletteManager.colors(context).surface)
         radius = 0f; preventCornerOverlap = false
         val colors = PaletteManager.colors(context)
-        Ui2DesignSystem.styleIsland(binding.videoTopIsland, colors, Ui2DesignSystem.Shape.topIsland)
+        binding.videoTopIsland.setPalette(colors)
+        binding.videoTopIsland.setRenderingActive(false, null)
         binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
         binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
         binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
@@ -111,7 +112,7 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     /** Rebinds persistent pager items after a global palette or accent change. */
     fun refreshPalette() {
         val colors = PaletteManager.colors(context)
-        Ui2DesignSystem.styleIsland(binding.videoTopIsland, colors, Ui2DesignSystem.Shape.topIsland)
+        binding.videoTopIsland.setPalette(colors)
         binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
         binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
         binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
@@ -126,6 +127,7 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
         updateTopIslandPosition()
     }
     fun setActive(active: Boolean) {
+        binding.videoTopIsland.setRenderingActive(active, if (active) binding.videoPager else null)
         if (active) {
             if (!loaded && !controller.loading) { controller.loadNextPage(); loaded = true }
             progressHandler.post(progressTick)

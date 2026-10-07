@@ -17,6 +17,7 @@ import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.ui.IslandGlassView
 import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
+import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
 
 class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(context) {
     private val density = context.resources.displayMetrics.density
@@ -105,11 +106,12 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
             addView(container)
         }
 
-        val metrics = context.resources.displayMetrics
-        val screenWidth = metrics.widthPixels
+        val windowWidthDp = AdaptiveLayoutPolicy.availableContentWidthDp(context)
+        val windowHeightDp = AdaptiveLayoutPolicy.availableContentHeightDp(context)
+        val responsiveGutterDp = AdaptiveLayoutPolicy.tokensForWidth(windowWidthDp).screenGutterDp
         val maxW = (GlassMenuTokens.maxMenuWidthDp * density).toInt()
-        panelWidth = (screenWidth - (32 * density).toInt()).coerceAtMost(maxW)
-        val availableHeight = (metrics.heightPixels - (64 * density).toInt()).coerceAtLeast(1)
+        panelWidth = ((windowWidthDp - responsiveGutterDp * 2) * density).toInt().coerceAtMost(maxW)
+        val availableHeight = ((windowHeightDp - 64).coerceAtLeast(1) * density).toInt()
         val desiredHeight = (items.size * GlassMenuTokens.itemHeightDp * density + padding * 2).toInt()
         panelHeight = desiredHeight.coerceAtMost(availableHeight)
 

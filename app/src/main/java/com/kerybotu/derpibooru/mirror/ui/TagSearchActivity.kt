@@ -193,7 +193,8 @@ class TagSearchActivity : AppCompatActivity() {
 
     private fun updateContentInsets() {
         if (!::results.isInitialized) return
-        val width = (results.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) - leftInset - rightInset
+        val windowWidthPx = (resources.configuration.screenWidthDp * resources.displayMetrics.density).toInt()
+        val width = (results.width.takeIf { it > 0 } ?: windowWidthPx) - leftInset - rightInset
         val available = (width - dp(32)).coerceAtLeast(1)
         val headerWidth = AdaptiveLayoutPolicy.topIslandWidthPx(this, available)
         val contentWidth = AdaptiveLayoutPolicy.contentIslandWidthPx(this, available)
