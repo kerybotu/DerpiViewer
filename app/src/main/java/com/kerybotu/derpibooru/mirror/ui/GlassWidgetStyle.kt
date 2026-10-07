@@ -1,10 +1,8 @@
 package com.kerybotu.derpibooru.mirror.ui
 
-import android.graphics.Color
 import android.graphics.Outline
 import android.view.View
 import android.view.ViewOutlineProvider
-import androidx.core.graphics.ColorUtils
 import com.example.liquidglass.GlassMaterial
 import com.example.liquidglass.LiquidGlassButton
 import com.example.liquidglass.LiquidGlassChip
@@ -16,9 +14,9 @@ import com.kerybotu.derpibooru.mirror.PaletteManager
 
 /** App theme and bounded rendering shared by the library's ready-made widgets. */
 object GlassWidgetStyle {
-    const val TEXT_COLOR = Color.WHITE
-    // Foreground icons stay white across themes and backdrop brightness changes.
-    const val ICON_COLOR = Color.WHITE
+    fun textColor(context: android.content.Context) = PaletteManager.colors(context).glassText
+    fun secondaryTextColor(context: android.content.Context) = PaletteManager.colors(context).glassSecondaryText
+    fun iconColor(context: android.content.Context) = PaletteManager.colors(context).glassText
 
     /** The home header is the reference material for every glass surface. */
     fun applyMaterial(
@@ -27,9 +25,9 @@ object GlassWidgetStyle {
     ) {
         val density = view.resources.displayMetrics.density
         view.material = GlassMaterial.REGULAR
-        view.enableAdaptiveTint = false
-        view.overLight = Color.luminance(colors.surface) > 0.5f
-        view.glassTint = ColorUtils.setAlphaComponent(colors.surface, if (view.overLight) 56 else 88)
+        view.enableAdaptiveTint = true
+        view.overLight = !colors.isDark
+        view.glassTint = colors.glassTint
         view.enableBackdropBlur = true
         view.blurAmount = 0.045f
         view.saturation = 125f
@@ -48,8 +46,12 @@ object GlassWidgetStyle {
         view.invalidate()
     }
 
-    fun apply(view: LiquidGlassView, radiusDp: Float = 24f) {
-        applyMaterial(view)
+    fun apply(
+        view: LiquidGlassView,
+        radiusDp: Float = 24f,
+        colors: PaletteDefinitions.Scheme = PaletteManager.colors(view.context)
+    ) {
+        applyMaterial(view, colors)
         view.cornerRadius = radiusDp * view.resources.displayMetrics.density
         view.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(v: View, outline: Outline) {
@@ -59,16 +61,16 @@ object GlassWidgetStyle {
         }
         view.clipToOutline = true
         when (view) {
-            is LiquidGlassButton -> view.setTextColor(TEXT_COLOR)
-            is LiquidGlassChip -> view.setTextColor(TEXT_COLOR)
-            is LiquidGlassFab -> view.setIconTint(ICON_COLOR)
+            is LiquidGlassButton -> view.setTextColor(colors.glassText)
+            is LiquidGlassChip -> view.setTextColor(colors.glassText)
+            is LiquidGlassFab -> view.setIconTint(colors.glassText)
             is LiquidGlassListItem -> {
-                view.setTextColor(TEXT_COLOR)
-                view.supportingTextView.setTextColor(TEXT_COLOR)
-                view.trailingTextView.setTextColor(TEXT_COLOR)
+                view.setTextColor(colors.glassText)
+                view.supportingTextView.setTextColor(colors.glassSecondaryText)
+                view.trailingTextView.setTextColor(colors.glassText)
                 // Override the library's reduced-opacity trailing icon color as well.
-                view.leadingImageView.setColorFilter(ICON_COLOR)
-                view.trailingImageView.setColorFilter(ICON_COLOR)
+                view.leadingImageView.setColorFilter(colors.glassText)
+                view.trailingImageView.setColorFilter(colors.glassSecondaryText)
             }
         }
         view.invalidate()

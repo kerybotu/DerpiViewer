@@ -221,22 +221,21 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         }
     }
 
-    private fun applyPalette() {
-        val colors = PaletteManager.colors(context)
+    fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         setBackgroundColor(colors.surface)
         pageBackdrop.setBackgroundColor(colors.surface)
         refresh.setBackgroundColor(colors.surface)
         headerGlass.setPalette(colors)
         toolbar.setBackgroundColor(Color.TRANSPARENT)
-        toolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
-        val iconColor = GlassWidgetStyle.ICON_COLOR
+        toolbar.setTitleTextColor(colors.glassText)
+        val iconColor = colors.glassText
         toolbar.navigationIcon?.mutate()?.setTint(iconColor)
         toolbar.overflowIcon?.mutate()?.setTint(iconColor)
         for (index in 0 until toolbar.menu.size()) toolbar.menu.getItem(index).icon?.mutate()?.setTint(iconColor)
         progress.applyPalette(colors)
         refresh.applyPalette(colors)
         tabs?.applyPalette()
-        attachedGlass.toMap().forEach { (view, radius) -> GlassWidgetStyle.apply(view, radius) }
+        attachedGlass.toMap().forEach { (view, radius) -> GlassWidgetStyle.apply(view, radius, colors) }
         onPaletteChanged?.invoke()
         updateGlassRendering()
     }

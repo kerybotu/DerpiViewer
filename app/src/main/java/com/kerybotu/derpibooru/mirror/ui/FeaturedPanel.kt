@@ -110,8 +110,8 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
             setNavigationOnClickListener {
                 (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu()
             }
-            setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
-            navigationIcon?.mutate()?.setTint(GlassWidgetStyle.ICON_COLOR)
+            setTitleTextColor(PaletteManager.colors(context).glassText)
+            navigationIcon?.mutate()?.setTint(PaletteManager.colors(context).glassText)
         }
         topIsland = FrameLayout(context).apply {
             elevation = dp(Ui2DesignSystem.Elevation.topIslandDp.toInt()).toFloat()
@@ -166,10 +166,17 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         // uses the same tint/blur configuration as the Home shell.
         topGlass.setPalette(PaletteManager.colors(context))
         topToolbar.setBackgroundColor(Color.TRANSPARENT)
-        topToolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
-        topToolbar.navigationIcon?.mutate()?.setTint(GlassWidgetStyle.ICON_COLOR)
+        val colors = PaletteManager.colors(context)
+        topToolbar.setTitleTextColor(colors.glassText)
+        topToolbar.navigationIcon?.mutate()?.setTint(colors.glassText)
         val active = isShown && isAttachedToWindow
         topGlass.setRenderingActive(active, refreshLayout)
+    }
+
+    fun refreshPalette() {
+        updateTopIslandRendering()
+        refreshLayout.setBackgroundColor(PaletteManager.colors(context).surface)
+        refreshDisplayMode()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {

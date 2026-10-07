@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.liquidglass.LiquidGlassToast
+import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.model.Comment
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import com.kerybotu.derpibooru.mirror.translate.NiuTransService
@@ -101,7 +102,7 @@ open class CommentsFeedView(context: Context, title: String, onBack: (() -> Unit
                     state.showTranslation = true
                 }.onFailure {
                     if (this@CommentsFeedView.isActive && isShown) LiquidGlassToast.makeText(context, "翻译失败，请重试", LiquidGlassToast.LENGTH_SHORT)
-                        .setTextColor(GlassWidgetStyle.TEXT_COLOR).show()
+                        .setTextColor(PaletteManager.colors(context).glassText).show()
                 }
             } finally {
                 state.loading = false

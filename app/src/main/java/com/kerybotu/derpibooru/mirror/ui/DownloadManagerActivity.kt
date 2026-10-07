@@ -327,15 +327,16 @@ class DownloadManagerActivity : AppCompatActivity() {
         }
 
         fun applyPalette() {
-            listOf(title, fileName, status).forEach { it.setTextColor(GlassWidgetStyle.TEXT_COLOR) }
-            progress.progressTintList = ColorStateList.valueOf(GlassWidgetStyle.TEXT_COLOR)
+            val colors = PaletteManager.colors(this@DownloadManagerActivity)
+            listOf(title, fileName, status).forEach { it.setTextColor(colors.glassText) }
+            progress.progressTintList = ColorStateList.valueOf(colors.glassText)
             progress.progressBackgroundTintList = ColorStateList.valueOf(0x40FFFFFF)
             GlassWidgetStyle.apply(card, 16f)
             GlassWidgetStyle.apply(action, 16f)
         }
     }
 
-    private fun label(size: Float) = TextView(this).apply { textSize = size; setTextColor(GlassWidgetStyle.TEXT_COLOR) }
+    private fun label(size: Float) = TextView(this).apply { textSize = size; setTextColor(PaletteManager.colors(this@DownloadManagerActivity).glassText) }
     private fun formatBytes(value: Long): String = when {
         value >= 1_000_000 -> "%.1f MB".format(value / 1_000_000.0)
         value >= 1_000 -> "%.0f KB".format(value / 1_000.0)

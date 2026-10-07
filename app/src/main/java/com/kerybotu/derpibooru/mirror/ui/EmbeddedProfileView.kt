@@ -41,7 +41,8 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
     private val commentsBox = LinearLayout(context)
     private val progress = ProgressBar(context)
     private lateinit var profileHero: LinearLayout
-    private lateinit var topIsland: LinearLayout
+    private lateinit var topIsland: IslandGlassView
+    private lateinit var topControls: LinearLayout
     private lateinit var profileContent: LinearLayout
     private lateinit var contentList: RecyclerView
     private lateinit var artworkAdapter: ImageAdapter
@@ -138,14 +139,18 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
         progress.visibility = GONE
     }
 
-    private fun buildTopIsland(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme): LinearLayout {
-        val island = LinearLayout(context).apply {
+    private fun buildTopIsland(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme): IslandGlassView {
+        val island = IslandGlassView(context).apply {
+            setPalette(colors)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        topControls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumWidth = dp(220)
             setPadding(dp(6), 0, dp(6), 0)
+            setBackgroundColor(Color.TRANSPARENT)
         }
-        Ui2DesignSystem.styleIsland(island, colors, Ui2DesignSystem.Shape.topIsland)
         val menu = ImageButton(context).apply {
             setImageResource(R.drawable.ic_menu)
             imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
@@ -172,10 +177,37 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
             }
         }
         Ui2DesignSystem.applyPressFeedback(menu); Ui2DesignSystem.applyPressFeedback(more)
-        island.addView(menu, LinearLayout.LayoutParams(dp(48), dp(48)))
-        island.addView(title, LinearLayout.LayoutParams(0, -1, 1f))
-        island.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)))
+        topControls.addView(menu, LinearLayout.LayoutParams(dp(48), dp(48)))
+        topControls.addView(title, LinearLayout.LayoutParams(0, -1, 1f))
+        topControls.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)))
+        island.addView(topControls, FrameLayout.LayoutParams(-1, -1))
         return island
+    }
+
+    fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
+        setBackgroundColor(colors.surface)
+        state.setTextColor(colors.muted)
+        name.setTextColor(colors.glassText)
+        meta.setTextColor(colors.glassSecondaryText)
+        bio.setTextColor(colors.glassText)
+        topIsland.setPalette(colors)
+        (topControls.getChildAt(0) as? ImageButton)?.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        (topControls.getChildAt(1) as? TextView)?.setTextColor(colors.glassText)
+        (topControls.getChildAt(2) as? ImageButton)?.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        for (index in 0 until stats.childCount) {
+            (stats.getChildAt(index) as? TextView)?.setTextColor(colors.glassText)
+        }
+        for (index in 0 until tabs.childCount) {
+            (tabs.getChildAt(index) as? Button)?.let(::styleProfileAction)
+        }
+        fun updateTextColors(view: View) {
+            if (view is TextView && view.parent !== tabs && view !== state && view !== name && view !== meta && view !== bio) {
+                view.setTextColor(colors.glassText)
+            }
+            if (view is ViewGroup) for (index in 0 until view.childCount) updateTextColors(view.getChildAt(index))
+        }
+        updateTextColors(awards)
+        artworkAdapter.notifyDataSetChanged()
     }
 
     private fun updateInitialContentOffset() {
@@ -219,7 +251,16 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
         override fun getItemCount(): Int = 1
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!loaded) loadProfile() }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        post { if (topIsland.isShown) topIsland.setRenderingActive(true, contentList) }
+        if (!loaded) loadProfile()
+    }
+
+    override fun onDetachedFromWindow() {
+        if (::topIsland.isInitialized) topIsland.setRenderingActive(false, null)
+        super.onDetachedFromWindow()
+    }
 
     private fun loadProfile() = scope.launch {
         progress.visibility = VISIBLE
@@ -276,7 +317,7 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
     }
 
     private fun stat(label: String, count: Int, action: () -> Unit) {
-        stats.addView(TextView(context).apply { text = "$count\n$label"; gravity = Gravity.CENTER; setTextColor(PaletteManager.colors(context).onSurface); setPadding(dp(4), dp(4), dp(4), dp(4)); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f))
+        stats.addView(TextView(context).apply { text = "$count\n$label"; gravity = Gravity.CENTER; setTextColor(PaletteManager.colors(context).glassText); setPadding(dp(4), dp(4), dp(4), dp(4)); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f))
     }
 
     private fun tab(label: String, action: () -> Unit) {
@@ -292,7 +333,7 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
             setStroke(dp(1), colors.glassBorder)
         }
         button.backgroundTintList = null
-        button.setTextColor(PaletteManager.colors(context).onSurface)
+        button.setTextColor(PaletteManager.colors(context).glassText)
         button.minimumHeight = dp(48)
         button.minHeight = dp(48)
         button.setPadding(dp(8), 0, dp(8), 0)

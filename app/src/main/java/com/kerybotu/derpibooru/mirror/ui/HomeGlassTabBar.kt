@@ -92,16 +92,16 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
         applyForeground()
     }
 
-    fun applyPalette() {
+    fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = com.kerybotu.derpibooru.mirror.PaletteManager.colors(context)) {
         val radius = if (hasIconTabs) navigationRadiusDp() else Ui2DesignSystem.Shape.navigationIsland
-        GlassWidgetStyle.apply(this, radius)
+        GlassWidgetStyle.apply(this, radius, colors)
         onAppearanceChanged(overLight)
         // Keep labels above the glass passes so the header's blur/refraction
         // applies to the page backdrop, never to the navigation text or icons.
         getChildAt(0)?.elevation = resources.displayMetrics.density
         for (i in 0 until childCount) {
             (getChildAt(i) as? LiquidGlassView)?.let { droplet ->
-                GlassWidgetStyle.apply(droplet, if (hasIconTabs) (radius - NAVIGATION_INSET_DP).coerceAtLeast(0f) else 999f)
+                GlassWidgetStyle.apply(droplet, if (hasIconTabs) (radius - NAVIGATION_INSET_DP).coerceAtLeast(0f) else 999f, colors)
             }
         }
         applyForeground()
@@ -129,19 +129,19 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
 
     private fun applyForeground() {
         val row = getChildAt(0) as? ViewGroup ?: return
-        val color = GlassWidgetStyle.ICON_COLOR
-        selectedTintColor = color
-        fun tint(view: View) {
+        val colors = com.kerybotu.derpibooru.mirror.PaletteManager.colors(context)
+        selectedTintColor = colors.primary
+        fun tint(view: View, selected: Boolean) {
             when (view) {
-                is TextView -> view.setTextColor(GlassWidgetStyle.TEXT_COLOR)
-                is ImageView -> view.imageTintList = ColorStateList.valueOf(color)
+                is TextView -> view.setTextColor(colors.glassText)
+                is ImageView -> view.imageTintList = ColorStateList.valueOf(if (selected) colors.primary else colors.glassText)
             }
-            if (view is ViewGroup) for (i in 0 until view.childCount) tint(view.getChildAt(i))
+            if (view is ViewGroup) for (i in 0 until view.childCount) tint(view.getChildAt(i), selected)
         }
         for (i in 0 until row.childCount) {
             val tab = row.getChildAt(i)
             tab.isSelected = i == selectedIndex
-            tint(tab)
+            tint(tab, tab.isSelected)
         }
         invalidate()
     }

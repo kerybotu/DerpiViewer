@@ -10,6 +10,7 @@ import android.widget.TextView
 import com.example.liquidglass.LiquidGlassButton
 import com.example.liquidglass.LiquidGlassListItem
 import com.example.liquidglass.LiquidGlassView
+import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.model.Comment
 import com.kerybotu.derpibooru.mirror.translate.NiuTransService
 
@@ -76,8 +77,9 @@ internal class GlassCommentCard(context: Context) : LiquidGlassListItem(context)
 
     fun applyPalette() {
         glassSurfaces.forEach { GlassWidgetStyle.apply(it, 16f) }
-        author.setTextColor(GlassWidgetStyle.TEXT_COLOR)
-        body.setTextColor(GlassWidgetStyle.TEXT_COLOR)
+        val colors = PaletteManager.colors(context)
+        author.setTextColor(colors.glassText)
+        body.setTextColor(colors.glassSecondaryText)
     }
 
     // Child action buttons handle clicks; the card's empty area belongs to the scrolling list.

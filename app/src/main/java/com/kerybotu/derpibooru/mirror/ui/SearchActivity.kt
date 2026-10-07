@@ -284,7 +284,7 @@ class SearchActivity : AppCompatActivity() {
             DownloadQueueManager.get(this).enqueueImages(adapter.selectedItems())
             adapter.clearSelection()
             LiquidGlassToast.makeText(this, "已加入下载队列", LiquidGlassToast.LENGTH_SHORT)
-                .setTextColor(GlassWidgetStyle.TEXT_COLOR).show()
+                .setTextColor(PaletteManager.colors(this@SearchActivity).glassText).show()
         }
         selectionActions.addView(downloadButton, weightedParams())
         selectionActions.addView(button("取消选择") { adapter.clearSelection() }, weightedParams())
@@ -396,7 +396,7 @@ class SearchActivity : AppCompatActivity() {
         val value = EditText(this).apply {
             hint = "数值、日期或文本"; setSingleLine(true); background = null
             setPadding(dp(16), 0, dp(16), 0)
-            setTextColor(GlassWidgetStyle.TEXT_COLOR); setHintTextColor(GlassWidgetStyle.TEXT_COLOR)
+            setTextColor(PaletteManager.colors(this@SearchActivity).glassText); setHintTextColor(PaletteManager.colors(this@SearchActivity).glassSecondaryText)
         }
         val valueSurface = trackGlass(LiquidGlassView(this)).apply { addView(value, FrameLayout.LayoutParams(-1, dp(56))) }
         val negate = trackGlass(LiquidGlassChip(this)).apply {
@@ -411,7 +411,7 @@ class SearchActivity : AppCompatActivity() {
             val raw = value.text.toString().trim()
             if (raw.isBlank()) {
                 LiquidGlassToast.makeText(this, "请输入条件", LiquidGlassToast.LENGTH_SHORT)
-                    .setTextColor(GlassWidgetStyle.TEXT_COLOR).show()
+                    .setTextColor(PaletteManager.colors(this@SearchActivity).glassText).show()
                 value.requestFocus()
                 return@button
             }
@@ -433,7 +433,7 @@ class SearchActivity : AppCompatActivity() {
         val builder = LiquidGlassDialogBuilder(this, animateShow = false, glassSetup = {
             trackGlass(this, resultsSurface, 28f)
         })
-        val color = GlassWidgetStyle.TEXT_COLOR
+        val color = PaletteManager.colors(this).glassText
         builder.overLightTextColor = color; builder.overDarkTextColor = color
         return builder.setTitle(title).setView(content).create()
     }
@@ -512,7 +512,7 @@ class SearchActivity : AppCompatActivity() {
         WindowCompat.getInsetsController(window, searchRoot).apply {
             isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
         }
-        queryInput.setTextColor(GlassWidgetStyle.TEXT_COLOR); queryInput.setHintTextColor(GlassWidgetStyle.TEXT_COLOR)
+        queryInput.setTextColor(colors.glassText); queryInput.setHintTextColor(colors.glassSecondaryText)
         loadingIndicator.applyPalette(colors)
         resultsSurface.applyPalette(colors)
         attachedGlass.toMap().forEach { (glass, radius) -> GlassWidgetStyle.apply(glass, radius) }

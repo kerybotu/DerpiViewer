@@ -158,8 +158,8 @@ class ImageAdapter(
                 styleOverlay(binding.infoBar, palette)
                 styleOverlay(binding.statsBar, palette)
             }
-            val foreground = if (glass) GlassWidgetStyle.ICON_COLOR else palette.onSurface
-            val textColor = if (glass) GlassWidgetStyle.TEXT_COLOR else palette.onSurface
+            val foreground = if (glass) palette.glassText else palette.onSurface
+            val textColor = if (glass) palette.glassText else palette.onSurface
             if (glass) {
                 binding.selectionMark.setTextColor(textColor)
                 binding.mediaTypeBadge.imageTintList = android.content.res.ColorStateList.valueOf(foreground)

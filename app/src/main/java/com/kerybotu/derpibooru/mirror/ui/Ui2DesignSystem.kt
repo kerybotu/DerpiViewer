@@ -92,9 +92,9 @@ object Ui2DesignSystem {
             surface = palette.surface,
             surfaceVariant = palette.surfaceVariant,
             onSurface = palette.onSurface,
-            glassTint = if (light) Color.argb(196, 250, 252, 255) else Color.argb(176, 25, 28, 34),
-            glassBorder = if (light) Color.argb(112, 255, 255, 255) else Color.argb(72, 255, 255, 255),
-            glassHighlight = if (light) Color.argb(96, 255, 255, 255) else Color.argb(42, 255, 255, 255),
+            glassTint = palette.glassSurface,
+            glassBorder = palette.glassBorder,
+            glassHighlight = palette.glassTint,
             success = Color.rgb(54, 125, 89),
             warning = Color.rgb(174, 112, 38),
             error = Color.rgb(179, 58, 61)
@@ -108,10 +108,8 @@ object Ui2DesignSystem {
         view.background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radiusDp * density
-            // Keep the island visibly floating while allowing artwork beneath
-            // it to remain faintly visible as part of the glass treatment.
-            setColor(if (light) Color.argb(176, 250, 252, 255) else Color.argb(152, 25, 28, 34))
-            setStroke((density).toInt().coerceAtLeast(1), if (light) Color.argb(112, 255, 255, 255) else Color.argb(72, 255, 255, 255))
+            setColor(colors.glassSurface)
+            setStroke((density).toInt().coerceAtLeast(1), colors.glassBorder)
         }
         view.elevation = Elevation.islandDp * density
         view.clipToOutline = true

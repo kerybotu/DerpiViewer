@@ -14,6 +14,7 @@ import com.example.liquidglass.LiquidGlassButton
 import com.example.liquidglass.LiquidGlassDialogBuilder
 import com.example.liquidglass.LiquidGlassListItem
 import com.example.liquidglass.LiquidGlassToast
+import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.example.liquidglass.LiquidGlassView
 
 /** The library dispatches taps itself, bypassing Android's normal long-click detection. */
@@ -78,8 +79,8 @@ internal class GlassPageDialogs(private val feed: GlassFeedLayout) {
         val builder = LiquidGlassDialogBuilder(context, animateShow = false, glassSetup = {
             feed.trackGlass(this, feed.refresh, 28f)
         }).apply {
-            overLightTextColor = GlassWidgetStyle.TEXT_COLOR
-            overDarkTextColor = GlassWidgetStyle.TEXT_COLOR
+            overLightTextColor = PaletteManager.colors(context).glassText
+            overDarkTextColor = PaletteManager.colors(context).glassText
         }
         dialog = builder.setTitle(title).setMessage(message).setView(content).create()
         dialog.show()
@@ -94,8 +95,8 @@ internal class GlassPageDialogs(private val feed: GlassFeedLayout) {
             hint = "收藏夹名称"
             setText(initial)
             setSelection(text.length)
-            setTextColor(GlassWidgetStyle.TEXT_COLOR)
-            setHintTextColor(GlassWidgetStyle.TEXT_COLOR)
+            setTextColor(PaletteManager.colors(context).glassText)
+            setHintTextColor(PaletteManager.colors(context).glassSecondaryText)
             setPadding(dp(16), 0, dp(16), 0)
         }
         val surface = feed.trackGlass(LiquidGlassView(context), feed.refresh, 24f).apply {
@@ -123,7 +124,7 @@ internal class GlassPageDialogs(private val feed: GlassFeedLayout) {
 
     fun toast(message: String) {
         if (feed.isActive) LiquidGlassToast.makeText(context, message, LiquidGlassToast.LENGTH_SHORT)
-            .setTextColor(GlassWidgetStyle.TEXT_COLOR).show()
+            .setTextColor(PaletteManager.colors(context).glassText).show()
     }
 
     private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()

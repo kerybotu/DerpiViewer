@@ -707,7 +707,12 @@ class MainActivity : AppCompatActivity() {
         PaletteManager.apply(this)
         applyStartupPalette()
         applyUi2Shell()
+        // onPause disables live backdrop capture; restore it after the current
+        // palette and shell geometry have been reapplied on return.
+        updateShellGlass()
         embeddedVideo?.refreshPalette()
+        embeddedProfile?.applyPalette()
+        embeddedFeatured?.refreshPalette()
         ViewCompat.requestApplyInsets(binding.root)
         val paletteChanged = paletteSignature() != lastPaletteSignature
         if (paletteChanged) lastPaletteSignature = paletteSignature()
@@ -752,9 +757,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateGlassHeaderTint() {
-        val foreground = GlassWidgetStyle.ICON_COLOR
-        binding.toolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
-        binding.toolbar.setSubtitleTextColor(GlassWidgetStyle.TEXT_COLOR)
+        val foreground = PaletteManager.colors(this).glassText
+        binding.toolbar.setTitleTextColor(foreground)
+        binding.toolbar.setSubtitleTextColor(foreground)
         tintToolbarNavigationIcon(foreground)
         binding.toolbar.overflowIcon?.setTint(foreground)
         binding.btnDensity.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
@@ -762,9 +767,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateGlassShellTint() {
-        val tint = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.ICON_COLOR)
+        val colors = PaletteManager.colors(this)
+        val tint = android.content.res.ColorStateList.valueOf(colors.glassText)
         binding.fabUpload.imageTintList = tint
-        binding.fabUploadGlass.setIconTint(GlassWidgetStyle.ICON_COLOR)
+        binding.fabUploadGlass.setIconTint(colors.glassText)
         binding.glassBottomNavigation.applyPalette()
         updateGlassHeaderTint()
     }

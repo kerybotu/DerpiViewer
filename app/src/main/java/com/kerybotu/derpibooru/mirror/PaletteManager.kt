@@ -13,6 +13,14 @@ import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.navigation.NavigationView
 import com.google.android.material.chip.Chip
+import com.example.liquidglass.LiquidGlassView
+import com.kerybotu.derpibooru.mirror.ui.EmbeddedProfileView
+import com.kerybotu.derpibooru.mirror.ui.FeaturedPanel
+import com.kerybotu.derpibooru.mirror.ui.GlassCommentCard
+import com.kerybotu.derpibooru.mirror.ui.GlassFeedLayout
+import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
+import com.kerybotu.derpibooru.mirror.ui.HomeGlassTabBar
+import com.kerybotu.derpibooru.mirror.ui.IslandGlassView
 
 object PaletteManager {
     fun colors(context: android.content.Context): PaletteDefinitions.Scheme =
@@ -22,13 +30,34 @@ object PaletteManager {
         val c = colors(activity)
         activity.window.statusBarColor = c.primary
         activity.window.navigationBarColor = c.surface
-        styleTree(activity.findViewById(android.R.id.content), c)
+        val root = activity.findViewById<View>(android.R.id.content)
+        styleTree(root, c)
+        applyGlassTree(root, c)
+    }
+
+    private fun applyGlassTree(view: View, c: PaletteDefinitions.Scheme) {
+        when (view) {
+            is GlassFeedLayout -> view.applyPalette(c)
+            is EmbeddedProfileView -> view.applyPalette(c)
+            is FeaturedPanel -> view.refreshPalette()
+            is GlassCommentCard -> view.applyPalette()
+            is HomeGlassTabBar -> view.applyPalette(c)
+            is IslandGlassView -> view.setPalette(c)
+            is LiquidGlassView -> GlassWidgetStyle.applyMaterial(view, c)
+        }
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) applyGlassTree(view.getChildAt(index), c)
+        }
     }
 
     private fun styleTree(view: View, c: PaletteDefinitions.Scheme) {
         if (view.id == android.R.id.content) view.setBackgroundColor(c.surface)
         when (view) {
-            is Toolbar -> { view.setBackgroundColor(c.primary); view.setTitleTextColor(c.onPrimary) }
+            is Toolbar -> {
+                val transparent = (view.background as? android.graphics.drawable.ColorDrawable)?.color == android.graphics.Color.TRANSPARENT
+                if (!transparent) view.setBackgroundColor(c.primary)
+                view.setTitleTextColor(if (transparent) c.glassText else c.onPrimary)
+            }
             is BottomNavigationView -> view.setBackgroundColor(c.surface)
             is NavigationView -> {
                 view.setBackgroundColor(c.surface)
@@ -57,7 +86,7 @@ object PaletteManager {
             is TextView -> view.setTextColor(c.onSurface)
         }
         if (view is ViewGroup) for (i in 0 until view.childCount) styleTree(view.getChildAt(i), c)
-        if (view is Toolbar) {
+        if (view is Toolbar && (view.background as? android.graphics.drawable.ColorDrawable)?.color != android.graphics.Color.TRANSPARENT) {
             for (i in 0 until view.childCount) {
                 (view.getChildAt(i) as? TextView)?.setTextColor(c.onPrimary)
             }

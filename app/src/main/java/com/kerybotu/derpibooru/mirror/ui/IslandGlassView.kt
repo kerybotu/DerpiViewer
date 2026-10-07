@@ -18,11 +18,11 @@ open class IslandGlassView @JvmOverloads constructor(
         isClickable = false
         isFocusable = false
         cornerRadius = Ui2DesignSystem.Shape.navigationIsland * resources.displayMetrics.density
-        GlassWidgetStyle.applyMaterial(this)
+        GlassWidgetStyle.apply(this, Ui2DesignSystem.Shape.topIsland)
     }
 
     fun setPalette(colors: PaletteDefinitions.Scheme) {
-        GlassWidgetStyle.applyMaterial(this, colors)
+        GlassWidgetStyle.apply(this, Ui2DesignSystem.Shape.topIsland, colors)
         onAppearanceChanged(overLight)
     }
 

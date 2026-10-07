@@ -96,7 +96,7 @@ class FavoritesActivity : AppCompatActivity() {
         feed.onPaletteChanged = {
             for (index in 0 until feed.results.childCount) {
                 val holder = feed.results.getChildViewHolder(feed.results.getChildAt(index))
-                if (holder is PictureHolder) holder.label.setTextColor(GlassWidgetStyle.TEXT_COLOR)
+                if (holder is PictureHolder) holder.label.setTextColor(PaletteManager.colors(this@FavoritesActivity).glassText)
             }
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -382,7 +382,7 @@ class FavoritesActivity : AppCompatActivity() {
             }
             val selected = row.local && row.item.imageId in chosen
             label.text = "图片 #${row.item.imageId}" + if (selected) "\n✓ 已选择" else ""
-            label.setTextColor(GlassWidgetStyle.TEXT_COLOR)
+            label.setTextColor(PaletteManager.colors(itemView.context).glassText)
             card.isSelected = selected
             ViewCompat.setStateDescription(card, if (selected) "已选择" else null)
             card.setOnClickListener { if (row.local && chosen.isNotEmpty()) toggle(row.item.imageId) else open(row.item.imageId) }

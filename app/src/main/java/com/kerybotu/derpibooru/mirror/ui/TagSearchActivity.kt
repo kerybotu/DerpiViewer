@@ -364,11 +364,11 @@ class TagSearchActivity : AppCompatActivity() {
             isAppearanceLightNavigationBars = light
         }
         headerGlass.setPalette(colors)
-        val foreground = GlassWidgetStyle.ICON_COLOR
-        toolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
+        val foreground = colors.glassText
+        toolbar.setTitleTextColor(colors.glassText)
         toolbar.navigationIcon?.mutate()?.setTint(foreground)
-        input.setTextColor(GlassWidgetStyle.TEXT_COLOR)
-        input.setHintTextColor(GlassWidgetStyle.TEXT_COLOR)
+        input.setTextColor(colors.glassText)
+        input.setHintTextColor(colors.glassSecondaryText)
         loadingIndicator.applyPalette(colors)
         resultsSurface.applyPalette(colors)
         attachedGlass.toMap().forEach { (glass, radius) -> GlassWidgetStyle.apply(glass, radius) }

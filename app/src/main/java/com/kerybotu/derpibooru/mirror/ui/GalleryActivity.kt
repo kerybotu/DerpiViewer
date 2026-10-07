@@ -84,8 +84,8 @@ class GalleryActivity : AppCompatActivity() {
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             background = null
             setPadding(dp(16), 0, dp(16), 0)
-            setTextColor(GlassWidgetStyle.TEXT_COLOR)
-            setHintTextColor(GlassWidgetStyle.TEXT_COLOR)
+            setTextColor(PaletteManager.colors(this@GalleryActivity).glassText)
+            setHintTextColor(PaletteManager.colors(this@GalleryActivity).glassSecondaryText)
         }
         val inputSurface = feed.trackGlass(LiquidGlassView(this), feed.refresh, 24f).apply {
             addView(input, FrameLayout.LayoutParams(-1, dp(56)))
@@ -111,8 +111,8 @@ class GalleryActivity : AppCompatActivity() {
         val builder = LiquidGlassDialogBuilder(this, animateShow = false, glassSetup = {
             feed.trackGlass(this, feed.refresh, 28f)
         }).apply {
-            overLightTextColor = GlassWidgetStyle.TEXT_COLOR
-            overDarkTextColor = GlassWidgetStyle.TEXT_COLOR
+            overLightTextColor = PaletteManager.colors(this@GalleryActivity).glassText
+            overDarkTextColor = PaletteManager.colors(this@GalleryActivity).glassText
         }
         dialog = builder.setTitle("筛选图集").setView(content).create()
         dialog.show()
