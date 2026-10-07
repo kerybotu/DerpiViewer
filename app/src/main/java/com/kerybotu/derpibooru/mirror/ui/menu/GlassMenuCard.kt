@@ -33,8 +33,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
         setCanceledOnTouchOutside(true)
 
         val colors = PaletteManager.colors(context)
-        GlassWidgetStyle.apply(glassContainer, GlassMenuTokens.cornerRadiusDp)
-        glassContainer.setPalette(colors)
+        applyGlassPalette(colors)
         glassContainer.elevation = Ui2DesignSystem.Elevation.dialogDp * density
 
         val padding = (GlassMenuTokens.contentPaddingDp * density).toInt()
@@ -129,7 +128,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
     override fun show() {
         super.show()
         window?.setLayout(panelWidth, panelHeight)
-        glassContainer.setPalette(PaletteManager.colors(context))
+        applyGlassPalette(PaletteManager.colors(context))
         glassContainer.post {
             glassContainer.setRenderingActive(true, activityContentRoot())
         }
@@ -169,5 +168,9 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
             current = current.baseContext
         }
         return null
+    }
+
+    private fun applyGlassPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) {
+        GlassWidgetStyle.apply(glassContainer, GlassMenuTokens.cornerRadiusDp, colors)
     }
 }
