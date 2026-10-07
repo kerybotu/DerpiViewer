@@ -22,7 +22,8 @@
         android:layout_height="match_parent"
         android:background="@android:color/transparent"
         android:keepScreenOn="true"
-        app:resize_mode="fit" />
+        app:resize_mode="fit"
+        app:surface_type="texture_view" />
 
     <LinearLayout
         android:id="@+id/video_action_rail"

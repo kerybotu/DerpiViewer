@@ -1,6 +1,5 @@
 package com.kerybotu.derpibooru.mirror.network
 
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -13,7 +12,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.kerybotu.derpibooru.mirror.PaletteManager
 
-/** A separate Cloudflare/Turnstile verification screen and state machine. */
+/** Cloudflare verification screen with bounded state polling and session completion. */
 class CloudflareChallengeActivity : ChallengeWebViewActivity() {
     private companion object {
         const val STATE_POLL_INTERVAL_MS = 350L
@@ -22,17 +21,15 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
     }
 
     private val stateHandler = Handler(Looper.getMainLooper())
-    private var targetUrl: String? = null
     private var jsonObservedAt = 0L
+    private var targetUrl: String? = null
     private val statePoll = object : Runnable {
         override fun run() {
-            if (!isFinishing && !isDestroyed) {
-                checkCloudflareChallengeState(webView)
-            }
+            if (!isFinishing && !isDestroyed) checkCloudflareChallengeState(webView)
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         val palette = PaletteManager.colors(this)
         val header = LinearLayout(this).apply {
@@ -49,10 +46,7 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
             setTextColor(palette.onPrimary)
             setBackgroundColor(palette.surfaceVariant)
         }
-        val copy = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 0, 0, 0)
-        }
+        val copy = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 0, 0, 0) }
         val title = TextView(this).apply {
             text = "Cloudflare 人机验证"
             textSize = 18f
@@ -86,15 +80,9 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
         }
         ViewCompat.requestApplyInsets(root)
 
-        bindWebViewClient(loading = loading, onPageFinished = { view, _ ->
-            // Cloudflare often serves its interactive challenge with an HTTP error
-            // status (for example 403) while still returning a usable HTML document.
-            // onPageFinished confirms that WebView rendered that document, so an HTTP
-            // status alone must not permanently disable verification-state polling.
+        bindWebViewClient(loading = loading, onPageFinished = { _, _ ->
+            // Error status can still carry the interactive challenge document.
             mainFrameHttpError = false
-            // Cloudflare/Turnstile can replace the document body through AJAX without
-            // causing another onPageFinished callback. Start (or restart) a small,
-            // cancellable poll so the JSON response is detected in that case too.
             stateHandler.removeCallbacks(statePoll)
             statePoll.run()
         })
@@ -105,52 +93,52 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
     }
 
     private fun checkCloudflareChallengeState(view: android.webkit.WebView) {
-        if (isFinishing || isDestroyed) return
+        val url = targetUrl ?: return finishChallenge(false)
+        val navigationId = mainFrameNavigationId
+        if (!isCurrentPage(view, url, navigationId)) return
         view.evaluateJavascript(
             """
             (function(){
-                var json=false;
-                try {
-                    var body=document.body;
-                    var t=((body&&body.innerText)||(body&&body.textContent)||'').trim();
-                    var v=JSON.parse(t);
-                    json=v !== null;
-                } catch(e) {}
-                return json?'1':'0';
+                return !!document.querySelector('script[src*="/cdn-cgi/challenge-platform/"], script[src*="challenges.cloudflare.com/turnstile"], input[name="cf-turnstile-response"], iframe[src*="challenges.cloudflare.com"]') ||
+                    Array.prototype.some.call(document.scripts, function(s) {
+                        return (s.textContent || '').indexOf('window._cf_chl_opt') !== -1;
+                    });
             })()
             """.trimIndent()
-        ) { result ->
-            val state = result.trim().trim('"')
-            val jsonVisible = state == "1"
-            if (jsonVisible) {
-                // The API response is rendered before CookieManager has necessarily
-                // published cf_clearance to OkHttp. Wait briefly for the token instead
-                // of reporting success immediately and reopening the challenge loop.
-                if (jsonObservedAt == 0L) jsonObservedAt = System.currentTimeMillis()
-                val url = targetUrl
-                val hasCookie = !url.isNullOrBlank() && SharedCookieJar.hasClearanceCookie(url)
-                if (hasCookie) {
-                    Log.d(TAG, "Cloudflare JSON 已出现且 clearance Cookie 可见: ${SharedCookieJar.cookieNames(url!!)}")
-                    android.webkit.CookieManager.getInstance().flush()
-                    finishChallenge(true)
-                    return@evaluateJavascript
-                }
-                if (System.currentTimeMillis() - jsonObservedAt >= COOKIE_WAIT_TIMEOUT_MS) {
-                    // Keep the original user-visible contract: a stable API JSON
-                    // document is still a successful completion signal. Some WebView
-                    // providers expose the cookie only after the activity is closed;
-                    // the coordinator's grace window prevents that propagation race
-                    // from reopening the challenge in a loop.
-                    Log.w(TAG, "Cloudflare JSON 已出现但 ${COOKIE_WAIT_TIMEOUT_MS}ms 内未发现 clearance Cookie，按 JSON 完成验证")
-                    android.webkit.CookieManager.getInstance().flush()
-                    finishChallenge(true)
-                    return@evaluateJavascript
+        ) { challengeResult ->
+            if (!isCurrentPage(view, url, navigationId)) return@evaluateJavascript
+            if (challengeResult != "false") return@evaluateJavascript scheduleStateCheck()
+            view.evaluateJavascript(ChallengeCompletionPolicy.JSON_OBJECT_SCRIPT) { jsonResult ->
+                if (!isCurrentPage(view, url, navigationId)) return@evaluateJavascript
+                val complete = ChallengeCompletionPolicy.isResolved(
+                    expectedUrl = url,
+                    currentUrl = view.url.orEmpty(),
+                    hasHttpError = mainFrameHttpError,
+                    hasChallenge = false,
+                    isJsonObject = jsonResult == "true"
+                )
+                if (complete) {
+                    if (jsonObservedAt == 0L) jsonObservedAt = System.currentTimeMillis()
+                    val hasCookie = SharedCookieJar.hasClearanceCookie(url)
+                    if (hasCookie || System.currentTimeMillis() - jsonObservedAt >= COOKIE_WAIT_TIMEOUT_MS) {
+                        if (!hasCookie) Log.w(TAG, "完成 JSON 已返回，但 clearance Cookie 尚不可见")
+                        android.webkit.CookieManager.getInstance().flush()
+                        finishChallenge(true)
+                    } else {
+                        scheduleStateCheck()
+                    }
+                } else {
+                    jsonObservedAt = 0L
+                    scheduleStateCheck()
                 }
             }
-            if (!isFinishing && !isDestroyed) {
-                stateHandler.removeCallbacks(statePoll)
-                stateHandler.postDelayed(statePoll, STATE_POLL_INTERVAL_MS)
-            }
+        }
+    }
+
+    private fun scheduleStateCheck() {
+        if (!isFinishing && !isDestroyed) {
+            stateHandler.removeCallbacks(statePoll)
+            stateHandler.postDelayed(statePoll, STATE_POLL_INTERVAL_MS)
         }
     }
 
@@ -158,5 +146,4 @@ class CloudflareChallengeActivity : ChallengeWebViewActivity() {
         stateHandler.removeCallbacks(statePoll)
         super.onDestroy()
     }
-
 }

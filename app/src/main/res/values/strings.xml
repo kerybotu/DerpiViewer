@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">DerpiViewer</string>
+    <string name="loading">正在加载</string>
+    <string name="refreshing">正在刷新</string>
     <string name="navigation_drawer_open">打开导航菜单</string>
     <string name="navigation_drawer_close">关闭导航菜单</string>
 </resources>

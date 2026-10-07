@@ -12,6 +12,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
+import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
 
 class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(context) {
     private val density = context.resources.displayMetrics.density
@@ -77,7 +78,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
 
             val iconView = ImageView(context).apply {
                 setImageResource(item.iconRes)
-                imageTintList = android.content.res.ColorStateList.valueOf(if (item.selected) colors.primary else colors.onSurface)
+                imageTintList = android.content.res.ColorStateList.valueOf(GlassWidgetStyle.ICON_COLOR)
             }
             val iconParams = LinearLayout.LayoutParams((24 * density).toInt(), (24 * density).toInt()).apply {
                 marginEnd = (16 * density).toInt()
@@ -87,7 +88,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
             val titleView = TextView(context).apply {
                 text = item.title
                 textSize = 15f
-                setTextColor(if (item.selected) colors.primary else colors.onSurface)
+                setTextColor(GlassWidgetStyle.TEXT_COLOR)
                 typeface = if (item.selected) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
             }
             itemView.addView(titleView, LinearLayout.LayoutParams(0, -2, 1f))

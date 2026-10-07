@@ -2,6 +2,7 @@ package com.kerybotu.derpibooru.mirror.network
 
 import android.content.Context
 import android.util.Log
+import android.webkit.WebSettings
 import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.IpOptimizer
 import com.kerybotu.derpibooru.mirror.LocalProxyServer
@@ -19,7 +20,6 @@ import okhttp3.Request
 import java.net.InetSocketAddress
 import java.net.Proxy
 import android.net.Uri
-import android.webkit.WebSettings
 import java.util.concurrent.TimeUnit
 
 object NetworkManager {
@@ -58,8 +58,14 @@ object NetworkManager {
                 WebSettings.getDefaultUserAgent(context.applicationContext)
             }.getOrNull()?.takeIf { it.isNotBlank() } ?: HTTP_USER_AGENT
             val targetDomain = AppSettings.getTargetDomain(context)
+            // Clearance cookies belong to the browser identity used for verification.
+            val userAgent = withContext(Dispatchers.Main) { WebSettings.getDefaultUserAgent(context) }
+            activeUserAgent = userAgent
             val builder = OkHttpClient.Builder()
                 .cookieJar(SharedCookieJar())
+                .addInterceptor { chain ->
+                    chain.proceed(chain.request().newBuilder().header("User-Agent", userAgent).build())
+                }
                 .addInterceptor(ChallengeInterceptor(context.applicationContext))
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
@@ -166,6 +172,8 @@ object NetworkManager {
                         }
                     }
                 }
+            } catch (e: ChallengeCancelledException) {
+                return null
             } catch (e: Exception) {
                 Log.e(TAG, "请求异常", e)
                 delay(2000)

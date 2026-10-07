@@ -2,6 +2,8 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Outline
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -9,6 +11,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.appcompat.widget.Toolbar
 import androidx.core.widget.NestedScrollView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -37,6 +40,12 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
     private lateinit var heroBox: LinearLayout
     private lateinit var progress: ProgressBar
     private lateinit var refreshLayout: PullRefreshLayout
+    private lateinit var topIsland: FrameLayout
+    private lateinit var topGlass: IslandGlassView
+    private lateinit var topToolbar: Toolbar
+    private var systemTopInset = 0
+    private var systemLeftInset = 0
+    private var systemRightInset = 0
     private var page = 1
     private var loading = false
     private var hasLoadedOnce = false
@@ -88,24 +97,100 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
 
     /** Uses the same GlassMenuCard entry point as Home, Video, Messages, and Profile. */
     private fun addSharedMenuIsland() {
-        val island = SafeToolbar(context).apply {
+        topGlass = IslandGlassView(context).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            GlassWidgetStyle.apply(this, Ui2DesignSystem.Shape.topIsland)
+        }
+        topToolbar = Toolbar(context).apply {
             title = "热门"
-            minimumWidth = dp(220)
+            minimumHeight = 0
+            setBackgroundColor(Color.TRANSPARENT)
             setNavigationIcon(R.drawable.ic_menu)
+            navigationContentDescription = "打开菜单"
             setNavigationOnClickListener {
                 (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu()
             }
-            applyUi2Appearance()
+            setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
+            navigationIcon?.mutate()?.setTint(GlassWidgetStyle.ICON_COLOR)
         }
-        addView(island, LayoutParams(-2, dp(56), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        ViewCompat.setOnApplyWindowInsetsListener(island) { view, insets ->
-            (view.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
-                params.topMargin = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top + dp(12)
-                view.layoutParams = params
+        topIsland = FrameLayout(context).apply {
+            elevation = dp(Ui2DesignSystem.Elevation.topIslandDp.toInt()).toFloat()
+            addView(topGlass, LayoutParams(-1, -1))
+            addView(topToolbar, LayoutParams(-1, -1))
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    val radius = topGlass.cornerRadius.coerceAtMost(minOf(view.width, view.height) / 2f)
+                    outline.setRoundRect(0, 0, view.width, view.height, radius)
+                }
             }
+            clipToOutline = true
+        }
+        addView(topIsland, LayoutParams(-1, dp(60), Gravity.TOP or Gravity.LEFT))
+        ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            systemTopInset = bars.top
+            systemLeftInset = bars.left
+            systemRightInset = bars.right
+            updateTopIslandLayout()
             insets
         }
-        ViewCompat.requestApplyInsets(island)
+        ViewCompat.requestApplyInsets(this)
+        post { updateTopIslandLayout(); updateTopIslandRendering() }
+    }
+
+    /** Positions the floating island from the actual window and inset sizes. */
+    private fun updateTopIslandLayout() {
+        if (!::topIsland.isInitialized) return
+        val safeWidth = (width - systemLeftInset - systemRightInset).coerceAtLeast(1)
+        val available = (safeWidth - dp(32)).coerceAtLeast(1)
+        val params = topIsland.layoutParams as? FrameLayout.LayoutParams ?: return
+        params.width = AdaptiveLayoutPolicy.topIslandWidthPx(context, available)
+        params.height = dp(60)
+        params.topMargin = systemTopInset + dp(Ui2DesignSystem.Spacing.sm)
+        params.leftMargin = systemLeftInset + (safeWidth - params.width) / 2
+        params.rightMargin = 0
+        topIsland.layoutParams = params
+
+        // The first item starts below the island, then naturally scrolls behind it.
+        val scroll = refreshLayout.getChildAt(0) as? NestedScrollView ?: return
+        val content = scroll.getChildAt(0) as? LinearLayout ?: return
+        val contentTop = params.topMargin + params.height + dp(Ui2DesignSystem.Spacing.islandGap)
+        content.setPadding(content.paddingLeft, contentTop, content.paddingRight, content.paddingBottom)
+        scroll.clipToPadding = false
+    }
+
+    private fun updateTopIslandRendering() {
+        if (!::topGlass.isInitialized) return
+        // FeaturedPanel can be created before the activity applies its current
+        // palette. Refresh the material when it becomes visible so the island
+        // uses the same tint/blur configuration as the Home shell.
+        topGlass.setPalette(PaletteManager.colors(context))
+        topToolbar.setBackgroundColor(Color.TRANSPARENT)
+        topToolbar.setTitleTextColor(GlassWidgetStyle.TEXT_COLOR)
+        topToolbar.navigationIcon?.mutate()?.setTint(GlassWidgetStyle.ICON_COLOR)
+        val active = isShown && isAttachedToWindow
+        topGlass.setRenderingActive(active, refreshLayout)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        updateTopIslandLayout()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        ViewCompat.requestApplyInsets(this)
+        post { updateTopIslandRendering() }
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (changedView === this) post { updateTopIslandRendering() }
+    }
+
+    override fun onDetachedFromWindow() {
+        if (::topGlass.isInitialized) topGlass.setRenderingActive(false, null)
+        super.onDetachedFromWindow()
     }
 
     fun refresh() {
