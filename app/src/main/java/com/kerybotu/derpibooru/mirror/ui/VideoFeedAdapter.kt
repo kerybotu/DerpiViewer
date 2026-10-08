@@ -6,6 +6,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.os.Build
+import android.annotation.SuppressLint
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Color
@@ -30,7 +31,11 @@ data class VideoPost(
     val commentCount: Int
 )
 
-class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<VideoFeedAdapter.Holder>() {
+@SuppressLint("UnsafeOptInUsageError")
+class VideoFeedAdapter(
+    private val actions: Actions,
+    private val glassBackdrop: VideoGlassBackdrop
+) : RecyclerView.Adapter<VideoFeedAdapter.Holder>() {
     interface Actions {
         fun onToggle(position: Int)
         fun onDoubleTap(position: Int)
@@ -72,12 +77,20 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
         ItemVideoFeedBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-    )
+    ).also { holder ->
+        with(holder.binding) {
+            glassBackdrop.track(videoActionRail, Ui2DesignSystem.Shape.island)
+            glassBackdrop.track(videoInfoOverlay, Ui2DesignSystem.Shape.large)
+            glassBackdrop.track(videoBufferGlass, Ui2DesignSystem.Shape.pill)
+            glassBackdrop.track(videoSpeedGlass, Ui2DesignSystem.Shape.pill)
+        }
+    }
 
     override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(
         items[position], position, actions, bottomInset, endInset, landscape
     )
     override fun onViewRecycled(holder: Holder) {
+        glassBackdrop.forgetVideo(holder.binding.videoPlayer.videoSurfaceView)
         holder.binding.videoPlayer.player = null
         Glide.with(holder.binding.videoAmbientBackground).clear(holder.binding.videoAmbientBackground)
         super.onViewRecycled(holder)
@@ -106,21 +119,19 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 videoAmbientBackground.setRenderEffect(RenderEffect.createBlurEffect(24f, 24f, Shader.TileMode.CLAMP))
             }
-            videoActionRail.setPalette(colors)
-            videoActionRail.setRenderingActive(true, videoPlayer)
-            videoInfoOverlay.setPalette(colors)
-            videoInfoOverlay.setRenderingActive(true, videoPlayer)
-            Ui2DesignSystem.styleIsland(videoBufferLabel, colors, Ui2DesignSystem.Shape.pill)
-            Ui2DesignSystem.styleIsland(videoSpeed, colors, Ui2DesignSystem.Shape.pill)
+            GlassWidgetStyle.apply(videoActionRail, Ui2DesignSystem.Shape.island, colors)
+            GlassWidgetStyle.apply(videoInfoOverlay, Ui2DesignSystem.Shape.large, colors)
+            GlassWidgetStyle.apply(videoBufferGlass, Ui2DesignSystem.Shape.pill, colors)
+            GlassWidgetStyle.apply(videoSpeedGlass, Ui2DesignSystem.Shape.pill, colors)
             videoAmbientScrim.setBackgroundColor(withAlpha(colors.scrim, 0.58f))
             listOf(videoActionDividerPrimary, videoActionDividerSecondary, videoActionDividerTertiary).forEach {
                 it.setBackgroundColor(withAlpha(colors.divider, 0.62f))
             }
-            videoUploader.setTextColor(colors.onSurface)
-            videoTags.setTextColor(colors.muted)
-            videoUpvoteCount.setTextColor(colors.onSurface)
+            videoUploader.setTextColor(colors.glassText)
+            videoTags.setTextColor(colors.glassSecondaryText)
+            videoUpvoteCount.setTextColor(colors.glassText)
             listOf(videoUpvote, videoDownvote, videoFavorite, videoComments, videoDownload, videoMore).forEach {
-                it.imageTintList = ColorStateList.valueOf(colors.onSurface)
+                it.imageTintList = ColorStateList.valueOf(colors.glassText)
                 Ui2DesignSystem.applyPressFeedback(it)
             }
             videoPlayProgress.progressTintList = ColorStateList.valueOf(colors.primary)

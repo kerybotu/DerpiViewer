@@ -386,12 +386,18 @@ class MainActivity : AppCompatActivity() {
         val availableIslandWidth = (availableWindowWidth - maxOf(islandGutter, responsiveGutter) * 2).coerceAtLeast(1)
 
         (binding.appBarLayout.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-            params.width = AdaptiveLayoutPolicy.topIslandWidthPx(this, availableIslandWidth)
-            binding.appBarLayout.layoutParams = params
+            val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, availableIslandWidth)
+            if (params.width != width) {
+                params.width = width
+                binding.appBarLayout.layoutParams = params
+            }
         }
         (binding.glassBottomNavigation.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-            params.width = AdaptiveLayoutPolicy.bottomIslandWidthPx(this, availableIslandWidth)
-            binding.glassBottomNavigation.layoutParams = params
+            val width = AdaptiveLayoutPolicy.bottomIslandWidthPx(this, availableIslandWidth)
+            if (params.width != width) {
+                params.width = width
+                binding.glassBottomNavigation.layoutParams = params
+            }
         }
     }
 
@@ -788,9 +794,14 @@ class MainActivity : AppCompatActivity() {
     private fun updateShellGlass() {
         if (!::binding.isInitialized) return
         embeddedMessages?.setActive(shellGlassResumed && embeddedScreenId == R.id.tab_messages)
+        embeddedVideo?.setGlassRenderingActive(shellGlassResumed && embeddedScreenId == R.id.tab_video_feed)
         val enabled = true
         val visible = true
-        val source = if (embeddedScreenId == R.id.tab_home) binding.homeRefresh else binding.mainContentHost
+        val source = when (embeddedScreenId) {
+            R.id.tab_home -> binding.homeRefresh
+            R.id.tab_video_feed -> embeddedVideo?.glassBackdropSource ?: binding.mainContentHost
+            else -> binding.mainContentHost
+        }
         binding.glassBottomNavigation.visibility = if (visible) View.VISIBLE else View.GONE
         binding.glassBottomNavigation.setRenderingActive(visible && shellGlassResumed, source)
 

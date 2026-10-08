@@ -26,17 +26,17 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     private var navigationEndInset = 0
     private var landscapeNavigation = false
     private var statusBarInset = 0
+    val glassBackdropSource: View get() = binding.videoGlassBackdrop
     private val progressTick = object : Runnable { override fun run() { updateProgress(); progressHandler.postDelayed(this, 250) } }
 
     init {
         setCardBackgroundColor(PaletteManager.colors(context).surface)
         radius = 0f; preventCornerOverlap = false
         val colors = PaletteManager.colors(context)
-        binding.videoTopIsland.setPalette(colors)
-        binding.videoTopIsland.setRenderingActive(false, null)
-        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoGlassBackdrop.track(binding.videoTopIsland, Ui2DesignSystem.Shape.topIsland)
+        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
         Ui2DesignSystem.applyPressFeedback(binding.videoMenu)
         Ui2DesignSystem.applyPressFeedback(binding.videoAudio)
         Ui2DesignSystem.applyPressFeedback(binding.videoSort)
@@ -51,25 +51,27 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
         ViewCompat.requestApplyInsets(binding.root)
         ResourceCoordinator.enterVideoTab()
         CdnImageGate.pausePrefetch(context)
-        adapter = VideoFeedAdapter(this)
+        adapter = VideoFeedAdapter(this, binding.videoGlassBackdrop)
         binding.videoPager.orientation = ViewPager2.ORIENTATION_VERTICAL
         binding.videoPager.offscreenPageLimit = 1
         binding.videoPager.adapter = adapter
         pagerRecycler = binding.videoPager.getChildAt(0) as RecyclerView
+        binding.videoGlassBackdrop.results = pagerRecycler
 
         controller = VideoFeedController(
             context, adapter, binding.videoPager, pagerRecycler,
             onEmptyView = { visible, msg ->
-                binding.videoEmpty.visibility = if (visible) View.VISIBLE else View.GONE
+                binding.videoEmptyGlass.visibility = if (visible) View.VISIBLE else View.GONE
                 if (msg.isNotEmpty()) binding.videoEmpty.text = msg
             },
             onLoadingView = { loading ->
-                binding.videoEmpty.visibility = if (loading && adapter.itemCount == 0) View.VISIBLE else View.GONE
+                binding.videoEmptyGlass.visibility = if (loading && adapter.itemCount == 0) View.VISIBLE else View.GONE
             }
         )
 
         binding.videoMenu.setOnClickListener { (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu() }
         binding.videoAudio.setOnClickListener { controller.toggleMute() }
+        binding.videoEmptyGlass.setOnClickListener { controller.reloadFeed() }
         binding.videoSort.setOnClickListener { controller.showSortMenu(it) }
         binding.videoPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
@@ -112,10 +114,12 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     /** Rebinds persistent pager items after a global palette or accent change. */
     fun refreshPalette() {
         val colors = PaletteManager.colors(context)
-        binding.videoTopIsland.setPalette(colors)
-        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoGlassBackdrop.setBackgroundColor(colors.surface)
+        GlassWidgetStyle.apply(binding.videoTopIsland, Ui2DesignSystem.Shape.topIsland, colors)
+        binding.videoEmpty.setTextColor(colors.glassText)
+        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
         adapter.refreshPalette()
     }
 
@@ -136,7 +140,8 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
             progressHandler.removeCallbacks(progressTick); controller.playerPool.pauseAll()
         }
     }
-    fun dispose() { progressHandler.removeCallbacks(progressTick); controller.dispose() }
+    fun setGlassRenderingActive(active: Boolean) = binding.videoGlassBackdrop.setActive(active)
+    fun dispose() { setGlassRenderingActive(false); progressHandler.removeCallbacks(progressTick); controller.dispose() }
 
     override fun onToggle(position: Int) = controller.onToggle(position)
     override fun onDoubleTap(position: Int) = controller.onDoubleTap(position)

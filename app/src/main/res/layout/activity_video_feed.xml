@@ -4,6 +4,11 @@
     android:layout_height="match_parent"
     android:background="?attr/colorSurface">
 
+    <com.kerybotu.derpibooru.mirror.ui.VideoGlassBackdrop
+        android:id="@+id/video_glass_backdrop"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/video_pager"
         android:layout_width="match_parent"
@@ -47,12 +52,20 @@
         </LinearLayout>
     </com.kerybotu.derpibooru.mirror.ui.IslandGlassView>
 
-    <TextView
-        android:id="@+id/video_empty"
+    <com.example.liquidglass.LiquidGlassView
+        android:id="@+id/video_empty_glass"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:text="正在加载视频…"
-        android:textColor="?attr/colorOnSurface"
-        android:textSize="16sp" />
+        android:visibility="gone">
+        <TextView
+            android:id="@+id/video_empty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:padding="20dp"
+            android:text="正在加载视频…"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="16sp" />
+    </com.example.liquidglass.LiquidGlassView>
 </FrameLayout>

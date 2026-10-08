@@ -33,30 +33,33 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         )
         binding = ActivityVideoFeedBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.videoGlassBackdrop.track(binding.videoTopIsland, Ui2DesignSystem.Shape.topIsland)
         ResourceCoordinator.enterVideoTab()
         CdnImageGate.pausePrefetch(this)
         PaletteManager.apply(this)
         applyVideoPalette()
         Ui2DesignSystem.applyPressFeedback(binding.videoAudio)
         Ui2DesignSystem.applyPressFeedback(binding.videoSort)
-        adapter = VideoFeedAdapter(this)
+        adapter = VideoFeedAdapter(this, binding.videoGlassBackdrop)
         binding.videoPager.apply {
             orientation = ViewPager2.ORIENTATION_VERTICAL
             offscreenPageLimit = 1
             this.adapter = adapter
         }
         val pagerRecycler = binding.videoPager.getChildAt(0) as RecyclerView
+        binding.videoGlassBackdrop.results = pagerRecycler
         controller = VideoFeedController(
             this, adapter, binding.videoPager, pagerRecycler,
             onEmptyView = { visible, msg ->
-                binding.videoEmpty.visibility = if (visible) View.VISIBLE else View.GONE
+                binding.videoEmptyGlass.visibility = if (visible) View.VISIBLE else View.GONE
                 if (msg.isNotEmpty()) binding.videoEmpty.text = msg
             },
             onLoadingView = { loading ->
-                binding.videoEmpty.visibility = if (loading && adapter.itemCount == 0) View.VISIBLE else View.GONE
+                binding.videoEmptyGlass.visibility = if (loading && adapter.itemCount == 0) View.VISIBLE else View.GONE
             }
         )
         binding.videoAudio.setOnClickListener { controller.toggleMute() }
+        binding.videoEmptyGlass.setOnClickListener { controller.reloadFeed() }
         binding.videoSort.setOnClickListener { controller.showSortMenu(it) }
         binding.videoPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
@@ -79,7 +82,7 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         val buffering = player.playbackState == androidx.media3.common.Player.STATE_BUFFERING
         val prebuffering = player.playbackState == androidx.media3.common.Player.STATE_IDLE && player.playWhenReady
         val bitrate = controller.playerPool.bitrateEstimate()
-        holder.binding.videoBufferLabel.visibility = if (buffering || prebuffering) View.VISIBLE else View.GONE
+        holder.binding.videoBufferGlass.visibility = if (buffering || prebuffering) View.VISIBLE else View.GONE
         holder.binding.videoBufferLabel.text = buildString {
             if (bitrate > 0L) append("速度 ${formatBitrate(bitrate)}")
             if (bitrate <= 0L) {
@@ -105,11 +108,12 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
     override fun onDownload(position: Int) = controller.onDownload(position)
     override fun onMore(position: Int, anchor: View) = controller.onMore(position, anchor)
 
-    override fun onPause() { progressHandler.removeCallbacks(progressTick); controller.playerPool.pauseAll(); super.onPause() }
+    override fun onPause() { binding.videoGlassBackdrop.setActive(false); progressHandler.removeCallbacks(progressTick); controller.playerPool.pauseAll(); super.onPause() }
     override fun onResume() {
         super.onResume()
         PaletteManager.apply(this)
         applyVideoPalette()
+        binding.videoGlassBackdrop.setActive(true)
         progressHandler.post(progressTick)
         controller.activate(controller.currentPosition, automatic = true)
     }
@@ -122,11 +126,12 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
 
     private fun applyVideoPalette() {
         val colors = PaletteManager.colors(this)
-        binding.videoTopIsland.setPalette(colors)
-        binding.videoTopIsland.setRenderingActive(true, binding.videoPager)
-        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
-        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
+        binding.videoGlassBackdrop.setBackgroundColor(colors.surface)
+        GlassWidgetStyle.apply(binding.videoTopIsland, Ui2DesignSystem.Shape.topIsland, colors)
+        binding.videoEmpty.setTextColor(colors.glassText)
+        binding.videoMenu.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        binding.videoAudio.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
+        binding.videoSort.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)
         binding.videoMenu.visibility = View.GONE
         if (::adapter.isInitialized) adapter.refreshPalette()
     }

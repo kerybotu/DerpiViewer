@@ -5,25 +5,31 @@
     android:layout_height="match_parent"
     android:background="?attr/colorSurface">
 
-    <ImageView
-        android:id="@+id/video_ambient_background"
+    <FrameLayout
+        android:id="@+id/video_backdrop"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:alpha="0.42"
-        android:scaleType="centerCrop" />
-    <View
-        android:id="@+id/video_ambient_scrim"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:background="?attr/colorSurface">
+        <ImageView
+            android:id="@+id/video_ambient_background"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0.42"
+            android:scaleType="centerCrop" />
+        <View
+            android:id="@+id/video_ambient_scrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
-    <androidx.media3.ui.PlayerView
-        android:id="@+id/video_player"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@android:color/transparent"
-        android:keepScreenOn="true"
-        app:resize_mode="fit"
-        app:surface_type="texture_view" />
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/video_player"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:keepScreenOn="true"
+            app:resize_mode="fit"
+            app:surface_type="texture_view" />
+    </FrameLayout>
 
     <com.kerybotu.derpibooru.mirror.ui.IslandGlassView
         android:id="@+id/video_action_rail"
@@ -73,6 +79,20 @@
         </LinearLayout>
     </com.kerybotu.derpibooru.mirror.ui.IslandGlassView>
 
-    <TextView android:id="@+id/video_buffer_label" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:paddingHorizontal="10dp" android:paddingVertical="5dp" android:textSize="11sp" android:visibility="gone" />
-    <TextView android:id="@+id/video_speed" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:paddingHorizontal="14dp" android:paddingVertical="8dp" android:text="2x" android:textStyle="bold" android:visibility="gone" />
+    <com.example.liquidglass.LiquidGlassView
+        android:id="@+id/video_buffer_glass"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone">
+        <TextView android:id="@+id/video_buffer_label" android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingHorizontal="10dp" android:paddingVertical="5dp" android:textSize="11sp" />
+    </com.example.liquidglass.LiquidGlassView>
+    <com.example.liquidglass.LiquidGlassView
+        android:id="@+id/video_speed_glass"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone">
+        <TextView android:id="@+id/video_speed" android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingHorizontal="14dp" android:paddingVertical="8dp" android:text="2x" android:textStyle="bold" />
+    </com.example.liquidglass.LiquidGlassView>
 </FrameLayout>
