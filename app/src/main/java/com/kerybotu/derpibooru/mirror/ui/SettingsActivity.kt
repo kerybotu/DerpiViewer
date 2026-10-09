@@ -106,6 +106,8 @@ class SettingsActivity : AppCompatActivity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var systemTopInset = 0
     private var systemBottomInset = 0
+    private var systemLeftInset = 0
+    private var systemRightInset = 0
     private var paletteUpdating = false
     private var glassRenderingActive = false
 
@@ -135,12 +137,13 @@ class SettingsActivity : AppCompatActivity() {
             clipToPadding = false
             isFillViewport = true
             isVerticalScrollBarEnabled = true
+            scrollBarStyle = View.SCROLLBARS_OUTSIDE_OVERLAY
         }
         contentColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             clipChildren = false
         }
-        scroll.addView(contentColumn, ViewGroup.LayoutParams(-1, -2))
+        scroll.addView(contentColumn, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         pageBackdrop = View(this).apply { setBackgroundColor(PaletteManager.colors(this@SettingsActivity).surface) }
         scrollBackdrop = ScrollContentBackdrop(this, scroll).apply {
             setBackgroundColor(PaletteManager.colors(this@SettingsActivity).surface)
@@ -168,6 +171,8 @@ class SettingsActivity : AppCompatActivity() {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             systemTopInset = bars.top
             systemBottomInset = bars.bottom
+            systemLeftInset = bars.left
+            systemRightInset = bars.right
             applyResponsiveLayout()
             insets
         }
@@ -404,35 +409,43 @@ class SettingsActivity : AppCompatActivity() {
     private fun applyResponsiveLayout() {
         if (!::root.isInitialized || root.width <= 0) return
         val density = resources.displayMetrics.density
-        val widthDp = (root.width / density).toInt().coerceAtLeast(1)
+        val safeWidth = (root.width - systemLeftInset - systemRightInset).coerceAtLeast(1)
+        val widthDp = (safeWidth / density).toInt().coerceAtLeast(1)
         val tokens = AdaptiveLayoutPolicy.tokensForWidth(widthDp)
         val gutter = dp(tokens.screenGutterDp)
         val maxContent = dp(tokens.contentMaxWidthDp)
-        val contentWidth = (root.width - gutter * 2).coerceAtMost(maxContent).coerceAtLeast(dp(1))
-        val contentParams = contentColumn.layoutParams ?: ViewGroup.LayoutParams(-1, -2)
+        val contentWidth = (safeWidth - gutter * 2).coerceAtMost(maxContent).coerceAtLeast(1)
+        val contentParams = contentColumn.layoutParams as FrameLayout.LayoutParams
         if (contentParams.width != contentWidth) {
             contentParams.width = contentWidth
             contentColumn.layoutParams = contentParams
         }
-        val topWidth = AdaptiveLayoutPolicy.topIslandWidthPx(this, (root.width - gutter * 2).coerceAtLeast(1))
+        val topWidth = AdaptiveLayoutPolicy.topIslandWidthPx(this, (safeWidth - gutter * 2).coerceAtLeast(1))
         (topIsland.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
             val topHeight = dp(64)
             val topMargin = systemTopInset + dp(Ui2DesignSystem.Spacing.sm)
-            val gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            // FrameLayout adds the full difference between asymmetric margins when centering.
+            // Position the island explicitly so it shares the scroll content's safe-area center.
+            val gravity = Gravity.TOP or Gravity.LEFT
+            val leftMargin = systemLeftInset + (safeWidth - topWidth) / 2
             if (params.width != topWidth || params.height != topHeight ||
-                params.gravity != gravity || params.topMargin != topMargin
+                params.gravity != gravity || params.topMargin != topMargin ||
+                params.leftMargin != leftMargin
             ) {
                 params.width = topWidth
                 params.height = topHeight
                 params.gravity = gravity
                 params.topMargin = topMargin
+                params.leftMargin = leftMargin
                 topIsland.layoutParams = params
             }
         }
         val topPadding = systemTopInset + dp(64 + Ui2DesignSystem.Spacing.xl)
         val bottomPadding = systemBottomInset + dp(Ui2DesignSystem.Spacing.xl)
-        if (scroll.paddingTop != topPadding || scroll.paddingBottom != bottomPadding) {
-            scroll.setPadding(scroll.paddingLeft, topPadding, scroll.paddingRight, bottomPadding)
+        if (scroll.paddingTop != topPadding || scroll.paddingBottom != bottomPadding ||
+            scroll.paddingLeft != systemLeftInset || scroll.paddingRight != systemRightInset
+        ) {
+            scroll.setPadding(systemLeftInset, topPadding, systemRightInset, bottomPadding)
         }
     }
 

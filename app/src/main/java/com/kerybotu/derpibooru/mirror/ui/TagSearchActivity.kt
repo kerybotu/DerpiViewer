@@ -159,6 +159,9 @@ class TagSearchActivity : AppCompatActivity() {
         })
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         controls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateContentInsets() }
+        results.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) updateContentInsets()
+        }
 
         loadingIndicator = IosActivityIndicator(this)
         loadingPanel = trackGlass(LiquidGlassView(this), resultsSurface).apply {
@@ -194,19 +197,29 @@ class TagSearchActivity : AppCompatActivity() {
     private fun updateContentInsets() {
         if (!::results.isInitialized) return
         val windowWidthPx = (resources.configuration.screenWidthDp * resources.displayMetrics.density).toInt()
-        val width = (results.width.takeIf { it > 0 } ?: windowWidthPx) - leftInset - rightInset
-        val available = (width - dp(32)).coerceAtLeast(1)
+        val safeWidth = ((results.width.takeIf { it > 0 } ?: windowWidthPx) - leftInset - rightInset).coerceAtLeast(1)
+        val available = (safeWidth - dp(32)).coerceAtLeast(1)
         val headerWidth = AdaptiveLayoutPolicy.topIslandWidthPx(this, available)
         val contentWidth = AdaptiveLayoutPolicy.contentIslandWidthPx(this, available)
         if (header.layoutParams.width != headerWidth) header.layoutParams = header.layoutParams.apply { this.width = headerWidth }
         if (searchRow.layoutParams.width != contentWidth) searchRow.layoutParams = searchRow.layoutParams.apply { this.width = contentWidth }
-        val gutter = (width - contentWidth) / 2
+        val gutter = (safeWidth - contentWidth) / 2
         results.setPadding(leftInset + gutter, controls.height + dp(8), rightInset + gutter, bottomInset + dp(16))
         resultsSurface.contentTopInset = results.paddingTop
         if (::loadingPanel.isInitialized) {
             loadingPanel.layoutParams = (loadingPanel.layoutParams as FrameLayout.LayoutParams).apply {
-                gravity = if (tags.isEmpty()) Gravity.CENTER else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                gravity = (if (tags.isEmpty()) Gravity.CENTER_VERTICAL else Gravity.BOTTOM) or Gravity.LEFT
+                leftMargin = leftInset + (safeWidth - width) / 2
+                rightMargin = 0
                 bottomMargin = if (tags.isEmpty()) 0 else bottomInset + dp(16)
+            }
+        }
+        if (::statusPanel.isInitialized) {
+            statusPanel.layoutParams = (statusPanel.layoutParams as FrameLayout.LayoutParams).apply {
+                this.width = contentWidth
+                gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
+                leftMargin = leftInset + gutter
+                rightMargin = 0
             }
         }
     }

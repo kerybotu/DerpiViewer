@@ -178,14 +178,17 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         results.setPadding(systemLeft + gutter, contentTop, right + gutter, bottom)
         refresh.contentTopInset = contentTop
         loadingPanel.layoutParams = (loadingPanel.layoutParams as LayoutParams).apply {
-            gravity = if (centeredLoading) Gravity.CENTER else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            gravity = (if (centeredLoading) Gravity.CENTER_VERTICAL else Gravity.BOTTOM) or Gravity.LEFT
+            leftMargin = systemLeft + (safeWidth - width) / 2
+            rightMargin = 0
             topMargin = if (centeredLoading) contentTop else 0
             bottomMargin = bottom
         }
         statusPanel.layoutParams = (statusPanel.layoutParams as LayoutParams).apply {
             width = contentWidth
-            leftMargin = systemLeft + dp(16)
-            rightMargin = right + dp(16)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
+            leftMargin = systemLeft + gutter
+            rightMargin = 0
             topMargin = contentTop
             bottomMargin = bottom
         }

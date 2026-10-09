@@ -83,6 +83,8 @@ class SearchActivity : AppCompatActivity() {
     private var headerHiddenPixels = 0f
     private var headerSnapAnimator: ValueAnimator? = null
     private var bottomInset = 0
+    private var systemLeftInset = 0
+    private var systemRightInset = 0
     private var appliedPalette: PaletteDefinitions.Scheme? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -190,7 +192,11 @@ class SearchActivity : AppCompatActivity() {
             layoutManager = GridLayoutManager(this@SearchActivity, AdaptiveLayoutPolicy.artworkColumnCount(this@SearchActivity))
             clipToPadding = false
         }
-        AdaptiveLayoutPolicy.configureArtworkGrid(this, results)
+        // Keep grid sizing and system insets in one place; a second layout listener
+        // would overwrite the safe-area padding when the results width changes.
+        results.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) updateResultInsets()
+        }
         adapter = ImageAdapter(emptyList(), {
             startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image", it))
         }, { count ->
@@ -315,8 +321,10 @@ class SearchActivity : AppCompatActivity() {
             }
         })
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            systemLeftInset = bars.left
+            systemRightInset = bars.right
             controls.setPadding(bars.left + dp(12), bars.top + dp(8), bars.right + dp(12), 0)
             bottomInset = maxOf(bars.bottom, ime.bottom)
             updateResultInsets()
@@ -543,8 +551,37 @@ class SearchActivity : AppCompatActivity() {
 
     private fun updateResultInsets() {
         if (!::results.isInitialized) return
-        results.setPadding(dp(4), controls.height + dp(8), dp(4), bottomInset + dp(8))
+        val density = resources.displayMetrics.density
+        val windowWidth = (resources.configuration.screenWidthDp * density).toInt()
+        val safeWidth = ((results.width.takeIf { it > 0 } ?: windowWidth) - systemLeftInset - systemRightInset).coerceAtLeast(1)
+        val safeWidthDp = (safeWidth / density).toInt().coerceAtLeast(1)
+        val horizontalInset = AdaptiveLayoutPolicy.artworkHorizontalInsetPx(this, safeWidthDp)
+        val columns = AdaptiveLayoutPolicy.artworkColumnCountForWidth(safeWidthDp)
+        (results.layoutManager as? GridLayoutManager)?.let { grid ->
+            if (grid.spanCount != columns) grid.spanCount = columns
+        }
+        results.setPadding(
+            systemLeftInset + horizontalInset,
+            controls.height + dp(8),
+            systemRightInset + horizontalInset,
+            bottomInset + dp(8)
+        )
         resultsSurface.contentTopInset = results.paddingTop
+        if (::loadingPanel.isInitialized) {
+            loadingPanel.layoutParams = (loadingPanel.layoutParams as FrameLayout.LayoutParams).apply {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
+                leftMargin = systemLeftInset + (safeWidth - width) / 2
+                rightMargin = 0
+            }
+        }
+        if (::statusPanel.isInitialized) {
+            statusPanel.layoutParams = (statusPanel.layoutParams as FrameLayout.LayoutParams).apply {
+                width = (safeWidth - horizontalInset * 2).coerceAtLeast(1)
+                gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
+                leftMargin = systemLeftInset + horizontalInset
+                rightMargin = 0
+            }
+        }
         queryInput.dropDownWidth = queryInput.width
         updateGlassRendering()
     }
