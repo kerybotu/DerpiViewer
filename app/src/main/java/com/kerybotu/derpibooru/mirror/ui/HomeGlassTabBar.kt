@@ -93,6 +93,13 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
     }
 
     fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = com.kerybotu.derpibooru.mirror.PaletteManager.colors(context)) {
+        glassTint = colors.glassTint
+        overLight = !colors.isDark
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = Ui2DesignSystem.Shape.navigationIsland * resources.displayMetrics.density
+            setColor(colors.glassSurface)
+            setStroke(resources.displayMetrics.density.toInt().coerceAtLeast(1), colors.glassBorder)
+        }
         val radius = if (hasIconTabs) navigationRadiusDp() else Ui2DesignSystem.Shape.navigationIsland
         GlassWidgetStyle.apply(this, radius, colors)
         onAppearanceChanged(overLight)

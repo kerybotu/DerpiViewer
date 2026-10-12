@@ -512,6 +512,7 @@ class SettingsActivity : AppCompatActivity() {
                 setOnClickListener {
                     AppSettings.setAccentColor(this@SettingsActivity, accent)
                     PaletteManager.apply(this@SettingsActivity)
+                    PaletteManager.notifyChanged(this@SettingsActivity)
                     buildAccentSwatches()
                     applyPalette()
                 }
@@ -542,6 +543,7 @@ class SettingsActivity : AppCompatActivity() {
             }
             AppSettings.setPalette(this, palette)
             PaletteManager.apply(this)
+            PaletteManager.notifyChanged(this)
             buildAccentSwatches()
             applyPalette()
         }

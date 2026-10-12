@@ -98,6 +98,14 @@ class ImageDetailActivity : AppCompatActivity() {
         loadDetails()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::b.isInitialized) {
+            PaletteManager.apply(this)
+            applyPalette()
+        }
+    }
+
     private fun bindInitial() {
         spoilerRevealed = false
         b.detailFaves.text = image.faves.toString(); b.detailUpvotes.text = image.upvotes.toString()
@@ -148,6 +156,8 @@ class ImageDetailActivity : AppCompatActivity() {
         val palette = PaletteManager.colors(this)
         b.detailRoot.setBackgroundColor(palette.surface)
         b.detailVideoPlayer.setBackgroundColor(palette.mediaSurface)
+        GlassWidgetStyle.apply(b.detailAuthorPanel, Ui2DesignSystem.Shape.large, palette)
+        GlassWidgetStyle.apply(b.detailInteractionPanel, Ui2DesignSystem.Shape.island, palette)
         b.bottomSheet.background = android.graphics.drawable.GradientDrawable().apply {
             setColor(palette.surface)
             cornerRadii = floatArrayOf(dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), 0f, 0f, 0f, 0f)
@@ -173,6 +183,8 @@ class ImageDetailActivity : AppCompatActivity() {
             it.compoundDrawableTintList = ColorStateList.valueOf(palette.onSurface)
             it.setTextColor(palette.onSurface)
         }
+        b.detailDescriptionLabel.setTextColor(palette.glassSecondaryText)
+        b.detailSource.setTextColor(palette.primary)
     }
 
     private fun setGestures() {

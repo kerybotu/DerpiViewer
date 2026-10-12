@@ -11,6 +11,7 @@ import com.example.liquidglass.LiquidGlassListItem
 import com.example.liquidglass.LiquidGlassView
 import com.kerybotu.derpibooru.mirror.PaletteDefinitions
 import com.kerybotu.derpibooru.mirror.PaletteManager
+import android.graphics.drawable.GradientDrawable
 
 /** App theme and bounded rendering shared by the library's ready-made widgets. */
 object GlassWidgetStyle {
@@ -43,6 +44,15 @@ object GlassWidgetStyle {
         view.enablePressEffect = false
         view.enableShadow = false
         view.collectFrameStats = false
+        // Keep the resolved theme visible when realtime backdrop sampling is
+        // unavailable. The library's sampled layer is additive to this base.
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 24f * density
+            setColor(colors.glassSurface)
+            setStroke((density).toInt().coerceAtLeast(1), colors.glassBorder)
+        }
+        view.elevation = 0f
         view.invalidate()
     }
 

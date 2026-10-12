@@ -21,8 +21,27 @@ import com.kerybotu.derpibooru.mirror.ui.GlassFeedLayout
 import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
 import com.kerybotu.derpibooru.mirror.ui.HomeGlassTabBar
 import com.kerybotu.derpibooru.mirror.ui.IslandGlassView
+import java.lang.ref.WeakReference
+import java.util.concurrent.CopyOnWriteArrayList
 
 object PaletteManager {
+    private val observers = CopyOnWriteArrayList<WeakReference<(PaletteDefinitions.Scheme) -> Unit>>()
+
+    fun observe(owner: android.content.Context, callback: (PaletteDefinitions.Scheme) -> Unit): () -> Unit {
+        val ref = WeakReference(callback)
+        observers += ref
+        callback(colors(owner))
+        return { observers.remove(ref) }
+    }
+
+    fun notifyChanged(context: android.content.Context) {
+        val current = colors(context)
+        observers.removeAll { ref ->
+            val callback = ref.get()
+            if (callback == null) true else { callback(current); false }
+        }
+    }
+
     fun colors(context: android.content.Context): PaletteDefinitions.Scheme =
         PaletteDefinitions.forPalette(context, AppSettings.getPalette(context))
 
