@@ -13,7 +13,6 @@ import android.view.animation.OvershootInterpolator
 import android.graphics.Matrix
 import android.graphics.drawable.Drawable
 import android.widget.ImageView
-import android.widget.PopupMenu
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.content.res.ColorStateList
@@ -35,6 +34,10 @@ import com.kerybotu.derpibooru.mirror.translate.NiuTransService
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import com.kerybotu.derpibooru.mirror.favorites.FavoriteItem
 import com.kerybotu.derpibooru.mirror.favorites.LocalFavoritesStore
+import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuCard
+import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.*
 import org.json.JSONObject
 
@@ -76,8 +79,7 @@ class ImageDetailActivity : AppCompatActivity() {
         uploaderId = image.uploaderId
         sheet = BottomSheetBehavior.from(b.bottomSheet)
         sheet.state = BottomSheetBehavior.STATE_COLLAPSED
-        b.detailToolbar.appToolbar.setNavigationIcon(com.kerybotu.derpibooru.mirror.R.drawable.ic_arrow_back)
-        b.detailToolbar.appToolbar.setNavigationOnClickListener { finish() }
+        b.detailBack.setOnClickListener { finish() }
         b.btnShare.setOnClickListener { share() }
         b.btnMore.setOnClickListener { showMore() }
         b.btnExpandDescription.setOnClickListener { toggleDescription() }
@@ -101,6 +103,7 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailFaves.text = image.faves.toString(); b.detailUpvotes.text = image.upvotes.toString()
         b.detailCommentsCount.text = image.commentCount.toString()
         b.detailUploader.text = image.uploader ?: "未知上传者"; b.detailCreatedAt.text = image.createdAt?.take(10) ?: ""
+        b.detailTitle.text = image.title.ifBlank { "图片详情" }
         bindDescription(image.description.orEmpty())
         b.detailUploader.visibility = if (AppSettings.isUploaderHidden(this)) View.GONE else View.VISIBLE
         bindUploaderClick()
@@ -128,8 +131,10 @@ class ImageDetailActivity : AppCompatActivity() {
             val apiTag = entry.sourceName ?: entry.englishName
             contentDescription = apiTag
             isCheckable = false
-            setTextColor(palette.onSurface)
-            chipBackgroundColor = ColorStateList.valueOf(palette.surfaceVariant)
+            setTextColor(palette.glassText)
+            chipBackgroundColor = ColorStateList.valueOf(palette.glassSurfaceElevated)
+            chipStrokeColor = ColorStateList.valueOf(palette.glassBorder)
+            chipStrokeWidth = dp(1).toFloat()
             rippleColor = ColorStateList.valueOf(palette.primary)
             setOnClickListener {
                 startActivity(Intent(this@ImageDetailActivity, SearchActivity::class.java)
@@ -151,7 +156,19 @@ class ImageDetailActivity : AppCompatActivity() {
         b.sheetHandle.setBackgroundColor(palette.muted)
         b.btnShare.imageTintList = ColorStateList.valueOf(palette.onSurface)
         b.btnMore.imageTintList = ColorStateList.valueOf(palette.onSurface)
-        b.detailToolbar.appToolbar.navigationIcon?.setTint(palette.onPrimary)
+        b.detailTopIsland.setPalette(palette)
+        b.detailBack.imageTintList = ColorStateList.valueOf(palette.glassText)
+        b.detailTitle.setTextColor(palette.glassText)
+        ViewCompat.setOnApplyWindowInsetsListener(b.root) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            (b.detailTopIsland.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
+                val margin = dp(8) + bars.top
+                if (params.topMargin != margin) { params.topMargin = margin; b.detailTopIsland.layoutParams = params }
+            }
+            b.detailScroll.setPadding(b.detailScroll.paddingLeft, b.detailScroll.paddingTop, b.detailScroll.paddingRight, dp(16) + bars.bottom)
+            insets
+        }
+        ViewCompat.requestApplyInsets(b.root)
         listOf(b.detailFaves, b.detailUpvotes, b.detailCommentsCount).forEach {
             it.compoundDrawableTintList = ColorStateList.valueOf(palette.onSurface)
             it.setTextColor(palette.onSurface)
@@ -483,10 +500,9 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailCommentsPreview.removeAllViews()
         for (index in 0 until comments.length()) {
             val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
-            b.detailCommentsPreview.addView(
-                CommentCardRenderer.create(this@ImageDetailActivity, comment, scope),
-                CommentCardRenderer.layoutParams(this@ImageDetailActivity)
-            )
+            val card = GlassCommentCard(this@ImageDetailActivity)
+            card.bind(comment, null, { }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
+            b.detailCommentsPreview.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
     }
 
@@ -558,25 +574,24 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun toggleDescription() { expanded = !expanded; b.detailDescription.maxLines = if (expanded) Int.MAX_VALUE else 3; b.btnExpandDescription.text = if (expanded) "收起" else "展开阅读"; sheet.state = BottomSheetBehavior.STATE_HALF_EXPANDED }
     private fun share() { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "https://${AppSettings.getTargetDomain(this@ImageDetailActivity)}/images/${image.id}") }, "分享图片")) }
-    private fun showMore() { PopupMenu(this, b.btnMore).apply {
-        menu.add("下载"); menu.add("查看原图"); menu.add("复制链接")
-        setOnMenuItemClickListener {
-            when (it.title) {
-                "下载" -> {
-                    val url = fullUrl ?: image.fullUrl ?: image.thumbnailUrl
-                    if (url.isNullOrBlank()) Toast.makeText(this@ImageDetailActivity, "暂无可下载地址", Toast.LENGTH_SHORT).show()
-                    else {
-                        DownloadQueueManager.get(this@ImageDetailActivity).enqueueImages(listOf(image.copy(fullUrl = url)))
-                        Toast.makeText(this@ImageDetailActivity, "已加入下载队列", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                "查看原图" -> fullUrl?.let { url -> startActivity(Intent(this@ImageDetailActivity, FullScreenImageActivity::class.java)
-                    .putExtra("full_url", url)
-                    .putExtra("image_id", image.id)) }
-                "复制链接" -> getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("图片链接", "https://${AppSettings.getTargetDomain(this@ImageDetailActivity)}/images/${image.id}"))
-            }
-            true
-        }; show()
-    } }
+    private fun showMore() {
+        val items = listOf(
+            GlassMenuItem("download", com.kerybotu.derpibooru.mirror.R.drawable.ic_download, "下载") { enqueueDownload() },
+            GlassMenuItem("original", com.kerybotu.derpibooru.mirror.R.drawable.ic_image, "查看原图") { fullUrl?.let { url -> startActivity(Intent(this, FullScreenImageActivity::class.java).putExtra("full_url", url).putExtra("image_id", image.id)) } },
+            GlassMenuItem("copy", com.kerybotu.derpibooru.mirror.R.drawable.ic_bookmark, "复制链接") { copyImageLink() }
+        )
+        GlassMenuCard(this, items).show()
+    }
+
+    private fun enqueueDownload() {
+        val url = fullUrl ?: image.fullUrl ?: image.thumbnailUrl
+        if (url.isNullOrBlank()) Toast.makeText(this, "暂无可下载地址", Toast.LENGTH_SHORT).show()
+        else { DownloadQueueManager.get(this).enqueueImages(listOf(image.copy(fullUrl = url))); Toast.makeText(this, "已加入下载队列", Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun copyImageLink() {
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("图片链接", "https://${AppSettings.getTargetDomain(this)}/images/${image.id}"))
+        Toast.makeText(this, "链接已复制", Toast.LENGTH_SHORT).show()
+    }
     override fun onDestroy() { tagJob?.cancel(); previewPlayer?.release(); scope.cancel(); super.onDestroy() }
 }
