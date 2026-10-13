@@ -41,7 +41,7 @@
                 android:layout_height="48dp" />
         </LinearLayout>
     </com.kerybotu.derpibooru.mirror.ui.IslandGlassView>
-    <LinearLayout android:id="@+id/bottom_sheet" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:clickable="true" android:focusable="true" android:background="@drawable/bg_detail_sheet" app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior" app:behavior_peekHeight="112dp" app:behavior_hideable="false" app:behavior_fitToContents="false" app:behavior_halfExpandedRatio="0.52">
+    <LinearLayout android:id="@+id/bottom_sheet" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:clickable="true" android:focusable="true" android:background="@android:color/transparent" app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior" app:behavior_peekHeight="112dp" app:behavior_hideable="false" app:behavior_fitToContents="false" app:behavior_halfExpandedRatio="0.52">
         <View android:id="@+id/sheet_handle" android:layout_width="36dp" android:layout_height="4dp" android:layout_gravity="center_horizontal" android:layout_marginTop="10dp" android:layout_marginBottom="8dp" android:background="#66777777" />
         <com.example.liquidglass.LiquidGlassView android:id="@+id/detail_author_panel" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginHorizontal="12dp" android:layout_marginTop="4dp" android:paddingHorizontal="4dp">
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:paddingHorizontal="8dp">
@@ -62,7 +62,7 @@
             <TextView android:id="@+id/detail_comments_count" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:gravity="center" android:drawableStart="@drawable/ic_comment" android:drawablePadding="6dp" android:text="0" />
         </LinearLayout>
         </com.example.liquidglass.LiquidGlassView>
-        <View android:id="@+id/detail_divider" android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/colorOutlineVariant" />
+        <View android:id="@+id/detail_divider" android:layout_width="match_parent" android:layout_height="0dp" android:visibility="gone" />
         <androidx.core.widget.NestedScrollView android:id="@+id/detail_scroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false">
             <LinearLayout android:id="@+id/detail_content" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingHorizontal="16dp" android:paddingTop="12dp" android:paddingBottom="36dp">
                 <TextView android:id="@+id/detail_description_label" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="作品描述" android:textSize="13sp" android:textStyle="bold" />

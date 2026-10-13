@@ -12,6 +12,7 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.graphics.Matrix
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.ColorDrawable
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -96,6 +97,10 @@ class ImageDetailActivity : AppCompatActivity() {
         bindInitial()
         setGestures()
         loadDetails()
+        b.root.addOnLayoutChangeListener { _, left, _, right, bottom, oldLeft, _, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom != oldBottom) applyIslandWidths()
+        }
+        b.root.post { applyIslandWidths() }
     }
 
     override fun onResume() {
@@ -158,10 +163,7 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailVideoPlayer.setBackgroundColor(palette.mediaSurface)
         GlassWidgetStyle.apply(b.detailAuthorPanel, Ui2DesignSystem.Shape.large, palette)
         GlassWidgetStyle.apply(b.detailInteractionPanel, Ui2DesignSystem.Shape.island, palette)
-        b.bottomSheet.background = android.graphics.drawable.GradientDrawable().apply {
-            setColor(palette.surface)
-            cornerRadii = floatArrayOf(dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), 0f, 0f, 0f, 0f)
-        }
+        b.bottomSheet.background = ColorDrawable(android.graphics.Color.TRANSPARENT)
         b.detailDivider.setBackgroundColor(palette.divider)
         b.sheetHandle.setBackgroundColor(palette.muted)
         b.btnShare.imageTintList = ColorStateList.valueOf(palette.onSurface)
@@ -185,6 +187,20 @@ class ImageDetailActivity : AppCompatActivity() {
         }
         b.detailDescriptionLabel.setTextColor(palette.glassSecondaryText)
         b.detailSource.setTextColor(palette.primary)
+    }
+
+    private fun applyIslandWidths() {
+        val available = b.root.width.takeIf { it > 0 } ?: return
+        val width = AdaptiveLayoutPolicy.contentIslandWidthPx(this, available)
+            .coerceAtMost((available - dp(24)).coerceAtLeast(dp(1)))
+        listOf(b.detailAuthorPanel, b.detailInteractionPanel).forEach { island ->
+            val params = island.layoutParams as? android.widget.LinearLayout.LayoutParams ?: return@forEach
+            if (params.width != width || params.gravity != android.view.Gravity.CENTER_HORIZONTAL) {
+                params.width = width
+                params.gravity = android.view.Gravity.CENTER_HORIZONTAL
+                island.layoutParams = params
+            }
+        }
     }
 
     private fun setGestures() {
@@ -592,7 +608,7 @@ class ImageDetailActivity : AppCompatActivity() {
             GlassMenuItem("original", com.kerybotu.derpibooru.mirror.R.drawable.ic_image, "查看原图") { fullUrl?.let { url -> startActivity(Intent(this, FullScreenImageActivity::class.java).putExtra("full_url", url).putExtra("image_id", image.id)) } },
             GlassMenuItem("copy", com.kerybotu.derpibooru.mirror.R.drawable.ic_bookmark, "复制链接") { copyImageLink() }
         )
-        GlassMenuCard(this, items).show()
+        GlassMenuCard(this, items, b.btnMore).show()
     }
 
     private fun enqueueDownload() {

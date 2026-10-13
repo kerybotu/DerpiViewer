@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.Gravity
 import android.view.View
+import android.graphics.Rect
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -19,7 +20,7 @@ import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
 import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
 
-class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(context) {
+class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private val anchor: View? = null) : Dialog(context) {
     private val density = context.resources.displayMetrics.density
     private val glassContainer = IslandGlassView(context)
     private val panelWidth: Int
@@ -130,6 +131,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
     override fun show() {
         super.show()
         window?.setLayout(panelWidth, panelHeight)
+        positionNearAnchor()
         applyGlassPalette(PaletteManager.colors(context))
         glassContainer.post {
             glassContainer.setRenderingActive(true, activityContentRoot())
@@ -144,6 +146,28 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
                 .setInterpolator(Ui2DesignSystem.Motion.spring)
                 .start()
         }
+    }
+
+    /** Positions the dialog from the actual trigger bounds after both views are measured. */
+    private fun positionNearAnchor() {
+        val window = window ?: return
+        val trigger = anchor?.takeIf { it.isShown && it.width > 0 && it.height > 0 } ?: return
+        val location = IntArray(2)
+        trigger.getLocationOnScreen(location)
+        val frame = Rect()
+        trigger.getWindowVisibleDisplayFrame(frame)
+        val margin = (12 * density).toInt()
+        val right = location[0] + trigger.width
+        val below = location[1] + trigger.height + margin
+        val above = location[1] - panelHeight - margin
+        val y = if (below + panelHeight <= frame.bottom - margin) below else above
+        val clampedY = y.coerceIn(frame.top + margin, (frame.bottom - panelHeight - margin).coerceAtLeast(frame.top + margin))
+        val x = (right - panelWidth).coerceIn(frame.left + margin, (frame.right - panelWidth - margin).coerceAtLeast(frame.left + margin))
+        val params = window.attributes
+        params.gravity = Gravity.TOP or Gravity.START
+        params.x = x - frame.left
+        params.y = clampedY - frame.top
+        window.attributes = params
     }
 
     override fun dismiss() {
