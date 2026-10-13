@@ -26,10 +26,24 @@ object GlassWidgetStyle {
     ) {
         val density = view.resources.displayMetrics.density
         view.material = GlassMaterial.REGULAR
-        view.enableAdaptiveTint = true
-        view.overLight = !colors.isDark
+        // The library's adaptive tint samples the backdrop and replaces the
+        // resolved app tint. That makes a light app theme inherit a dark
+        // sample from media/scrim content. PaletteManager is the single
+        // source of truth, so keep the library's adaptive sampler disabled
+        // and use the resolved semantic glass tokens below.
+        view.enableAdaptiveTint = false
+        // In v2.0.11 overLight is a renderer contrast flag, not ThemeMode:
+        // true adds #33000000 even with adaptive tint disabled (twice on
+        // the bitmap fallback). Use REGULAR's neutral highlight pass; app
+        // tokens below own both the light/dark base and widget foreground.
+        view.overLight = false
         view.glassTint = colors.glassTint
         view.enableBackdropBlur = true
+        // Pre-31 uses synchronous bitmap rendering. Native chromatic
+        // dispersion on every frame stalls the UI thread on that path;
+        // retain backdrop blur/refraction and use the bounded fallback.
+        view.enableChromaticDispersion = android.os.Build.VERSION.SDK_INT >= 31
+        view.enableChromaticAberration = android.os.Build.VERSION.SDK_INT >= 31
         view.blurAmount = 0.045f
         view.saturation = 125f
         view.adaptiveLensScale = true
@@ -48,28 +62,11 @@ object GlassWidgetStyle {
         // unavailable. The library's sampled layer is additive to this base.
         view.background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = 24f * density
+            cornerRadius = view.cornerRadius
             setColor(colors.glassSurface)
             setStroke((density).toInt().coerceAtLeast(1), colors.glassBorder)
         }
         view.elevation = 0f
-        view.invalidate()
-    }
-
-    fun apply(
-        view: LiquidGlassView,
-        radiusDp: Float = 24f,
-        colors: PaletteDefinitions.Scheme = PaletteManager.colors(view.context)
-    ) {
-        applyMaterial(view, colors)
-        view.cornerRadius = radiusDp * view.resources.displayMetrics.density
-        view.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(v: View, outline: Outline) {
-                outline.setRoundRect(0, 0, v.width, v.height,
-                    view.cornerRadius.coerceAtMost(minOf(v.width, v.height) / 2f))
-            }
-        }
-        view.clipToOutline = true
         when (view) {
             is LiquidGlassButton -> view.setTextColor(colors.glassText)
             is LiquidGlassChip -> view.setTextColor(colors.glassText)
@@ -84,5 +81,22 @@ object GlassWidgetStyle {
             }
         }
         view.invalidate()
+    }
+
+    fun apply(
+        view: LiquidGlassView,
+        radiusDp: Float = 24f,
+        colors: PaletteDefinitions.Scheme = PaletteManager.colors(view.context)
+    ) {
+        applyMaterial(view, colors)
+        view.cornerRadius = radiusDp * view.resources.displayMetrics.density
+        (view.background as? GradientDrawable)?.cornerRadius = view.cornerRadius
+        view.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(v: View, outline: Outline) {
+                outline.setRoundRect(0, 0, v.width, v.height,
+                    view.cornerRadius.coerceAtMost(minOf(v.width, v.height) / 2f))
+            }
+        }
+        view.clipToOutline = true
     }
 }

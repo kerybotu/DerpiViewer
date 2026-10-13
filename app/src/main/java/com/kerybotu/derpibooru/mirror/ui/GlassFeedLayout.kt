@@ -238,7 +238,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         for (index in 0 until toolbar.menu.size()) toolbar.menu.getItem(index).icon?.mutate()?.setTint(iconColor)
         progress.applyPalette(colors)
         refresh.applyPalette(colors)
-        tabs?.applyPalette()
+        tabs?.applyPalette(colors)
         attachedGlass.toMap().forEach { (view, radius) -> GlassWidgetStyle.apply(view, radius, colors) }
         onPaletteChanged?.invoke()
         updateGlassRendering()

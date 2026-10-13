@@ -15,7 +15,7 @@ import com.example.liquidglass.LiquidGlassTabBar
 import com.example.liquidglass.LiquidGlassView
 import kotlin.math.abs
 
-/** Library tab bar with app navigation, reselection and a fixed white foreground. */
+/** Library tab bar with app navigation, reselection and theme-aware foreground. */
 class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     LiquidGlassTabBar(context, attrs) {
     var onItemSelected: ((Int) -> Unit)? = null
@@ -93,13 +93,6 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
     }
 
     fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = com.kerybotu.derpibooru.mirror.PaletteManager.colors(context)) {
-        glassTint = colors.glassTint
-        overLight = !colors.isDark
-        background = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = Ui2DesignSystem.Shape.navigationIsland * resources.displayMetrics.density
-            setColor(colors.glassSurface)
-            setStroke(resources.displayMetrics.density.toInt().coerceAtLeast(1), colors.glassBorder)
-        }
         val radius = if (hasIconTabs) navigationRadiusDp() else Ui2DesignSystem.Shape.navigationIsland
         GlassWidgetStyle.apply(this, radius, colors)
         onAppearanceChanged(overLight)

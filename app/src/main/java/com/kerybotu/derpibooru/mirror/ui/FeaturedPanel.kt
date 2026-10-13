@@ -140,7 +140,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
 
     /** Positions the floating island from the actual window and inset sizes. */
     private fun updateTopIslandLayout() {
-        if (!::topIsland.isInitialized) return
+        if (!::topIsland.isInitialized || width <= 0) return
         val safeWidth = (width - systemLeftInset - systemRightInset).coerceAtLeast(1)
         val available = (safeWidth - dp(32)).coerceAtLeast(1)
         val params = topIsland.layoutParams as? FrameLayout.LayoutParams ?: return
@@ -173,15 +173,18 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         topGlass.setRenderingActive(active, refreshLayout)
     }
 
-    fun refreshPalette() {
+    fun refreshPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         updateTopIslandRendering()
-        refreshLayout.setBackgroundColor(PaletteManager.colors(context).surface)
+        topGlass.setPalette(colors)
+        refreshLayout.setBackgroundColor(colors.surface)
         refreshDisplayMode()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        updateTopIslandLayout()
+        // LayoutParams changed during layout may miss a new measure pass.
+        // Recalculate after layout, using the actual visible container width.
+        post { updateTopIslandLayout() }
     }
 
     override fun onAttachedToWindow() {
@@ -192,7 +195,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
 
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
         super.onVisibilityChanged(changedView, visibility)
-        if (changedView === this) post { updateTopIslandRendering() }
+        if (changedView === this) post { updateTopIslandLayout(); updateTopIslandRendering() }
     }
 
     override fun onDetachedFromWindow() {

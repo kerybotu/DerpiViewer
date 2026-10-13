@@ -899,7 +899,7 @@ class MainActivity : AppCompatActivity() {
             binding.headerGlass.setPalette(colors)
             binding.toolbar.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
             binding.toolbar.elevation = 0f
-            GlassWidgetStyle.apply(binding.fabUploadGlass, Ui2DesignSystem.Shape.fabIsland)
+            GlassWidgetStyle.apply(binding.fabUploadGlass, Ui2DesignSystem.Shape.fabIsland, colors)
             binding.fabUploadContainer.outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
                     val radius = binding.fabUploadGlass.cornerRadius.coerceAtMost(minOf(view.width, view.height) / 2f)

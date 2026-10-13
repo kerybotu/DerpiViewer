@@ -443,7 +443,7 @@ class SearchActivity : AppCompatActivity() {
         })
         val color = PaletteManager.colors(this).glassText
         builder.overLightTextColor = color; builder.overDarkTextColor = color
-        return builder.setTitle(title).setView(content).create()
+        return builder.setTitle(title).setView(content).create().also(PaletteManager::bindDialogTheme)
     }
 
     private fun runSearch(fromPull: Boolean = false) {

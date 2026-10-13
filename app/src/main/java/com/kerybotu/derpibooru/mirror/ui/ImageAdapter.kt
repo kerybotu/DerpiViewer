@@ -89,7 +89,7 @@ class ImageAdapter(
     override fun getItemCount(): Int = items.size
 
     override fun onViewRecycled(holder: ImageViewHolder) {
-        Glide.with(holder.binding.imageThumbnail).clear(holder.binding.imageThumbnail)
+        holder.imageRequests.clear(holder.binding.imageThumbnail)
         super.onViewRecycled(holder)
     }
 
@@ -139,6 +139,7 @@ class ImageAdapter(
         private val glassSurfaces: List<LiquidGlassView> = emptyList(),
         private val glassOverlays: Map<View, LiquidGlassView> = emptyMap()
     ) : RecyclerView.ViewHolder(root) {
+        val imageRequests = Glide.with(binding.imageThumbnail)
 
         fun bind(image: Image, onClick: (Image) -> Unit, selectionActive: Boolean, selected: Boolean, toggle: (Image, android.view.View) -> Unit) {
             val palette = PaletteManager.colors(binding.root.context)

@@ -34,11 +34,12 @@ class SafeToolbar @JvmOverloads constructor(
         ViewCompat.requestApplyInsets(this)
     }
 
-    fun applyUi2Appearance() {
-        val palette = PaletteManager.colors(context)
+    fun applyUi2Appearance(palette: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         Ui2DesignSystem.styleIsland(this, palette, Ui2DesignSystem.Shape.topIsland)
         setTitleTextColor(palette.onSurface)
         navigationIcon?.setTint(palette.onSurface)
+        overflowIcon?.mutate()?.setTint(palette.onSurface)
+        for (i in 0 until menu.size()) menu.getItem(i).icon?.mutate()?.setTint(palette.onSurface)
         elevation = Ui2DesignSystem.Elevation.topIslandDp * resources.displayMetrics.density
     }
 }

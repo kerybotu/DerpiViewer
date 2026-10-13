@@ -75,9 +75,8 @@ internal class GlassCommentCard(context: Context) : LiquidGlassListItem(context)
         applyPalette()
     }
 
-    fun applyPalette() {
-        glassSurfaces.forEach { GlassWidgetStyle.apply(it, 16f) }
-        val colors = PaletteManager.colors(context)
+    fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
+        glassSurfaces.forEach { GlassWidgetStyle.apply(it, 16f, colors) }
         author.setTextColor(colors.glassText)
         body.setTextColor(colors.glassSecondaryText)
     }

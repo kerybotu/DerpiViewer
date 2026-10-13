@@ -36,7 +36,10 @@ object PaletteDefinitions {
         val onSurfaceVariant = if (mode == ThemeMode.DARK) 0xFFC7C7C7.toInt() else generated.onSurfaceVariant
         val outline = if (mode == ThemeMode.DARK) 0xFF666666.toInt() else generated.outline
         val glassBase = blend(surface, generated.primary, 0.12f)
-        val glassTint = alpha(glassBase, if (mode == ThemeMode.DARK) 88 else 64)
+        // The renderer composites this over sampled artwork. Light mode
+        // needs enough coverage to remain a light material over dark media,
+        // while still showing blur/refraction underneath the neutral tint.
+        val glassTint = alpha(glassBase, if (mode == ThemeMode.DARK) 88 else 184)
         val glassSurface = alpha(surface, if (mode == ThemeMode.DARK) 184 else 194)
         val glassSurfaceElevated = alpha(surfaceVariant, if (mode == ThemeMode.DARK) 216 else 224)
         val glassBorder = alpha(if (mode == ThemeMode.DARK) 0xFFFFFFFF.toInt() else onSurface, if (mode == ThemeMode.DARK) 42 else 34)

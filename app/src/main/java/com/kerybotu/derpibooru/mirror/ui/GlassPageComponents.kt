@@ -83,6 +83,7 @@ internal class GlassPageDialogs(private val feed: GlassFeedLayout) {
             overDarkTextColor = PaletteManager.colors(context).glassText
         }
         dialog = builder.setTitle(title).setMessage(message).setView(content).create()
+        PaletteManager.bindDialogTheme(dialog)
         dialog.show()
         return dialog
     }

@@ -115,6 +115,7 @@ class GalleryActivity : AppCompatActivity() {
             overDarkTextColor = PaletteManager.colors(this@GalleryActivity).glassText
         }
         dialog = builder.setTitle("筛选图集").setView(content).create()
+        PaletteManager.bindDialogTheme(dialog)
         dialog.show()
     }
 

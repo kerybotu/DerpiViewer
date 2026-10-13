@@ -92,11 +92,15 @@ class VideoFeedAdapter(
     override fun onViewRecycled(holder: Holder) {
         glassBackdrop.forgetVideo(holder.binding.videoPlayer.videoSurfaceView)
         holder.binding.videoPlayer.player = null
-        Glide.with(holder.binding.videoAmbientBackground).clear(holder.binding.videoAmbientBackground)
+        // Theme rebind animations can recycle views after Activity destruction.
+        // Reuse its existing lifecycle-bound manager instead of retrieving
+        // a new one from the destroyed Activity's View context.
+        holder.imageRequests.clear(holder.binding.videoAmbientBackground)
         super.onViewRecycled(holder)
     }
 
     class Holder(val binding: ItemVideoFeedBinding) : RecyclerView.ViewHolder(binding.root) {
+        val imageRequests = Glide.with(binding.videoAmbientBackground)
         fun bind(
             post: VideoPost,
             position: Int,
@@ -108,7 +112,7 @@ class VideoFeedAdapter(
             applyNavigationInsets(bottomInset, endInset, landscape)
             val colors = PaletteManager.colors(root.context)
             val uiColors = Ui2DesignSystem.colors(root.context)
-            Glide.with(videoAmbientBackground)
+            imageRequests
                 .load(post.thumbnailUrl ?: post.url)
                 .centerCrop()
                 .into(videoAmbientBackground)

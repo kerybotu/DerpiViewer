@@ -26,6 +26,9 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
     private val panelWidth: Int
     private val panelHeight: Int
     private var anchorLayoutListener: View.OnLayoutChangeListener? = null
+    private val rows = mutableListOf<LinearLayout>()
+    private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyGlassPalette(it) }
+    private var removePaletteObserver: (() -> Unit)? = null
 
     init {
         window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -100,6 +103,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
             container.addView(itemView, LinearLayout.LayoutParams(-1, -2).apply {
                 bottomMargin = (4 * density).toInt()
             })
+            rows += itemView
         }
 
         val scroll = ScrollView(context).apply {
@@ -155,6 +159,18 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        removePaletteObserver?.invoke()
+        removePaletteObserver = PaletteManager.observe(context, paletteObserver)
+    }
+
+    override fun onStop() {
+        removePaletteObserver?.invoke()
+        removePaletteObserver = null
+        super.onStop()
+    }
+
     /** Positions the dialog from the actual trigger bounds after both views are measured. */
     private fun positionNearAnchor() {
         val window = window ?: return
@@ -207,5 +223,16 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
 
     private fun applyGlassPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) {
         GlassWidgetStyle.apply(glassContainer, GlassMenuTokens.cornerRadiusDp, colors)
+        rows.forEachIndexed { index, row ->
+            val item = items[index]
+            val foreground = if (item.selected) colors.primary else colors.glassText
+            (row.getChildAt(0) as? ImageView)?.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
+            (row.getChildAt(1) as? TextView)?.setTextColor(foreground)
+            if (item.selected) row.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = GlassMenuTokens.itemCornerRadiusDp * density
+                setColor(colors.glassSurfaceElevated)
+                setStroke(density.toInt().coerceAtLeast(1), colors.glassBorder)
+            }
+        }
     }
 }

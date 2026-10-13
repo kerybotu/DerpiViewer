@@ -22,8 +22,7 @@ open class IslandGlassView @JvmOverloads constructor(
     }
 
     fun setPalette(colors: PaletteDefinitions.Scheme) {
-        GlassWidgetStyle.apply(this, Ui2DesignSystem.Shape.topIsland, colors)
-        onAppearanceChanged(overLight)
+        GlassWidgetStyle.apply(this, cornerRadius / resources.displayMetrics.density, colors)
     }
 
     open fun setRenderingActive(active: Boolean, source: View?) {

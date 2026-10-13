@@ -59,7 +59,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
-    implementation(libs.liquid.glass)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -79,3 +78,7 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
     implementation("androidx.media3:media3-datasource:1.5.1")
 }
+
+// Keep v2.0.11's renderer and resources, replacing only its unbounded
+// displacement-map allocator. See the script and source for provenance.
+apply(from = rootProject.file("gradle/liquid-glass-bounded.gradle.kts"))
