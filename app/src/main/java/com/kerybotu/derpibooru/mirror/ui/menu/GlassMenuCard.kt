@@ -25,6 +25,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
     private val glassContainer = IslandGlassView(context)
     private val panelWidth: Int
     private val panelHeight: Int
+    private var anchorLayoutListener: View.OnLayoutChangeListener? = null
 
     init {
         window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -132,6 +133,12 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
         super.show()
         window?.setLayout(panelWidth, panelHeight)
         positionNearAnchor()
+        anchor?.let { trigger ->
+            anchorLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                window?.decorView?.post { positionNearAnchor() }
+            }
+            anchorLayoutListener?.let(trigger::addOnLayoutChangeListener)
+        }
         applyGlassPalette(PaletteManager.colors(context))
         glassContainer.post {
             glassContainer.setRenderingActive(true, activityContentRoot())
@@ -171,6 +178,8 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
     }
 
     override fun dismiss() {
+        anchor?.let { trigger -> anchorLayoutListener?.let(trigger::removeOnLayoutChangeListener) }
+        anchorLayoutListener = null
         glassContainer.setRenderingActive(false, null)
         window?.decorView?.let { decor ->
             decor.animate()
