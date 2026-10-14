@@ -98,6 +98,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var clearCache: LiquidGlassButton
     private lateinit var updateFrequency: Spinner
     private lateinit var checkUpdate: LiquidGlassButton
+    private lateinit var aboutDeveloper: LiquidGlassButton
 
     private val glassSurfaces = mutableListOf<LiquidGlassView>()
     private val glassButtons = mutableListOf<LiquidGlassButton>()
@@ -165,6 +166,7 @@ class SettingsActivity : AppCompatActivity() {
         buildBrowsingSection()
         buildNetworkSection()
         buildUpdateSection()
+        buildAboutSection()
         buildTopIsland()
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -321,6 +323,20 @@ class SettingsActivity : AppCompatActivity() {
         sectionContent(section).addView(updateFrequency, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(10) })
         checkUpdate = actionButton("立即检查更新")
         sectionContent(section).addView(checkUpdate, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(10) })
+        addSection(section)
+    }
+
+    private fun buildAboutSection() {
+        val section = section("关于与开发者声明")
+        sectionContent(section).addView(
+            bodyText("项目介绍、开源许可与免责声明", 13f),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) }
+        )
+        aboutDeveloper = actionButton("查看关于与开发者声明")
+        sectionContent(section).addView(
+            aboutDeveloper,
+            LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(12) }
+        )
         addSection(section)
     }
 
@@ -592,6 +608,9 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
         clearCache.setOnClickListener { clearCache() }
+        aboutDeveloper.setOnClickListener {
+            startActivity(android.content.Intent(this, AboutDeveloperActivity::class.java))
+        }
     }
 
     private fun bindUpdateSettings() {
