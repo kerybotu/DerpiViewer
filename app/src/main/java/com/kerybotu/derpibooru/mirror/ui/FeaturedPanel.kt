@@ -9,7 +9,6 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.widget.NestedScrollView
@@ -38,7 +37,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
     private val items = mutableListOf<Image>()
     private lateinit var adapter: ImageAdapter
     private lateinit var heroBox: LinearLayout
-    private lateinit var progress: ProgressBar
+    private lateinit var progress: IosActivityIndicator
     private lateinit var refreshLayout: PullRefreshLayout
     private lateinit var topIsland: FrameLayout
     private lateinit var topGlass: IslandGlassView
@@ -84,7 +83,10 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         refreshLayout.setOnRefreshListener { refresh() }
         addView(refreshLayout, LayoutParams(-1, -1))
         addSharedMenuIsland()
-        progress = ProgressBar(context).apply { isIndeterminate = true }
+        progress = IosActivityIndicator(context).apply {
+            applyPalette(PaletteManager.colors(context))
+            contentDescription = "正在加载精选内容"
+        }
         addView(progress, LayoutParams(dp(48), dp(48), android.view.Gravity.CENTER))
         scroll.setOnScrollChangeListener { _, _, y, _, _ ->
             if (!loading && y + scroll.height >= content.height - dp(500)) loadPage()
@@ -176,6 +178,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
     fun refreshPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         updateTopIslandRendering()
         topGlass.setPalette(colors)
+        progress.applyPalette(colors)
         refreshLayout.setBackgroundColor(colors.surface)
         refreshDisplayMode()
     }
@@ -228,6 +231,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
         if (loading) return
         loading = true
         progress.visibility = View.VISIBLE
+        progress.startLoading()
         val firstPage = page == 1
         scope.launch {
             try {
