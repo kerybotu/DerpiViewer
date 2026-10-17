@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
 }
 
 android {
@@ -17,8 +16,8 @@ android {
         applicationId = "com.kerybotu.derpiviewer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.4.1"
+        versionCode = 2
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -35,9 +34,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
-    }
-    kotlinOptions {
-        jvmTarget = "11"
     }
 }
 
@@ -78,3 +74,7 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
     implementation("androidx.media3:media3-datasource:1.5.1")
 }
+
+// Keep v2.0.11's renderer and resources, replacing only its unbounded
+// displacement-map allocator. See the script and source for provenance.
+apply(from = rootProject.file("gradle/liquid-glass-bounded.gradle.kts"))

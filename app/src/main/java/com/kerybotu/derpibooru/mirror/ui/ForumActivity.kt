@@ -1,28 +1,201 @@
 package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
-import android.view.View
-import android.widget.*
+import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.example.liquidglass.LiquidGlassListItem
 import com.kerybotu.derpibooru.mirror.PaletteManager
+import com.kerybotu.derpibooru.mirror.model.Comment
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import com.kerybotu.derpibooru.mirror.translate.NiuTransService
 import kotlinx.coroutines.*
 import org.json.JSONObject
 
 class ForumActivity : AppCompatActivity() {
-    companion object { const val EXTRA_FORUM = "forum"; const val EXTRA_TOPIC = "topic"; const val EXTRA_TITLE = "title" }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main); private lateinit var list: LinearLayout; private lateinit var scroll: ScrollView; private lateinit var progress: ProgressBar; private var page = 1; private var loading = false
-    private val forum get() = intent.getStringExtra(EXTRA_FORUM); private val topic get() = intent.getStringExtra(EXTRA_TOPIC)
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContentView(buildView()); load() }
-    private fun buildView(): LinearLayout { val c = PaletteManager.colors(this); return LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(c.surface); val title = when { topic != null -> intent.getStringExtra(EXTRA_TITLE) ?: "帖子"; forum != null -> intent.getStringExtra(EXTRA_TITLE) ?: forum; else -> "论坛" }; addView(SafeToolbar(this@ForumActivity).apply { this.title = title; setNavigationIcon(com.kerybotu.derpibooru.mirror.R.drawable.ic_arrow_back); setNavigationOnClickListener { finish() } }, LinearLayout.LayoutParams(-1, dp(56))); scroll = ScrollView(this@ForumActivity); list = LinearLayout(this@ForumActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(24)) }; scroll.addView(list); addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f)); progress = ProgressBar(this@ForumActivity).apply { visibility = View.GONE }; addView(progress, LinearLayout.LayoutParams(-2, dp(40)).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL }); scroll.viewTreeObserver.addOnScrollChangedListener { if (!loading && scroll.getChildAt(0).bottom - scroll.height - scroll.scrollY < dp(500)) load() } } }
-    private fun load() { if (loading) return; loading = true; progress.visibility = View.VISIBLE; scope.launch { val path = when { topic != null -> "forums/$forum/topics/$topic/posts?page=$page"; forum != null -> "forums/$forum/topics?page=$page"; else -> "forums" }; val raw = withContext(Dispatchers.IO) { NetworkManager.getApi(this@ForumActivity, path) }; val root = runCatching { JSONObject(raw.orEmpty()) }.getOrNull(); val key = when { topic != null -> "posts"; forum != null -> "topics"; else -> "forums" }; val arr = root?.optJSONArray(key); repeat(arr?.length() ?: 0) { i -> arr?.optJSONObject(i)?.let { addRow(it, key) } }; if ((arr?.length() ?: 0) > 0 && forum != null) page++; loading = false; progress.visibility = View.GONE } }
-    private fun addRow(item: JSONObject, type: String) { val c = PaletteManager.colors(this); val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(12)); setBackgroundColor(c.surfaceVariant) }; when (type) {
-        "forums" -> { val name = item.optString("name"); row.addView(title(name)); row.addView(meta("${item.optString("description")} · ${item.optInt("topic_count")} 个主题")); row.setOnClickListener { startActivity(Intent(this, ForumActivity::class.java).putExtra(EXTRA_FORUM, item.optString("short_name")).putExtra(EXTRA_TITLE, name)) } }
-        "topics" -> { val title = item.optString("title"); row.addView(title(title)); row.addView(meta("${item.optString("author", item.optString("user", ""))} · ${item.optString("created_at").take(10)}")); row.addView(meta("回复 ${item.optInt("reply_count", item.optInt("post_count"))}")); row.setOnClickListener { startActivity(Intent(this, ForumActivity::class.java).putExtra(EXTRA_FORUM, forum).putExtra(EXTRA_TOPIC, item.optString("slug")).putExtra(EXTRA_TITLE, title)) } }
-        else -> { row.addView(title("${item.optString("author", "匿名用户")} · ${item.optString("created_at").take(10)}")); val body = item.optString("body"); val content = TextView(this).apply { text = body; setTextColor(c.onSurface); setPadding(0, dp(6), 0, 0) }; row.addView(content); addTranslateAction(row, content, body) }
-    }; list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) }) }
-    private fun addTranslateAction(parent: LinearLayout, content: TextView, original: String) { if (!NiuTransService.shouldTranslate(original)) return; val c = PaletteManager.colors(this); parent.addView(Button(this).apply { text = "翻译"; textSize = 12f; backgroundTintList = android.content.res.ColorStateList.valueOf(c.primary); setTextColor(c.onPrimary); setOnClickListener { if (tag is String) { content.text = original; tag = null; text = "翻译" } else { isEnabled = false; text = "翻译中…"; scope.launch { NiuTransService.translate(original).onSuccess { content.text = it; tag = it; this@apply.text = "原文" }.onFailure { this@apply.text = "翻译" }; this@apply.isEnabled = true } } } }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) }) }
-    private fun title(text: String) = TextView(this).apply { this.text = text; textSize = 16f; setTextColor(PaletteManager.colors(this@ForumActivity).primary) }; private fun meta(text: String) = TextView(this).apply { this.text = text; textSize = 13f; setTextColor(PaletteManager.colors(this@ForumActivity).muted); setPadding(0, dp(4), 0, 0) }; private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt(); override fun onDestroy() { scope.cancel(); super.onDestroy() }
+    companion object {
+        const val EXTRA_FORUM = "forum"
+        const val EXTRA_TOPIC = "topic"
+        const val EXTRA_TITLE = "title"
+    }
+    private data class Entry(val title: String, val detail: String, val slug: String, val post: Comment? = null)
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val entries = mutableListOf<Entry>()
+    private val translations = mutableMapOf<Comment, CommentTranslation>()
+    private val forumAdapter = ForumAdapter()
+    private lateinit var feed: GlassFeedLayout
+    private val forum get() = intent.getStringExtra(EXTRA_FORUM)
+    private val topic get() = intent.getStringExtra(EXTRA_TOPIC)
+    private var page = 1
+    private var loading = false
+    private var hasMore = true
+    private var failed = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val title = intent.getStringExtra(EXTRA_TITLE) ?: if (topic != null) "帖子" else forum ?: "论坛"
+        feed = GlassFeedLayout(this, title) { finish() }
+        feed.results.adapter = forumAdapter
+        feed.refresh.setCanRefresh { !loading }
+        feed.refresh.setOnRefreshListener { load(reset = true, fromPull = true) }
+        feed.onPaletteChanged = {
+            for (index in 0 until feed.results.childCount)
+                (feed.results.getChildAt(index) as? GlassCommentCard)?.applyPalette()
+        }
+        feed.results.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                val manager = recyclerView.layoutManager as LinearLayoutManager
+                if (dy > 0 && !failed && manager.findLastVisibleItemPosition() >= entries.size - 5) load(reset = false)
+            }
+        })
+        setContentView(feed)
+        load(reset = true)
+    }
+
+    private fun load(reset: Boolean, fromPull: Boolean = false) {
+        if (loading || (!reset && !hasMore)) return
+        loading = true
+        failed = false
+        feed.hideStatus()
+        feed.showLoading(!fromPull, centered = entries.isEmpty())
+        val requestedPage = if (reset) 1 else page
+        val path = when {
+            topic != null -> "forums/$forum/topics/$topic/posts?page=$requestedPage"
+            forum != null -> "forums/$forum/topics?page=$requestedPage"
+            else -> "forums"
+        }
+        val key = when { topic != null -> "posts"; forum != null -> "topics"; else -> "forums" }
+        scope.launch {
+            try {
+                val raw = withContext(Dispatchers.IO) { NetworkManager.getApi(this@ForumActivity, path) }
+                val response = JSONObject(raw ?: error("Empty forum response"))
+                val array = response.optJSONArray(key) ?: error("Missing $key in response")
+                val received = (0 until array.length()).mapNotNull { index ->
+                    val item = array.optJSONObject(index) ?: return@mapNotNull null
+                    when (key) {
+                        "forums" -> Entry(item.optString("name"),
+                            "${item.optString("description")}\n${item.optInt("topic_count")} 个主题", item.optString("short_name"))
+                        "topics" -> Entry(item.optString("title"),
+                            "${author(item)} · ${item.optString("created_at").take(10)}\n回复 ${item.optInt("reply_count", item.optInt("post_count"))}",
+                            item.optString("slug"))
+                        else -> Entry("", "", "", Comment.fromJson(item).copy(author = author(item), imageId = null))
+                    }
+                }
+                if (reset) entries.clear()
+                val start = entries.size
+                entries.addAll(received)
+                if (reset) {
+                    translations.keys.retainAll(entries.mapNotNull { it.post }.toSet())
+                    forumAdapter.notifyDataSetChanged()
+                } else if (received.isNotEmpty()) forumAdapter.notifyItemRangeInserted(start, received.size)
+                val total = response.optLong("total", -1)
+                // The root endpoint is not paginated; scrolling must not append all forums again.
+                hasMore = forum != null && array.length() > 0 && (total < 0 || entries.size < total)
+                page = requestedPage + 1
+                if (entries.isEmpty()) feed.showStatus("暂无内容", "下拉刷新查看最新内容")
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                failed = true
+                feed.showStatus(if (reset) "论坛加载失败" else "加载更多失败", "点击重试") { load(reset) }
+            } finally {
+                if (currentCoroutineContext().isActive) {
+                    loading = false
+                    feed.showLoading(false)
+                    feed.refresh.isRefreshing = false
+                }
+            }
+        }
+    }
+
+    private fun author(item: JSONObject): String =
+        item.optString("author").takeIf { it.isNotBlank() && it != "null" }
+            ?: item.optJSONObject("user")?.optString("name")?.takeIf { it.isNotBlank() }
+            ?: item.optString("user").takeIf { it.isNotBlank() && it != "null" } ?: "匿名用户"
+
+    private fun toggleTranslation(post: Comment) {
+        val state = translations.getOrPut(post) { CommentTranslation() }
+        if (state.loading) return
+        if (state.text != null) {
+            state.showTranslation = !state.showTranslation
+            updatePost(post)
+            return
+        }
+        state.loading = true
+        updatePost(post)
+        scope.launch {
+            try {
+                NiuTransService.translate(post.body).onSuccess {
+                    state.text = it
+                    state.showTranslation = true
+                }.onFailure { GlassPageDialogs(feed).toast("翻译失败，请重试") }
+            } finally {
+                state.loading = false
+                if (currentCoroutineContext().isActive) updatePost(post)
+            }
+        }
+    }
+
+    private fun updatePost(post: Comment) {
+        val position = entries.indexOfFirst { it.post == post }
+        if (position >= 0) forumAdapter.notifyItemChanged(position)
+    }
+
+    private inner class ForumAdapter : RecyclerView.Adapter<ForumHolder>() {
+        override fun getItemCount(): Int = entries.size
+        override fun getItemViewType(position: Int): Int = if (entries[position].post == null) 0 else 1
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ForumHolder {
+            val card = if (viewType == 1) GlassCommentCard(parent.context).apply {
+                glassSurfaces.forEach { feed.trackGlass(it) }
+            } else feed.trackGlass(LiquidGlassListItem(parent.context)).apply {
+                headlineTextView.maxLines = 3
+                supportingTextView.maxLines = Int.MAX_VALUE
+            }
+            card.layoutParams = RecyclerView.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
+            return ForumHolder(card)
+        }
+        override fun onBindViewHolder(holder: ForumHolder, position: Int) {
+            val entry = entries[position]
+            val post = entry.post
+            if (holder.card is GlassCommentCard && post != null) {
+                holder.card.bind(post, translations[post], { toggleTranslation(post) }, {})
+            } else {
+                holder.card.headline = entry.title
+                holder.card.supportingText = entry.detail
+                holder.card.setOnClickListener {
+                    if (entry.slug.isNotBlank()) {
+                        val next = Intent(this@ForumActivity, ForumActivity::class.java).putExtra(EXTRA_TITLE, entry.title)
+                        if (forum == null) next.putExtra(EXTRA_FORUM, entry.slug)
+                        else next.putExtra(EXTRA_FORUM, forum).putExtra(EXTRA_TOPIC, entry.slug)
+                        startActivity(next)
+                    }
+                }
+                GlassWidgetStyle.apply(holder.card, 16f)
+            }
+        }
+    }
+
+    private class ForumHolder(val card: LiquidGlassListItem) : RecyclerView.ViewHolder(card)
+
+    override fun onResume() {
+        super.onResume()
+        val colors = PaletteManager.colors(this)
+        window.statusBarColor = colors.surface
+        window.navigationBarColor = colors.surface
+        WindowCompat.getInsetsController(window, feed).apply {
+            val light = Color.luminance(colors.surface) > 0.5f
+            isAppearanceLightStatusBars = light
+            isAppearanceLightNavigationBars = light
+        }
+        feed.setActive(true)
+    }
+    override fun onPause() { feed.setActive(false); super.onPause() }
+    override fun onDestroy() { feed.setActive(false); scope.cancel(); super.onDestroy() }
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }

@@ -6,6 +6,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.os.Build
+import android.annotation.SuppressLint
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Color
@@ -30,7 +31,11 @@ data class VideoPost(
     val commentCount: Int
 )
 
-class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<VideoFeedAdapter.Holder>() {
+@SuppressLint("UnsafeOptInUsageError")
+class VideoFeedAdapter(
+    private val actions: Actions,
+    private val glassBackdrop: VideoGlassBackdrop
+) : RecyclerView.Adapter<VideoFeedAdapter.Holder>() {
     interface Actions {
         fun onToggle(position: Int)
         fun onDoubleTap(position: Int)
@@ -52,7 +57,10 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
     fun append(posts: List<VideoPost>) { val start = items.size; items.addAll(posts); notifyItemRangeInserted(start, posts.size) }
     fun item(position: Int): VideoPost? = items.getOrNull(position)
     fun refreshPalette() {
-        if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size)
+        // A full change animation replaces holders and can clear the active
+        // PlayerView after the controller has attached its player. A theme
+        // payload reuses the holder and changes only its material/foreground.
+        if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size, PALETTE_PAYLOAD)
     }
     fun setBottomInset(value: Int) {
         setNavigationInsets(value, endInset, landscape)
@@ -72,18 +80,34 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
         ItemVideoFeedBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-    )
+    ).also { holder ->
+        with(holder.binding) {
+            glassBackdrop.track(videoActionRail, Ui2DesignSystem.Shape.island)
+            glassBackdrop.track(videoInfoOverlay, Ui2DesignSystem.Shape.large)
+            glassBackdrop.track(videoBufferGlass, Ui2DesignSystem.Shape.pill)
+            glassBackdrop.track(videoSpeedGlass, Ui2DesignSystem.Shape.pill)
+        }
+    }
 
     override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(
         items[position], position, actions, bottomInset, endInset, landscape
     )
+    override fun onBindViewHolder(holder: Holder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty() && payloads.all { it == PALETTE_PAYLOAD }) holder.applyPalette()
+        else onBindViewHolder(holder, position)
+    }
     override fun onViewRecycled(holder: Holder) {
+        glassBackdrop.forgetVideo(holder.binding.videoPlayer.videoSurfaceView)
         holder.binding.videoPlayer.player = null
-        Glide.with(holder.binding.videoAmbientBackground).clear(holder.binding.videoAmbientBackground)
+        // Theme rebind animations can recycle views after Activity destruction.
+        // Reuse its existing lifecycle-bound manager instead of retrieving
+        // a new one from the destroyed Activity's View context.
+        holder.imageRequests.clear(holder.binding.videoAmbientBackground)
         super.onViewRecycled(holder)
     }
 
     class Holder(val binding: ItemVideoFeedBinding) : RecyclerView.ViewHolder(binding.root) {
+        val imageRequests = Glide.with(binding.videoAmbientBackground)
         fun bind(
             post: VideoPost,
             position: Int,
@@ -93,38 +117,11 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
             landscape: Boolean
         ) = with(binding) {
             applyNavigationInsets(bottomInset, endInset, landscape)
-            val colors = PaletteManager.colors(root.context)
-            val uiColors = Ui2DesignSystem.colors(root.context)
-            Glide.with(videoAmbientBackground)
+            applyPalette()
+            imageRequests
                 .load(post.thumbnailUrl ?: post.url)
                 .centerCrop()
                 .into(videoAmbientBackground)
-            val lightSurface = Color.luminance(colors.surface) > 0.5f
-            videoAmbientBackground.alpha = if (lightSurface) 0.5f else 0.42f
-            videoAmbientBackground.scaleX = 1.18f
-            videoAmbientBackground.scaleY = 1.18f
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                videoAmbientBackground.setRenderEffect(RenderEffect.createBlurEffect(24f, 24f, Shader.TileMode.CLAMP))
-            }
-            Ui2DesignSystem.styleIsland(videoActionRail, colors, Ui2DesignSystem.Shape.island)
-            Ui2DesignSystem.styleIsland(videoInfoOverlay, colors, Ui2DesignSystem.Shape.large)
-            Ui2DesignSystem.styleIsland(videoBufferLabel, colors, Ui2DesignSystem.Shape.pill)
-            Ui2DesignSystem.styleIsland(videoSpeed, colors, Ui2DesignSystem.Shape.pill)
-            videoAmbientScrim.setBackgroundColor(withAlpha(colors.scrim, 0.58f))
-            listOf(videoActionDividerPrimary, videoActionDividerSecondary, videoActionDividerTertiary).forEach {
-                it.setBackgroundColor(withAlpha(colors.divider, 0.62f))
-            }
-            videoUploader.setTextColor(colors.onSurface)
-            videoTags.setTextColor(colors.muted)
-            videoUpvoteCount.setTextColor(colors.onSurface)
-            listOf(videoUpvote, videoDownvote, videoFavorite, videoComments, videoDownload, videoMore).forEach {
-                it.imageTintList = ColorStateList.valueOf(colors.onSurface)
-                Ui2DesignSystem.applyPressFeedback(it)
-            }
-            videoPlayProgress.progressTintList = ColorStateList.valueOf(colors.primary)
-            videoPlayProgress.thumbTintList = ColorStateList.valueOf(colors.onSurface)
-            videoBufferProgress.progressTintList = ColorStateList.valueOf(uiColors.glassHighlight)
-            videoBufferProgress.backgroundTintList = ColorStateList.valueOf(uiColors.glassBorder)
             videoUploader.text = post.uploader
             videoTags.text = post.tags.take(3).joinToString("  ·  ")
             videoUpvoteCount.text = post.upvotes.toString()
@@ -146,6 +143,37 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
                 }
                 true
             }
+        }
+
+        fun applyPalette() = with(binding) {
+            val colors = PaletteManager.colors(root.context)
+            val uiColors = Ui2DesignSystem.colors(root.context)
+            val lightSurface = Color.luminance(colors.surface) > 0.5f
+            videoAmbientBackground.alpha = if (lightSurface) 0.5f else 0.42f
+            videoAmbientBackground.scaleX = 1.18f
+            videoAmbientBackground.scaleY = 1.18f
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                videoAmbientBackground.setRenderEffect(RenderEffect.createBlurEffect(24f, 24f, Shader.TileMode.CLAMP))
+            }
+            GlassWidgetStyle.apply(videoActionRail, Ui2DesignSystem.Shape.island, colors)
+            GlassWidgetStyle.apply(videoInfoOverlay, Ui2DesignSystem.Shape.large, colors, GlassWidgetStyle.MaterialRole.READING)
+            GlassWidgetStyle.apply(videoBufferGlass, Ui2DesignSystem.Shape.pill, colors)
+            GlassWidgetStyle.apply(videoSpeedGlass, Ui2DesignSystem.Shape.pill, colors)
+            videoAmbientScrim.setBackgroundColor(withAlpha(colors.scrim, 0.58f))
+            listOf(videoActionDividerPrimary, videoActionDividerSecondary, videoActionDividerTertiary).forEach {
+                it.setBackgroundColor(withAlpha(colors.divider, 0.62f))
+            }
+            videoUploader.setTextColor(colors.glassText)
+            videoTags.setTextColor(colors.glassSecondaryText)
+            videoUpvoteCount.setTextColor(colors.glassText)
+            listOf(videoUpvote, videoDownvote, videoFavorite, videoComments, videoDownload, videoMore).forEach {
+                it.imageTintList = ColorStateList.valueOf(colors.glassText)
+                Ui2DesignSystem.applyPressFeedback(it)
+            }
+            videoPlayProgress.progressTintList = ColorStateList.valueOf(colors.primary)
+            videoPlayProgress.thumbTintList = ColorStateList.valueOf(colors.onSurface)
+            videoBufferProgress.progressTintList = ColorStateList.valueOf(uiColors.glassHighlight)
+            videoBufferProgress.backgroundTintList = ColorStateList.valueOf(uiColors.glassBorder)
         }
 
         fun applyNavigationInsets(bottomInset: Int, endInset: Int, landscape: Boolean) {
@@ -181,5 +209,9 @@ class VideoFeedAdapter(private val actions: Actions) : RecyclerView.Adapter<Vide
             Color.green(color),
             Color.blue(color)
         )
+    }
+
+    private companion object {
+        const val PALETTE_PAYLOAD = "glass_palette"
     }
 }

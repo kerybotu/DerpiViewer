@@ -1,19 +1,9 @@
 package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Context
-import android.content.Intent
-import android.view.Gravity
-import android.view.View
-import android.widget.*
-import com.kerybotu.derpibooru.mirror.PaletteManager
-import com.kerybotu.derpibooru.mirror.model.Comment
-import com.kerybotu.derpibooru.mirror.network.NetworkManager
-import kotlinx.coroutines.*
-import org.json.JSONObject
-import java.net.URLEncoder
 
-/** Cached first-level messages screen. The view owns its scroll position and loaded pages. */
-class EmbeddedMessagesView(context: Context) : FrameLayout(context) {
+/* Legacy ScrollView implementation retained for the merge record.
+class LegacyEmbeddedMessagesView(context: Context) : FrameLayout(context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val scroll = ScrollView(context)
@@ -71,4 +61,6 @@ class EmbeddedMessagesView(context: Context) : FrameLayout(context) {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     fun dispose() { scope.cancel() }
-}
+} */
+/** The primary tab retains its loaded comments, translations and scroll position. */
+class EmbeddedMessagesView(context: Context) : CommentsFeedView(context, "评论")

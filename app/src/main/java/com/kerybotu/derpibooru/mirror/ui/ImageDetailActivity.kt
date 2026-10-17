@@ -11,11 +11,11 @@ import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.ColorDrawable
 import android.widget.ImageView
-import android.widget.PopupMenu
 import android.widget.LinearLayout
-import android.widget.TextView
 import android.content.res.ColorStateList
 import android.widget.Toast
 import android.content.ClipData
@@ -35,6 +35,12 @@ import com.kerybotu.derpibooru.mirror.translate.NiuTransService
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import com.kerybotu.derpibooru.mirror.favorites.FavoriteItem
 import com.kerybotu.derpibooru.mirror.favorites.LocalFavoritesStore
+import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuCard
+import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
+import com.example.liquidglass.LiquidGlassView
 import kotlinx.coroutines.*
 import org.json.JSONObject
 
@@ -62,6 +68,22 @@ class ImageDetailActivity : AppCompatActivity() {
     private var baseScale = 1f
     private var maxScale = 5f
     private var matrixDrawable: Drawable? = null
+    private var renderingActive = false
+    private var bottomInset = 0
+    private var removePaletteObserver: (() -> Unit)? = null
+    private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyPalette() }
+    private val visibleBounds = Rect()
+    private val lastGlassBounds = java.util.IdentityHashMap<LiquidGlassView, Rect>()
+    private val artworkMatrixValues = FloatArray(9)
+    private var lastArtworkSignature: Int? = null
+    private val glassVisibilityListener = android.view.ViewTreeObserver.OnPreDrawListener {
+        updateGlassRendering()
+        true
+    }
+    private val readingIslands: List<LiquidGlassView> by lazy {
+        listOf(b.detailAuthorPanel, b.detailInteractionPanel, b.detailDescriptionPanel,
+            b.detailTagsPanel, b.detailSourcePanel, b.detailCommentsHeader)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,10 +98,11 @@ class ImageDetailActivity : AppCompatActivity() {
         uploaderId = image.uploaderId
         sheet = BottomSheetBehavior.from(b.bottomSheet)
         sheet.state = BottomSheetBehavior.STATE_COLLAPSED
-        b.detailToolbar.appToolbar.setNavigationIcon(com.kerybotu.derpibooru.mirror.R.drawable.ic_arrow_back)
-        b.detailToolbar.appToolbar.setNavigationOnClickListener { finish() }
+        b.detailBack.setOnClickListener { finish() }
+        Ui2DesignSystem.applyPressFeedback(b.detailBack)
         b.btnShare.setOnClickListener { share() }
         b.btnMore.setOnClickListener { showMore() }
+        b.detailLoadStatus.setOnClickListener { loadDetails() }
         b.btnExpandDescription.setOnClickListener { toggleDescription() }
         b.btnTranslateDescription.setOnClickListener { toggleDescriptionTranslation() }
         b.detailCommentsCount.setOnClickListener { sheet.state = BottomSheetBehavior.STATE_EXPANDED }
@@ -94,6 +117,82 @@ class ImageDetailActivity : AppCompatActivity() {
         bindInitial()
         setGestures()
         loadDetails()
+        b.root.addOnLayoutChangeListener { _, left, _, right, bottom, oldLeft, _, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom != oldBottom) {
+                applyIslandWidths()
+                updateSheetBounds()
+            }
+        }
+        b.detailTopIsland.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSheetBounds() }
+        b.root.post { applyIslandWidths(); updateSheetBounds() }
+        b.root.viewTreeObserver.addOnPreDrawListener(glassVisibilityListener)
+        b.detailInteractionPanel.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSheetBounds() }
+        b.detailTagsGroup.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) updateTagWidths()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::b.isInitialized) {
+            PaletteManager.apply(this)
+            applyPalette()
+            renderingActive = true
+            removePaletteObserver?.invoke()
+            removePaletteObserver = PaletteManager.observe(this, paletteObserver)
+        }
+    }
+
+    override fun onPause() {
+        renderingActive = false
+        updateGlassRendering()
+        removePaletteObserver?.invoke()
+        removePaletteObserver = null
+        super.onPause()
+    }
+
+    private fun updateGlassRendering() {
+        b.detailImage.imageMatrix.getValues(artworkMatrixValues)
+        var signature = artworkMatrixValues.contentHashCode()
+        signature = 31 * signature + System.identityHashCode(b.detailImage.drawable)
+        signature = 31 * signature + b.detailImage.translationX.hashCode()
+        signature = 31 * signature + b.detailImage.translationY.hashCode()
+        signature = 31 * signature + b.detailImage.alpha.hashCode()
+        signature = 31 * signature + b.detailBackdrop.width
+        signature = 31 * signature + b.detailBackdrop.height
+        signature = 31 * signature + b.detailSpoilerCover.visibility
+        signature = 31 * signature + ((b.detailBackdrop.background as? ColorDrawable)?.color ?: 0)
+        val artworkChanged = lastArtworkSignature != signature
+        lastArtworkSignature = signature
+        val animated = (b.detailImage.drawable as? android.graphics.drawable.Animatable)?.isRunning == true ||
+            b.detailVideoPlayer.isVisible
+        fun update(island: LiquidGlassView) {
+            if (island === b.detailTopIsland && !renderingActive) {
+                // setRenderingActive has detached this source. Reattaching it
+                // here would invalidate it on every paused-window pre-draw.
+                lastGlassBounds.remove(island)
+                return
+            }
+            // Capture only artwork, never the transparent sheet or its text.
+            island.backdropSource = b.detailBackdrop
+            val active = renderingActive && island.isShown && island.getGlobalVisibleRect(visibleBounds)
+            val previous = lastGlassBounds[island]
+            val moved = active && previous != visibleBounds
+            if (active) {
+                if (previous == null) lastGlassBounds[island] = Rect(visibleBounds)
+                else previous.set(visibleBounds)
+            } else lastGlassBounds.remove(island)
+            // Retain the actual blurred/refracted texture while artwork is
+            // still. The CPU renderer otherwise re-blurs it on every frame.
+            // Gestures, sheet movement, GIF/video and theme backgrounds refresh
+            // the optical result; no material or optical effect is disabled.
+            val dynamic = active && (animated || artworkChanged || moved)
+            if (island.enableDynamicBackground != dynamic) island.enableDynamicBackground = dynamic
+            island.enableSensorHighlight = false
+        }
+        b.detailTopIsland.setRenderingActive(renderingActive, b.detailBackdrop)
+        readingIslands.forEach(::update)
+        update(b.detailTopIsland)
     }
 
     private fun bindInitial() {
@@ -101,7 +200,11 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailFaves.text = image.faves.toString(); b.detailUpvotes.text = image.upvotes.toString()
         b.detailCommentsCount.text = image.commentCount.toString()
         b.detailUploader.text = image.uploader ?: "未知上传者"; b.detailCreatedAt.text = image.createdAt?.take(10) ?: ""
+        b.detailTitle.text = image.title.ifBlank { "图片详情" }
+        b.detailArtworkTitle.text = image.title
+        b.detailArtworkTitle.visibility = if (image.title.isBlank()) View.GONE else View.VISIBLE
         bindDescription(image.description.orEmpty())
+        bindSources(emptyList())
         b.detailUploader.visibility = if (AppSettings.isUploaderHidden(this)) View.GONE else View.VISIBLE
         bindUploaderClick()
         b.detailScore.visibility = View.GONE
@@ -110,8 +213,12 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun bindTags(tags: List<String>) {
-        val palette = PaletteManager.colors(this)
         tagJob?.cancel()
+        if (tags.isEmpty()) {
+            b.detailTagsGroup.removeAllViews()
+            b.detailTagsPanel.visibility = View.GONE
+            return
+        }
         tagJob = scope.launch {
             val translated = if (AppSettings.isTagTranslationEnabled(this@ImageDetailActivity)) {
                 withContext(Dispatchers.IO) { TagDictionary.sortAndTranslate(this@ImageDetailActivity, tags) }
@@ -121,6 +228,8 @@ class ImageDetailActivity : AppCompatActivity() {
             // Initial feed data and full detail data can arrive in either order.
             // Only the newest binding owns the group, preventing duplicate chips and mixed sort orders.
             b.detailTagsGroup.removeAllViews()
+            b.detailTagsPanel.visibility = if (translated.isEmpty()) View.GONE else View.VISIBLE
+            val palette = PaletteManager.colors(this@ImageDetailActivity)
             translated.forEach { entry -> b.detailTagsGroup.addView(Chip(this@ImageDetailActivity).apply {
             text = entry.chineseName
             // The dictionary stores spaces as underscores for lookup. Search must
@@ -128,9 +237,14 @@ class ImageDetailActivity : AppCompatActivity() {
             val apiTag = entry.sourceName ?: entry.englishName
             contentDescription = apiTag
             isCheckable = false
-            setTextColor(palette.onSurface)
-            chipBackgroundColor = ColorStateList.valueOf(palette.surfaceVariant)
+            setTextColor(palette.glassText)
+            chipBackgroundColor = ColorStateList.valueOf(palette.glassSurfaceElevated)
+            chipStrokeColor = ColorStateList.valueOf(palette.glassBorder)
+            chipStrokeWidth = dp(1).toFloat()
             rippleColor = ColorStateList.valueOf(palette.primary)
+            maxWidth = (b.detailTagsGroup.width.takeIf { it > 0 }
+                ?: (b.root.width - dp(56))).coerceAtLeast(dp(48))
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setOnClickListener {
                 startActivity(Intent(this@ImageDetailActivity, SearchActivity::class.java)
                     .putExtra(SearchActivity.EXTRA_INITIAL_QUERY, apiTag))
@@ -142,20 +256,99 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun applyPalette() {
         val palette = PaletteManager.colors(this)
         b.detailRoot.setBackgroundColor(palette.surface)
+        b.detailBackdrop.setBackgroundColor(palette.surface)
         b.detailVideoPlayer.setBackgroundColor(palette.mediaSurface)
-        b.bottomSheet.background = android.graphics.drawable.GradientDrawable().apply {
-            setColor(palette.surface)
-            cornerRadii = floatArrayOf(dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), 0f, 0f, 0f, 0f)
+        GlassWidgetStyle.apply(b.detailAuthorPanel, Ui2DesignSystem.Shape.large, palette, GlassWidgetStyle.MaterialRole.READING)
+        GlassWidgetStyle.apply(b.detailInteractionPanel, Ui2DesignSystem.Shape.island, palette, GlassWidgetStyle.MaterialRole.READING)
+        listOf(b.detailDescriptionPanel, b.detailTagsPanel, b.detailSourcePanel, b.detailCommentsHeader).forEach {
+            GlassWidgetStyle.apply(it, Ui2DesignSystem.Shape.large, palette, GlassWidgetStyle.MaterialRole.READING)
         }
+        b.bottomSheet.background = ColorDrawable(android.graphics.Color.TRANSPARENT)
         b.detailDivider.setBackgroundColor(palette.divider)
         b.sheetHandle.setBackgroundColor(palette.muted)
         b.btnShare.imageTintList = ColorStateList.valueOf(palette.onSurface)
         b.btnMore.imageTintList = ColorStateList.valueOf(palette.onSurface)
-        b.detailToolbar.appToolbar.navigationIcon?.setTint(palette.onPrimary)
+        b.detailUploaderAvatar.imageTintList = ColorStateList.valueOf(palette.glassText)
+        // Navigation crosses arbitrary artwork as well as page letterboxing.
+        // Keep its label readable with the shared coating used for text on art.
+        GlassWidgetStyle.apply(b.detailTopIsland, Ui2DesignSystem.Shape.topIsland, palette, GlassWidgetStyle.MaterialRole.READING)
+        b.detailBack.imageTintList = ColorStateList.valueOf(palette.glassText)
+        b.detailTitle.setTextColor(palette.glassText)
+        ViewCompat.setOnApplyWindowInsetsListener(b.root) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            bottomInset = bars.bottom
+            b.bottomSheet.setPadding(bars.left, 0, bars.right, 0)
+            (b.detailTopIsland.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
+                val margin = dp(8) + bars.top
+                if (params.topMargin != margin) { params.topMargin = margin; b.detailTopIsland.layoutParams = params }
+            }
+            b.detailScroll.setPadding(b.detailScroll.paddingLeft, b.detailScroll.paddingTop, b.detailScroll.paddingRight, dp(16) + bars.bottom)
+            applyIslandWidths()
+            updateSheetBounds()
+            insets
+        }
+        ViewCompat.requestApplyInsets(b.root)
         listOf(b.detailFaves, b.detailUpvotes, b.detailCommentsCount).forEach {
             it.compoundDrawableTintList = ColorStateList.valueOf(palette.onSurface)
             it.setTextColor(palette.onSurface)
         }
+        listOf(b.detailDescriptionLabel, b.detailTagsLabel, b.detailSourceLabel, b.detailCreatedAt,
+            b.detailDescription, b.detailCommentsStatus).forEach { it.setTextColor(palette.glassSecondaryText) }
+        listOf(b.detailUploader, b.detailArtworkTitle, b.detailCommentsLabel).forEach { it.setTextColor(palette.glassText) }
+        b.btnExpandDescription.setTextColor(palette.glassActionText)
+        b.detailLoadStatus.setTextColor(palette.glassActionText)
+        b.detailSource.setTextColor(palette.glassText)
+        b.detailSource.setLinkTextColor(palette.glassActionText)
+        for (i in 0 until b.detailTagsGroup.childCount) {
+            (b.detailTagsGroup.getChildAt(i) as? Chip)?.let {
+                it.setTextColor(palette.glassText)
+                it.chipBackgroundColor = ColorStateList.valueOf(palette.glassSurfaceElevated)
+                it.chipStrokeColor = ColorStateList.valueOf(palette.glassBorder)
+                it.rippleColor = ColorStateList.valueOf(palette.primary)
+            }
+        }
+    }
+
+    private fun applyIslandWidths() {
+        val available = (b.root.width - b.bottomSheet.paddingLeft - b.bottomSheet.paddingRight).takeIf { it > 0 } ?: return
+        // Reuse the window-width policy's bounded island column for readable text.
+        val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, available)
+            .coerceAtMost((available - dp(24)).coerceAtLeast(dp(1)))
+        listOf(b.detailAuthorPanel, b.detailInteractionPanel).forEach { island ->
+            val params = island.layoutParams as? android.widget.LinearLayout.LayoutParams ?: return@forEach
+            if (params.width != width || params.gravity != android.view.Gravity.CENTER_HORIZONTAL) {
+                params.width = width
+                params.gravity = android.view.Gravity.CENTER_HORIZONTAL
+                island.layoutParams = params
+            }
+        }
+        b.detailTopIsland.layoutParams = b.detailTopIsland.layoutParams.apply { this.width = width }
+        b.detailContent.layoutParams = b.detailContent.layoutParams.apply { this.width = width + dp(24) }
+        b.detailTagsGroup.post { updateTagWidths() }
+    }
+
+    private fun updateTagWidths() {
+        val width = b.detailTagsGroup.width.takeIf { it > 0 } ?: return
+        for (i in 0 until b.detailTagsGroup.childCount) {
+            (b.detailTagsGroup.getChildAt(i) as? Chip)?.let { if (it.maxWidth != width) it.maxWidth = width }
+        }
+    }
+
+    private fun updateSheetBounds() {
+        if (!::sheet.isInitialized || b.root.height <= 0 || b.detailTopIsland.height <= 0) return
+        // Use the laid-out, inset-aware navigation boundary. Restoring its
+        // elevation must not place it over the expanded author island.
+        val top = (b.detailTopIsland.bottom + dp(Ui2DesignSystem.Spacing.islandGap))
+            .coerceIn(0, b.root.height - 1)
+        if (sheet.expandedOffset != top) sheet.expandedOffset = top
+        // A full-height sheet moved down would clip the last comments. Keep
+        // its viewport inside the root instead of padding by a screen offset.
+        val height = b.root.height - top
+        if (b.bottomSheet.layoutParams.height != height) {
+            b.bottomSheet.layoutParams = b.bottomSheet.layoutParams.apply { this.height = height }
+        }
+        val peek = b.detailInteractionPanel.bottom + bottomInset
+        if (peek > 0 && sheet.peekHeight != peek) sheet.peekHeight = peek.coerceAtMost(height)
     }
 
     private fun setGestures() {
@@ -257,6 +450,15 @@ class ImageDetailActivity : AppCompatActivity() {
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         val handleTouch: (View, MotionEvent) -> Boolean = { view, event ->
             if (view === b.detailImage) scaleGesture.onTouchEvent(event)
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                // A pinch owns this stream before ScaleGestureDetector reaches
+                // its minimum span. Cancel pending single-finger long presses.
+                val cancel = MotionEvent.obtain(event)
+                cancel.action = MotionEvent.ACTION_CANCEL
+                gesture.onTouchEvent(cancel)
+                cancel.recycle()
+                draggingMedia = false
+            }
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     dragStartX = event.rawX
@@ -275,7 +477,7 @@ class ImageDetailActivity : AppCompatActivity() {
                     velocityTracker?.addMovement(event)
                     val dx = event.rawX - dragStartX
                     val dy = event.rawY - dragStartY
-                    if (!draggingMedia && !isImageZoomed() && kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.15f) {
+                    if (!draggingMedia && event.pointerCount == 1 && !scaleGesture.isInProgress && !isImageZoomed() && kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.15f) {
                         draggingMedia = true
                         view.animate().cancel()
                     }
@@ -355,11 +557,18 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun loadDetails() {
         detailJob?.cancel()
+        b.detailLoadStatus.setText(com.kerybotu.derpibooru.mirror.R.string.detail_loading)
+        b.detailLoadStatus.isVisible = true
+        b.detailLoadStatus.isEnabled = false
         detailJob = scope.launch {
         val json = withContext(Dispatchers.IO) {
             val filter = NetworkManager.currentFilterParam(this@ImageDetailActivity, "?")
             NetworkManager.getApi(this@ImageDetailActivity, "images/${image.id}$filter")
-        } ?: return@launch
+        }
+        if (json == null) {
+            showDetailLoadFailure()
+            return@launch
+        }
         runCatching {
             val item = JSONObject(json).getJSONObject("image")
             val mime = item.optString("mime_type", image.mimeType)
@@ -376,12 +585,19 @@ class ImageDetailActivity : AppCompatActivity() {
             b.detailScore.visibility = View.GONE
             b.detailCommentsCount.text = item.optInt("comment_count").toString()
             bindTags(item.optJSONArray("tags")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty())
-            b.detailSource.text = item.optJSONArray("source_urls")?.let { urls ->
-                (0 until urls.length()).map { urls.optString(it) }.filter { it.isNotBlank() }.joinToString("\n")
-            }.orEmpty()
+            bindSources(item.optJSONArray("source_urls")?.let { urls ->
+                (0 until urls.length()).map { urls.optString(it) }
+            }.orEmpty())
             loadComments()
+        }.onSuccess { b.detailLoadStatus.isVisible = false }
+            .onFailure { showDetailLoadFailure() }
         }
-        }
+    }
+
+    private fun showDetailLoadFailure() {
+        b.detailLoadStatus.setText(com.kerybotu.derpibooru.mirror.R.string.detail_retry)
+        b.detailLoadStatus.isVisible = true
+        b.detailLoadStatus.isEnabled = true
     }
 
     /** Loads the nearest image in the current gallery/search space for a horizontal swipe. */
@@ -474,19 +690,17 @@ class ImageDetailActivity : AppCompatActivity() {
         val comments = runCatching { JSONObject(raw.orEmpty()).optJSONArray("comments") }.getOrNull()
         if (comments == null || comments.length() == 0) {
             b.detailCommentsPreview.removeAllViews()
-            b.detailCommentsPreview.addView(TextView(this@ImageDetailActivity).apply {
-                text = "暂无评论"
-                setTextColor(resolveThemeColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
-            })
+            b.detailCommentsStatus.text = if (raw == null) "评论暂时无法加载" else "暂无评论"
+            b.detailCommentsStatus.visibility = View.VISIBLE
             return@launch
         }
+        b.detailCommentsStatus.visibility = View.GONE
         b.detailCommentsPreview.removeAllViews()
         for (index in 0 until comments.length()) {
             val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
-            b.detailCommentsPreview.addView(
-                CommentCardRenderer.create(this@ImageDetailActivity, comment, scope),
-                CommentCardRenderer.layoutParams(this@ImageDetailActivity)
-            )
+            val card = GlassCommentCard(this@ImageDetailActivity)
+            card.bind(comment, null, { }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
+            b.detailCommentsPreview.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
     }
 
@@ -495,10 +709,22 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun bindDescription(raw: String) {
         descriptionOriginal = raw
         descriptionTranslation = null
-        b.detailDescription.text = raw.ifBlank { "暂无描述" }
+        expanded = false
+        b.detailDescription.maxLines = 3
+        b.btnExpandDescription.text = "展开阅读"
+        b.detailDescriptionPanel.visibility = if (raw.isBlank() && image.title.isBlank()) View.GONE else View.VISIBLE
+        b.detailDescription.visibility = if (raw.isBlank()) View.GONE else View.VISIBLE
+        b.detailDescriptionActions.visibility = if (raw.isBlank()) View.GONE else View.VISIBLE
+        b.detailDescription.text = raw
         b.btnTranslateDescription.visibility = if (raw.isBlank()) View.GONE else View.VISIBLE
         b.btnTranslateDescription.text = "翻译"
         b.btnTranslateDescription.isEnabled = true
+    }
+
+    private fun bindSources(urls: List<String>) {
+        val text = urls.filter { it.isNotBlank() }.joinToString("\n")
+        b.detailSource.text = text
+        b.detailSourcePanel.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
     }
 
     private fun toggleDescriptionTranslation() {
@@ -518,12 +744,6 @@ class ImageDetailActivity : AppCompatActivity() {
             }.onFailure { Toast.makeText(this@ImageDetailActivity, "翻译失败", Toast.LENGTH_SHORT).show(); b.btnTranslateDescription.text = "翻译" }
             b.btnTranslateDescription.isEnabled = true
         }
-    }
-
-    private fun resolveThemeColor(attribute: Int): Int {
-        val typed = android.util.TypedValue()
-        theme.resolveAttribute(attribute, typed, true)
-        return if (typed.resourceId != 0) getColor(typed.resourceId) else typed.data
     }
 
     private fun showPreview(mime: String?, url: String?) {
@@ -558,25 +778,29 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun toggleDescription() { expanded = !expanded; b.detailDescription.maxLines = if (expanded) Int.MAX_VALUE else 3; b.btnExpandDescription.text = if (expanded) "收起" else "展开阅读"; sheet.state = BottomSheetBehavior.STATE_HALF_EXPANDED }
     private fun share() { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "https://${AppSettings.getTargetDomain(this@ImageDetailActivity)}/images/${image.id}") }, "分享图片")) }
-    private fun showMore() { PopupMenu(this, b.btnMore).apply {
-        menu.add("下载"); menu.add("查看原图"); menu.add("复制链接")
-        setOnMenuItemClickListener {
-            when (it.title) {
-                "下载" -> {
-                    val url = fullUrl ?: image.fullUrl ?: image.thumbnailUrl
-                    if (url.isNullOrBlank()) Toast.makeText(this@ImageDetailActivity, "暂无可下载地址", Toast.LENGTH_SHORT).show()
-                    else {
-                        DownloadQueueManager.get(this@ImageDetailActivity).enqueueImages(listOf(image.copy(fullUrl = url)))
-                        Toast.makeText(this@ImageDetailActivity, "已加入下载队列", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                "查看原图" -> fullUrl?.let { url -> startActivity(Intent(this@ImageDetailActivity, FullScreenImageActivity::class.java)
-                    .putExtra("full_url", url)
-                    .putExtra("image_id", image.id)) }
-                "复制链接" -> getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("图片链接", "https://${AppSettings.getTargetDomain(this@ImageDetailActivity)}/images/${image.id}"))
-            }
-            true
-        }; show()
-    } }
-    override fun onDestroy() { tagJob?.cancel(); previewPlayer?.release(); scope.cancel(); super.onDestroy() }
+    private fun showMore() {
+        val items = listOf(
+            GlassMenuItem("download", com.kerybotu.derpibooru.mirror.R.drawable.ic_download, "下载") { enqueueDownload() },
+            GlassMenuItem("original", com.kerybotu.derpibooru.mirror.R.drawable.ic_image, "查看原图") { fullUrl?.let { url -> startActivity(Intent(this, FullScreenImageActivity::class.java).putExtra("full_url", url).putExtra("image_id", image.id)) } },
+            GlassMenuItem("copy", com.kerybotu.derpibooru.mirror.R.drawable.ic_bookmark, "复制链接") { copyImageLink() }
+        )
+        GlassMenuCard(this, items, b.btnMore).show()
+    }
+
+    private fun enqueueDownload() {
+        val url = fullUrl ?: image.fullUrl ?: image.thumbnailUrl
+        if (url.isNullOrBlank()) Toast.makeText(this, "暂无可下载地址", Toast.LENGTH_SHORT).show()
+        else { DownloadQueueManager.get(this).enqueueImages(listOf(image.copy(fullUrl = url))); Toast.makeText(this, "已加入下载队列", Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun copyImageLink() {
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("图片链接", "https://${AppSettings.getTargetDomain(this)}/images/${image.id}"))
+        Toast.makeText(this, "链接已复制", Toast.LENGTH_SHORT).show()
+    }
+    override fun onDestroy() {
+        removePaletteObserver?.invoke()
+        if (b.root.viewTreeObserver.isAlive) b.root.viewTreeObserver.removeOnPreDrawListener(glassVisibilityListener)
+        lastGlassBounds.clear()
+        tagJob?.cancel(); previewPlayer?.release(); scope.cancel(); super.onDestroy()
+    }
 }

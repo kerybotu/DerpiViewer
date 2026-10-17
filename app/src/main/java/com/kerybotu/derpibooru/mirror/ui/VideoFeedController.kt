@@ -329,7 +329,7 @@ class VideoFeedController(
     override fun onDoubleTap(position: Int) = onUpvote(position)
     override fun onLongPress(position: Int, active: Boolean) {
         playerPool.setSpeed(position, if (active) 2f else 1f)
-        (pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder)?.binding?.videoSpeed?.visibility = if (active) View.VISIBLE else View.GONE
+        (pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder)?.binding?.videoSpeedGlass?.visibility = if (active) View.VISIBLE else View.GONE
     }
     override fun onUpvote(position: Int) { adapter.item(position)?.let { it.upvotes++; adapter.notifyItemChanged(position); pagerRecycler.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) } }
     override fun onDownvote(position: Int) { adapter.item(position)?.let { it.downvotes++; adapter.notifyItemChanged(position); Toast.makeText(context, "已记录踩", Toast.LENGTH_SHORT).show() } }

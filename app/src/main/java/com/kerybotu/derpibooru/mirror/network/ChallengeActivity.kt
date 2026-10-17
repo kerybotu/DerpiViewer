@@ -117,7 +117,7 @@ class ChallengeActivity : AppCompatActivity() {
             // The post-challenge page must be a JSON object.  A rendered error page,
             // plain text status, or HTML document is never considered resolved.
             view.evaluateJavascript(
-                "(function(){try{var t=(document.body&&document.body.innerText||'').trim();var v=JSON.parse(t);return !!v && typeof v==='object' && !Array.isArray(v)}catch(e){return false}})()"
+                ChallengeCompletionPolicy.JSON_OBJECT_SCRIPT
             ) { jsonResult ->
                 if (jsonResult == "true" && !mainFrameHttpError) finishChallenge(true)
             }
@@ -127,8 +127,8 @@ class ChallengeActivity : AppCompatActivity() {
     private fun finishChallenge(success: Boolean) {
         if (resolved) return
         resolved = true
-        CookieManager.getInstance().flush()
-        ChallengeCoordinator.notifyResolved(success)
+        if (success) CookieManager.getInstance().flush()
+        ChallengeCoordinator.notifyResolved(intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L), success)
         finish()
     }
 
@@ -154,7 +154,10 @@ class ChallengeActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        webView.destroy()
+        if (!resolved && !isChangingConfigurations) {
+            ChallengeCoordinator.notifyResolved(intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L), false)
+        }
+        if (::webView.isInitialized) webView.destroy()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
             ProxyController.getInstance().clearProxyOverride(ContextCompat.getMainExecutor(this)) { }
         }

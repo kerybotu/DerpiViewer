@@ -1,21 +1,34 @@
 package com.kerybotu.derpibooru.mirror.ui.menu
 
 import android.app.Dialog
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
+import android.view.View
+import android.graphics.Rect
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.kerybotu.derpibooru.mirror.PaletteManager
+import com.kerybotu.derpibooru.mirror.ui.IslandGlassView
+import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
+import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
 
-class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(context) {
+class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private val anchor: View? = null) : Dialog(context) {
     private val density = context.resources.displayMetrics.density
-    private val cardView = LinearLayout(context)
+    private val glassContainer = IslandGlassView(context)
+    private val panelWidth: Int
+    private val panelHeight: Int
+    private var anchorLayoutListener: View.OnLayoutChangeListener? = null
+    private val rows = mutableListOf<LinearLayout>()
+    private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyGlassPalette(it) }
+    private var removePaletteObserver: (() -> Unit)? = null
 
     init {
         window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -26,20 +39,14 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
         setCanceledOnTouchOutside(true)
 
         val colors = PaletteManager.colors(context)
-        val light = Color.luminance(colors.surface) > 0.5f
+        applyGlassPalette(colors)
+        glassContainer.elevation = Ui2DesignSystem.Elevation.dialogDp * density
 
-        cardView.orientation = LinearLayout.VERTICAL
         val padding = (GlassMenuTokens.contentPaddingDp * density).toInt()
-        cardView.setPadding(padding, padding, padding, padding)
-
-        val bg = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = GlassMenuTokens.cornerRadiusDp * density
-            setColor(if (light) Color.argb(235, 250, 252, 255) else Color.argb(220, 25, 28, 34))
-            setStroke((density).toInt().coerceAtLeast(1), if (light) Color.argb(120, 255, 255, 255) else Color.argb(80, 255, 255, 255))
+        val cardLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, padding, padding, padding)
         }
-        cardView.background = bg
-        cardView.elevation = 16f * density
 
         val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 
@@ -56,10 +63,11 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
                 setPadding(hPad, vPad, hPad, vPad)
 
                 if (item.selected) {
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                         cornerRadius = GlassMenuTokens.itemCornerRadiusDp * density
-                        setColor(colors.surfaceVariant)
+                        setColor(colors.glassSurfaceElevated)
+                        setStroke((density).toInt().coerceAtLeast(1), colors.glassBorder)
                     }
                 } else {
                     val outValue = android.util.TypedValue()
@@ -95,6 +103,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
             container.addView(itemView, LinearLayout.LayoutParams(-1, -2).apply {
                 bottomMargin = (4 * density).toInt()
             })
+            rows += itemView
         }
 
         val scroll = ScrollView(context).apply {
@@ -103,12 +112,18 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
             addView(container)
         }
 
-        val screenWidth = context.resources.displayMetrics.widthPixels
+        val windowWidthDp = AdaptiveLayoutPolicy.availableContentWidthDp(context)
+        val windowHeightDp = AdaptiveLayoutPolicy.availableContentHeightDp(context)
+        val responsiveGutterDp = AdaptiveLayoutPolicy.tokensForWidth(windowWidthDp).screenGutterDp
         val maxW = (GlassMenuTokens.maxMenuWidthDp * density).toInt()
-        val cardWidth = screenWidth.coerceAtMost(maxW) - (32 * density).toInt()
+        panelWidth = ((windowWidthDp - responsiveGutterDp * 2) * density).toInt().coerceAtMost(maxW)
+        val availableHeight = ((windowHeightDp - 64).coerceAtLeast(1) * density).toInt()
+        val desiredHeight = (items.size * GlassMenuTokens.itemHeightDp * density + padding * 2).toInt()
+        panelHeight = desiredHeight.coerceAtMost(availableHeight)
 
-        cardView.addView(scroll, LinearLayout.LayoutParams(cardWidth, -2))
-        setContentView(cardView)
+        cardLayout.addView(scroll, LinearLayout.LayoutParams(panelWidth, panelHeight - padding * 2))
+        glassContainer.addView(cardLayout, FrameLayout.LayoutParams(panelWidth, panelHeight))
+        setContentView(glassContainer)
 
         window?.decorView?.let { decor ->
             decor.scaleX = 0.96f
@@ -120,6 +135,18 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
 
     override fun show() {
         super.show()
+        window?.setLayout(panelWidth, panelHeight)
+        positionNearAnchor()
+        anchor?.let { trigger ->
+            anchorLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                window?.decorView?.post { positionNearAnchor() }
+            }
+            anchorLayoutListener?.let(trigger::addOnLayoutChangeListener)
+        }
+        applyGlassPalette(PaletteManager.colors(context))
+        glassContainer.post {
+            glassContainer.setRenderingActive(true, activityContentRoot())
+        }
         window?.decorView?.let { decor ->
             decor.animate()
                 .scaleX(1f)
@@ -132,7 +159,44 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        removePaletteObserver?.invoke()
+        removePaletteObserver = PaletteManager.observe(context, paletteObserver)
+    }
+
+    override fun onStop() {
+        removePaletteObserver?.invoke()
+        removePaletteObserver = null
+        super.onStop()
+    }
+
+    /** Positions the dialog from the actual trigger bounds after both views are measured. */
+    private fun positionNearAnchor() {
+        val window = window ?: return
+        val trigger = anchor?.takeIf { it.isShown && it.width > 0 && it.height > 0 } ?: return
+        val location = IntArray(2)
+        trigger.getLocationOnScreen(location)
+        val frame = Rect()
+        trigger.getWindowVisibleDisplayFrame(frame)
+        val margin = (12 * density).toInt()
+        val right = location[0] + trigger.width
+        val below = location[1] + trigger.height + margin
+        val above = location[1] - panelHeight - margin
+        val y = if (below + panelHeight <= frame.bottom - margin) below else above
+        val clampedY = y.coerceIn(frame.top + margin, (frame.bottom - panelHeight - margin).coerceAtLeast(frame.top + margin))
+        val x = (right - panelWidth).coerceIn(frame.left + margin, (frame.right - panelWidth - margin).coerceAtLeast(frame.left + margin))
+        val params = window.attributes
+        params.gravity = Gravity.TOP or Gravity.START
+        params.x = x - frame.left
+        params.y = clampedY - frame.top
+        window.attributes = params
+    }
+
     override fun dismiss() {
+        anchor?.let { trigger -> anchorLayoutListener?.let(trigger::removeOnLayoutChangeListener) }
+        anchorLayoutListener = null
+        glassContainer.setRenderingActive(false, null)
         window?.decorView?.let { decor ->
             decor.animate()
                 .scaleX(0.97f)
@@ -144,5 +208,31 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>) : Dialog(c
                 .withEndAction { super.dismiss() }
                 .start()
         } ?: super.dismiss()
+    }
+
+    private fun activityContentRoot(): View? {
+        var current: Context? = context
+        while (current is ContextWrapper) {
+            if (current is Activity) {
+                return current.findViewById(android.R.id.content) ?: current.window.decorView
+            }
+            current = current.baseContext
+        }
+        return null
+    }
+
+    private fun applyGlassPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) {
+        GlassWidgetStyle.apply(glassContainer, GlassMenuTokens.cornerRadiusDp, colors, GlassWidgetStyle.MaterialRole.READING)
+        rows.forEachIndexed { index, row ->
+            val item = items[index]
+            val foreground = if (item.selected) colors.primary else colors.glassText
+            (row.getChildAt(0) as? ImageView)?.imageTintList = android.content.res.ColorStateList.valueOf(foreground)
+            (row.getChildAt(1) as? TextView)?.setTextColor(foreground)
+            if (item.selected) row.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = GlassMenuTokens.itemCornerRadiusDp * density
+                setColor(colors.glassSurfaceElevated)
+                setStroke(density.toInt().coerceAtLeast(1), colors.glassBorder)
+            }
+        }
     }
 }
