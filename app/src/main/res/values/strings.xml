@@ -4,4 +4,9 @@
     <string name="refreshing">正在刷新</string>
     <string name="navigation_drawer_open">打开导航菜单</string>
     <string name="navigation_drawer_close">关闭导航菜单</string>
+    <string name="detail_tags_heading">标签</string>
+    <string name="detail_sources_heading">来源</string>
+    <string name="detail_comments_loading">加载评论…</string>
+    <string name="detail_loading">正在加载作品信息…</string>
+    <string name="detail_retry">作品信息暂时无法加载，点击重试</string>
 </resources>

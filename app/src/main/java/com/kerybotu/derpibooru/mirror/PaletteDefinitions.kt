@@ -19,7 +19,11 @@ object PaletteDefinitions {
         val glassScrim: Int,
         val glassText: Int,
         val glassSecondaryText: Int
-    )
+    ) {
+        // Primary is a button/container fill. Inline links on translucent
+        // reading glass need foreground contrast while retaining accent hue.
+        val glassActionText: Int get() = blend(glassText, primary, 0.25f)
+    }
 
     fun forPalette(context: android.content.Context, palette: AppSettings.Palette): Scheme {
         val systemDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -36,10 +40,9 @@ object PaletteDefinitions {
         val onSurfaceVariant = if (mode == ThemeMode.DARK) 0xFFC7C7C7.toInt() else generated.onSurfaceVariant
         val outline = if (mode == ThemeMode.DARK) 0xFF666666.toInt() else generated.outline
         val glassBase = blend(surface, generated.primary, 0.12f)
-        // The renderer composites this over sampled artwork. Light mode
-        // needs enough coverage to remain a light material over dark media,
-        // while still showing blur/refraction underneath the neutral tint.
-        val glassTint = alpha(glassBase, if (mode == ThemeMode.DARK) 88 else 184)
+        // Tint the captured backdrop rather than hiding it behind a surface.
+        // Keep light-mode contrast without the previous 72% opaque coating.
+        val glassTint = alpha(glassBase, if (mode == ThemeMode.DARK) 88 else 112)
         val glassSurface = alpha(surface, if (mode == ThemeMode.DARK) 184 else 194)
         val glassSurfaceElevated = alpha(surfaceVariant, if (mode == ThemeMode.DARK) 216 else 224)
         val glassBorder = alpha(if (mode == ThemeMode.DARK) 0xFFFFFFFF.toInt() else onSurface, if (mode == ThemeMode.DARK) 42 else 34)

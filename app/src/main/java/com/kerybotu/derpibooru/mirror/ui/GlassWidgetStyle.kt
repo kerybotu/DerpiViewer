@@ -12,9 +12,19 @@ import com.example.liquidglass.LiquidGlassView
 import com.kerybotu.derpibooru.mirror.PaletteDefinitions
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import android.graphics.drawable.GradientDrawable
+import android.graphics.Canvas
+import android.graphics.Color
+import android.os.Build
+import java.lang.ref.WeakReference
 
 /** App theme and bounded rendering shared by the library's ready-made widgets. */
 object GlassWidgetStyle {
+    enum class MaterialRole { FLOATING, READING }
+    private val materialRoles = java.util.WeakHashMap<LiquidGlassView, MaterialRole>()
+
+    fun materialRole(view: LiquidGlassView): MaterialRole = materialRoles[view]
+        ?: if (view is LiquidGlassListItem) MaterialRole.READING else MaterialRole.FLOATING
+
     fun textColor(context: android.content.Context) = PaletteManager.colors(context).glassText
     fun secondaryTextColor(context: android.content.Context) = PaletteManager.colors(context).glassSecondaryText
     fun iconColor(context: android.content.Context) = PaletteManager.colors(context).glassText
@@ -37,13 +47,19 @@ object GlassWidgetStyle {
         // the bitmap fallback). Use REGULAR's neutral highlight pass; app
         // tokens below own both the light/dark base and widget foreground.
         view.overLight = false
-        view.glassTint = colors.glassTint
+        // Dense text needs the existing reading-surface coverage over bright
+        // artwork. It is still a tint on the optical result, never a second
+        // opaque background. Floating navigation keeps its lighter coating.
+        view.glassTint = if (materialRole(view) == MaterialRole.READING) colors.glassSurface else colors.glassTint
         view.enableBackdropBlur = true
-        // Pre-31 uses synchronous bitmap rendering. Native chromatic
-        // dispersion on every frame stalls the UI thread on that path;
-        // retain backdrop blur/refraction and use the bounded fallback.
-        view.enableChromaticDispersion = android.os.Build.VERSION.SDK_INT >= 31
-        view.enableChromaticAberration = android.os.Build.VERSION.SDK_INT >= 31
+        // Restore the upstream default optical path. On pre-33 devices the
+        // displacement-map aberration pass IS the refraction implementation;
+        // disabling both optical effects leaves only a blurred flat panel.
+        // Downsample the capture instead of deleting that pass. API 33+ keeps
+        // the original GPU lens (SDF refraction, dispersion and highlights).
+        view.enableChromaticDispersion = false
+        view.enableChromaticAberration = true
+        view.globalDownsampleFactor = if (Build.VERSION.SDK_INT < 33) 0.5f else 1f
         view.blurAmount = 0.045f
         view.saturation = 125f
         view.adaptiveLensScale = true
@@ -54,19 +70,24 @@ object GlassWidgetStyle {
         view.edgeSoftness = 0f
         view.dispersionStrength = 0.08f
         view.edgeHighlightOpacity = 35f
+        view.enableEdgeHighlight = true
         // Ancestor transforms cannot be represented by the library's backdrop offset.
         view.enablePressEffect = false
         view.enableShadow = false
         view.collectFrameStats = false
-        // Keep the resolved theme visible when realtime backdrop sampling is
-        // unavailable. The library's sampled layer is additive to this base.
-        view.background = GradientDrawable().apply {
+        // Only use the solid fallback before a source is available. A live
+        // surface must expose its backdrop, not stack two material base coats.
+        view.background = BackdropFallback(view, colors.glassSurface).apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = view.cornerRadius
-            setColor(colors.glassSurface)
             setStroke((density).toInt().coerceAtLeast(1), colors.glassBorder)
         }
-        view.elevation = 0f
+        // Preserve the existing island/host elevation; do not erase its shadow
+        // on each theme refresh. The native shadow is clipped inside the view.
+        if (Build.VERSION.SDK_INT >= 28) {
+            view.outlineAmbientShadowColor = colors.glassShadow
+            view.outlineSpotShadowColor = colors.glassShadow
+        }
         when (view) {
             is LiquidGlassButton -> view.setTextColor(colors.glassText)
             is LiquidGlassChip -> view.setTextColor(colors.glassText)
@@ -86,8 +107,10 @@ object GlassWidgetStyle {
     fun apply(
         view: LiquidGlassView,
         radiusDp: Float = 24f,
-        colors: PaletteDefinitions.Scheme = PaletteManager.colors(view.context)
+        colors: PaletteDefinitions.Scheme = PaletteManager.colors(view.context),
+        role: MaterialRole = materialRole(view)
     ) {
+        materialRoles[view] = role
         applyMaterial(view, colors)
         view.cornerRadius = radiusDp * view.resources.displayMetrics.density
         (view.background as? GradientDrawable)?.cornerRadius = view.cornerRadius
@@ -98,5 +121,17 @@ object GlassWidgetStyle {
             }
         }
         view.clipToOutline = true
+    }
+
+    private class BackdropFallback(view: LiquidGlassView, private val fallback: Int) : GradientDrawable() {
+        private val owner = WeakReference(view)
+
+        override fun draw(canvas: Canvas) {
+            val view = owner.get()
+            val source = view?.backdropSource ?: view?.parent as? View
+            val fill = if (source != null && source.width > 0 && source.height > 0) Color.TRANSPARENT else fallback
+            if (color?.defaultColor != fill) setColor(fill)
+            super.draw(canvas)
+        }
     }
 }

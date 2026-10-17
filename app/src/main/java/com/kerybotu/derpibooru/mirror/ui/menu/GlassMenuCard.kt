@@ -222,7 +222,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
     }
 
     private fun applyGlassPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) {
-        GlassWidgetStyle.apply(glassContainer, GlassMenuTokens.cornerRadiusDp, colors)
+        GlassWidgetStyle.apply(glassContainer, GlassMenuTokens.cornerRadiusDp, colors, GlassWidgetStyle.MaterialRole.READING)
         rows.forEachIndexed { index, row ->
             val item = items[index]
             val foreground = if (item.selected) colors.primary else colors.glassText
