@@ -195,6 +195,17 @@ object NetworkManager {
      */
     fun imageHttpClient(): OkHttpClient? = okHttpClient
 
+    /**
+     * Media requests can legitimately pause while a CDN opens a range stream.
+     * Keep the same cookies, proxy and challenge interceptors as image/API calls,
+     * but allow a longer read window so a slow video is not classified as a
+     * permanent playback failure at the normal API timeout.
+     */
+    fun videoHttpClient(): OkHttpClient? = okHttpClient?.newBuilder()
+        ?.readTimeout(45, TimeUnit.SECONDS)
+        ?.callTimeout(60, TimeUnit.SECONDS)
+        ?.build()
+
     private fun redactUrl(url: String): String = url.replace(Regex("([?&]key=)[^&]*"), "$1***")
 
     fun currentPreferredIps(): Map<String, String> = preferredRouteIps.toMap()

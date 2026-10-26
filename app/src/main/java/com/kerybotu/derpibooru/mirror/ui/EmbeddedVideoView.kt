@@ -152,6 +152,7 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     override fun onComments(position: Int) = controller.onComments(position)
     override fun onDownload(position: Int) = controller.onDownload(position)
     override fun onMore(position: Int, anchor: View) = controller.onMore(position, anchor)
+    override fun onRetry(position: Int) = controller.onRetry(position)
 
     private fun updateTopIslandPosition() {
         val params = binding.videoTopIsland.layoutParams as FrameLayout.LayoutParams

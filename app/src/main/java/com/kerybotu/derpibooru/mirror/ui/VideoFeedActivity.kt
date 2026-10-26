@@ -107,6 +107,7 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
     override fun onComments(position: Int) = controller.onComments(position)
     override fun onDownload(position: Int) = controller.onDownload(position)
     override fun onMore(position: Int, anchor: View) = controller.onMore(position, anchor)
+    override fun onRetry(position: Int) = controller.onRetry(position)
 
     override fun onPause() { binding.videoGlassBackdrop.setActive(false); progressHandler.removeCallbacks(progressTick); controller.playerPool.pauseAll(); super.onPause() }
     override fun onResume() {

@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.SystemClock
+import android.util.Log
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -54,13 +56,56 @@ class VideoFeedController(
     var filterQuery = ""
     var recentFeatured = false
     val numericFilters = mutableListOf<NumericFilter>()
+    private val prepareStartedAt = mutableMapOf<Int, Long>()
+    private val renderedImageIds = mutableSetOf<Int>()
+    private val transientRetryCounts = mutableMapOf<Int, Int>()
+    private val retryHandler = Handler(Looper.getMainLooper())
 
     init {
-        playerPool.addListener(object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) {
-                Toast.makeText(context, "视频播放失败：${error.errorCodeName}", Toast.LENGTH_LONG).show()
+        playerPool.onFirstFrameRendered = { position, url ->
+            val post = adapter.item(position)
+            if (post?.url == url) {
+                transientRetryCounts.remove(post.id)
+                val elapsed = prepareStartedAt.remove(position)?.let { SystemClock.elapsedRealtime() - it }
+                renderedImageIds += post.id
+                Log.d(TAG, "视频首帧已渲染 position=$position imageId=${post.id} elapsedMs=${elapsed ?: -1}")
+                if (position == currentPosition) {
+                    (pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder)?.let { holder ->
+                        if (holder.previewState.firstFrame(post.id)) holder.binding.apply {
+                            videoPreview.visibility = View.GONE
+                            videoPreviewLoading.visibility = View.GONE
+                            videoPlaybackError.visibility = View.GONE
+                        }
+                    }
+                }
             }
-        })
+        }
+        playerPool.onPlaybackError = { position, url, error ->
+            val post = adapter.item(position)
+            if (post?.url == url) {
+                renderedImageIds.remove(post.id)
+                Log.w(TAG, "视频播放失败 position=$position imageId=${post.id} code=${error.errorCodeName} cause=${error.cause?.javaClass?.simpleName}:${error.cause?.message}")
+                if (isTransientNetworkError(error) && transientRetryCounts.getOrDefault(post.id, 0) < MAX_TRANSIENT_RETRIES) {
+                    val attempt = transientRetryCounts.getOrDefault(post.id, 0) + 1
+                    transientRetryCounts[post.id] = attempt
+                    Log.d(TAG, "视频网络错误，计划退避重试 imageId=${post.id} attempt=$attempt")
+                    retryHandler.postDelayed({
+                        if (position == currentPosition && adapter.item(position)?.id == post.id) {
+                            retryPlayback(position, post, automatic = true)
+                        }
+                    }, TRANSIENT_RETRY_DELAY_MS * attempt)
+                } else if (position == currentPosition) {
+                    (pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder)?.let { holder ->
+                        if (holder.previewState.error(post.id)) holder.binding.apply {
+                            videoPreview.visibility = View.VISIBLE
+                            videoPreviewLoading.visibility = View.GONE
+                            videoPlaybackError.visibility = View.VISIBLE
+                            videoPlaybackErrorText.text = "视频暂时无法播放（${error.errorCodeName}）"
+                        }
+                    }
+                }
+            }
+        }
         playerPool.setMuted(muted)
     }
 
@@ -109,8 +154,13 @@ class VideoFeedController(
                 val mime = item.optString("mime_type").lowercase()
                 if (mime != "video/webm" && mime != "video/mp4") continue
                 val reps = item.optJSONObject("representations")
-                val url = reps?.optString("full").takeUnless { it.isNullOrBlank() }
-                    ?: reps?.optString("large").takeUnless { it.isNullOrBlank() }
+                // Full-size WebM files can exceed Android decoder capabilities even when
+                // the source is valid (for example high-resolution VP9 on API 28).
+                // Prefer bounded server representations and fall back to the original
+                // only when no bounded representation exists.
+                val url = reps?.optString("large").takeUnless { it.isNullOrBlank() }
+                    ?: reps?.optString("medium").takeUnless { it.isNullOrBlank() }
+                    ?: reps?.optString("full").takeUnless { it.isNullOrBlank() }
                     ?: continue
                 val thumbnail = reps?.optString("small")?.takeIf { it.isNotBlank() }
                     ?: reps?.optString("thumb")?.takeIf { it.isNotBlank() }
@@ -135,7 +185,7 @@ class VideoFeedController(
         playerPool.retainOnly(setOf(position))
         scope.launch {
             if (!ensureNetworkReady()) return@launch
-            if (position != currentPosition) return@launch
+            if (position != currentPosition || adapter.item(position)?.id != current.id) return@launch
             attachPlayer(position, current, automatic && canAutoPlay())
             val forwardUrls = (1..4).mapNotNull { offset -> adapter.item(position + offset)?.url }
             playerPool.prefetch(forwardUrls, prefetchScope)
@@ -143,16 +193,18 @@ class VideoFeedController(
     }
 
     private fun attachPlayer(position: Int, post: VideoPost, play: Boolean) {
+        prepareStartedAt[position] = SystemClock.elapsedRealtime()
+        Log.d(TAG, "视频播放器准备 position=$position imageId=${post.id} mime=${post.mimeType}")
         val player = playerPool.prepare(position, post.url)
-        bindPlayerView(position, player, play, attempt = 0)
+        bindPlayerView(position, post, player, play, attempt = 0)
     }
 
-    private fun bindPlayerView(position: Int, player: Player, play: Boolean, attempt: Int) {
+    private fun bindPlayerView(position: Int, post: VideoPost, player: Player, play: Boolean, attempt: Int) {
         if (position != currentPosition) return
         val holder = pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder
         if (holder == null) {
             if (attempt >= 12) return
-            pagerRecycler.post { bindPlayerView(position, player, play, attempt + 1) }
+            pagerRecycler.post { bindPlayerView(position, post, player, play, attempt + 1) }
             return
         }
         val attached = holder.binding.videoPlayer
@@ -169,6 +221,12 @@ class VideoFeedController(
                 override fun onStopTrackingTouch(seekBar: android.widget.SeekBar) = Unit
             })
         }
+        val alreadyRendered = post.id in renderedImageIds
+        holder.previewState.preparing(post.id)
+        if (alreadyRendered) holder.previewState.firstFrame(post.id)
+        holder.binding.videoPreview.visibility = if (holder.previewState.previewVisible) View.VISIBLE else View.GONE
+        holder.binding.videoPreviewLoading.visibility = if (alreadyRendered) View.GONE else View.VISIBLE
+        holder.binding.videoPlaybackError.visibility = if (holder.previewState.phase == VideoPreviewState.Phase.FAILED) View.VISIBLE else View.GONE
         if (play) player.playWhenReady = true
     }
 
@@ -358,9 +416,56 @@ class VideoFeedController(
         }.show()
     }
 
+    override fun onRetry(position: Int) {
+        val post = adapter.item(position) ?: return
+        if (position != currentPosition) return
+        transientRetryCounts.remove(post.id)
+        retryPlayback(position, post, automatic = false)
+    }
+
+    private fun retryPlayback(position: Int, post: VideoPost, automatic: Boolean) {
+        if (position != currentPosition || adapter.item(position)?.id != post.id) return
+        val holder = pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder
+        holder?.let {
+            if (it.previewState.retry(post.id)) it.binding.apply {
+                videoPlaybackError.visibility = View.GONE
+                videoPreview.visibility = View.VISIBLE
+                videoPreviewLoading.visibility = View.VISIBLE
+            }
+        }
+        renderedImageIds.remove(post.id)
+        playerPool.get(position)?.apply { stop(); clearMediaItems() }
+        scope.launch {
+            if (ensureNetworkReady() && position == currentPosition && adapter.item(position)?.id == post.id) {
+                Log.d(TAG, "视频${if (automatic) "自动" else "手动"}重试 imageId=${post.id}")
+                attachPlayer(position, post, canAutoPlay())
+            }
+        }
+    }
+
+    private fun isTransientNetworkError(error: PlaybackException): Boolean {
+        var cause: Throwable? = error
+        repeat(5) {
+            if (cause is java.io.IOException) return true
+            cause = cause?.cause
+        }
+        return error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT
+    }
+
     fun dispose() {
         scope.cancel()
         prefetchScope.cancel()
-        playerPool.releaseAll()
+        retryHandler.removeCallbacksAndMessages(null)
+        transientRetryCounts.clear()
+        prepareStartedAt.clear()
+        renderedImageIds.clear()
+        playerPool.dispose()
+    }
+
+    private companion object {
+        const val TAG = "VideoFeedController"
+        const val MAX_TRANSIENT_RETRIES = 1
+        const val TRANSIENT_RETRY_DELAY_MS = 1_500L
     }
 }

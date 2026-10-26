@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DataSpec
@@ -12,6 +13,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.kerybotu.derpibooru.mirror.AppSettings
@@ -28,13 +30,17 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
     private val assignments = LinkedHashMap<Int, ExoPlayer>()
     private val players = mutableListOf<ExoPlayer>()
     private val listeners = mutableListOf<Player.Listener>()
-    private val prefetchExecutor: ExecutorService = Executors.newFixedThreadPool(
+    private var prefetchExecutor: ExecutorService = newPrefetchExecutor()
+    private val prefetching = Collections.synchronizedSet(mutableSetOf<String>())
+    var onPlaybackError: ((Int, String, PlaybackException) -> Unit)? = null
+    var onFirstFrameRendered: ((Int, String) -> Unit)? = null
+
+    private fun newPrefetchExecutor(): ExecutorService = Executors.newFixedThreadPool(
         AppSettings.getCdnThreads(appContext).coerceIn(1, 4)
     )
-    private val prefetching = Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun upstreamFactory(): DefaultDataSource.Factory {
-        val client = NetworkManager.imageHttpClient()
+        val client = NetworkManager.videoHttpClient()
             ?: error("NetworkManager 尚未初始化，拒绝使用未优化的普通网络连接")
         val httpFactory = OkHttpDataSource.Factory(client).setTransferListener(bandwidthMeter)
         return DefaultDataSource.Factory(appContext, httpFactory)
@@ -45,9 +51,13 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
         .setUpstreamDataSourceFactory(upstreamFactory())
         .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
+    /** Main playback stays on the direct OkHttp path. The cache is only for bounded
+     * forward prefetches, so stale/partial entries cannot break a healthy request. */
+    private fun playbackDataSourceFactory(): DefaultDataSource.Factory = upstreamFactory()
+
     private fun createPlayer(): ExoPlayer {
-        val dataSource = cacheDataSourceFactory()
-        return ExoPlayer.Builder(appContext)
+        val dataSource = playbackDataSourceFactory()
+        val player = ExoPlayer.Builder(appContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
             .build()
             .apply {
@@ -56,7 +66,32 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
                 volume = if (AppSettings.isVideoAudioEnabled(appContext)) 1f else 0f
                 listeners.forEach(::addListener)
             }
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onRenderedFirstFrame(
+                eventTime: AnalyticsListener.EventTime,
+                output: Any,
+                renderTimeMs: Long
+            ) {
+                ownerOf(player)?.let { position ->
+                    player.currentMediaItem?.localConfiguration?.uri?.toString()?.let { url ->
+                        onFirstFrameRendered?.invoke(position, url)
+                    }
+                }
+            }
+
+            override fun onPlayerError(eventTime: AnalyticsListener.EventTime, error: PlaybackException) {
+                ownerOf(player)?.let { position ->
+                    player.currentMediaItem?.localConfiguration?.uri?.toString()?.let { url ->
+                        onPlaybackError?.invoke(position, url, error)
+                    }
+                }
+            }
+        })
+        return player
     }
+
+    private fun ownerOf(player: ExoPlayer): Int? =
+        assignments.entries.firstOrNull { it.value === player }?.key
 
     fun prepare(position: Int, url: String): ExoPlayer {
         val player = assignments[position] ?: acquire(position)
@@ -73,10 +108,15 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
         urls.asSequence()
             .filter(String::isNotBlank)
             .distinct()
-            .take(5)
+            .take(2)
             .forEach { url ->
                 if (!prefetching.add(url)) return@forEach
-                prefetchExecutor.execute {
+                val executor = prefetchExecutor
+                if (executor.isShutdown) {
+                    prefetching.remove(url)
+                    return@forEach
+                }
+                runCatching { executor.execute {
                     val dataSource = runCatching { cacheDataSourceFactory().createDataSource() }.getOrNull()
                     if (dataSource == null) {
                         prefetching.remove(url)
@@ -99,6 +139,9 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
                         runCatching { dataSource.close() }
                         prefetching.remove(url)
                     }
+                } }.onFailure {
+                    prefetching.remove(url)
+                    Log.d(TAG, "视频预缓存无法排队: ${it.message}")
                 }
             }
     }
@@ -133,8 +176,14 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
     fun releaseAll() {
         assignments.clear()
         players.forEach { it.release() }
-        // Do not interrupt active CacheWriter calls; shutdown lets queued
-        // writes finish without leaving a locked cache span behind.
+        players.clear()
+        // reloadFeed() reuses this pool; keep its prefetch executor alive.
+    }
+
+    fun dispose() {
+        releaseAll()
+        prefetching.clear()
+        // Let active CacheWriter operations finish to avoid locking a cache span.
         prefetchExecutor.shutdown()
     }
 

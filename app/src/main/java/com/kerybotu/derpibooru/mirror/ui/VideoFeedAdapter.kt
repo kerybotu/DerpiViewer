@@ -14,6 +14,10 @@ import android.content.res.ColorStateList
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import com.bumptech.glide.request.RequestListener
+import com.bumptech.glide.request.target.Target
+import com.bumptech.glide.load.engine.GlideException
+import android.graphics.drawable.Drawable
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.databinding.ItemVideoFeedBinding
 
@@ -46,6 +50,7 @@ class VideoFeedAdapter(
         fun onComments(position: Int)
         fun onDownload(position: Int)
         fun onMore(position: Int, anchor: View)
+        fun onRetry(position: Int)
     }
 
     private val items = mutableListOf<VideoPost>()
@@ -103,11 +108,15 @@ class VideoFeedAdapter(
         // Reuse its existing lifecycle-bound manager instead of retrieving
         // a new one from the destroyed Activity's View context.
         holder.imageRequests.clear(holder.binding.videoAmbientBackground)
+        holder.imageRequests.clear(holder.binding.videoPreview)
+        holder.boundId = null
         super.onViewRecycled(holder)
     }
 
     class Holder(val binding: ItemVideoFeedBinding) : RecyclerView.ViewHolder(binding.root) {
         val imageRequests = Glide.with(binding.videoAmbientBackground)
+        var boundId: Int? = null
+        internal val previewState = VideoPreviewState()
         fun bind(
             post: VideoPost,
             position: Int,
@@ -116,12 +125,42 @@ class VideoFeedAdapter(
             endInset: Int,
             landscape: Boolean
         ) = with(binding) {
+            boundId = post.id
+            previewState.bind(post.id)
+            imageRequests.clear(videoAmbientBackground)
+            imageRequests.clear(videoPreview)
+            videoPreview.visibility = View.VISIBLE
+            videoPreviewLoading.visibility = View.VISIBLE
+            videoPlaybackError.visibility = View.GONE
             applyNavigationInsets(bottomInset, endInset, landscape)
             applyPalette()
             imageRequests
                 .load(post.thumbnailUrl ?: post.url)
                 .centerCrop()
+                .listener(object : RequestListener<Drawable> {
+                    override fun onLoadFailed(e: GlideException?, model: Any?, target: Target<Drawable>, first: Boolean): Boolean {
+                        if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
+                        return false
+                    }
+                    override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>, dataSource: com.bumptech.glide.load.DataSource, first: Boolean): Boolean {
+                        if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
+                        return false
+                    }
+                })
                 .into(videoAmbientBackground)
+            imageRequests.load(post.thumbnailUrl)
+                .fitCenter()
+                .listener(object : RequestListener<Drawable> {
+                    override fun onLoadFailed(e: GlideException?, model: Any?, target: Target<Drawable>, first: Boolean): Boolean {
+                        if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
+                        return false
+                    }
+                    override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>, dataSource: com.bumptech.glide.load.DataSource, first: Boolean): Boolean {
+                        if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
+                        return false
+                    }
+                })
+                .into(videoPreview)
             videoUploader.text = post.uploader
             videoTags.text = post.tags.take(3).joinToString("  ·  ")
             videoUpvoteCount.text = post.upvotes.toString()
@@ -131,6 +170,7 @@ class VideoFeedAdapter(
             videoComments.setOnClickListener { actions.onComments(bindingAdapterPosition) }
             videoDownload.setOnClickListener { actions.onDownload(bindingAdapterPosition) }
             videoMore.setOnClickListener { actions.onMore(bindingAdapterPosition, it) }
+            videoPlaybackRetry.setOnClickListener { actions.onRetry(bindingAdapterPosition) }
             val detector = GestureDetector(root.context, object : GestureDetector.SimpleOnGestureListener() {
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean { actions.onToggle(bindingAdapterPosition); return true }
                 override fun onDoubleTap(e: MotionEvent): Boolean { actions.onDoubleTap(bindingAdapterPosition); return true }
@@ -150,6 +190,10 @@ class VideoFeedAdapter(
             val uiColors = Ui2DesignSystem.colors(root.context)
             val lightSurface = Color.luminance(colors.surface) > 0.5f
             videoAmbientBackground.alpha = if (lightSurface) 0.5f else 0.42f
+            videoPreview.setBackgroundColor(colors.surface)
+            videoPreviewLoading.indeterminateTintList = ColorStateList.valueOf(colors.primary)
+            videoPlaybackErrorText.setTextColor(colors.glassText)
+            videoPlaybackRetry.setTextColor(colors.primary)
             videoAmbientBackground.scaleX = 1.18f
             videoAmbientBackground.scaleY = 1.18f
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
