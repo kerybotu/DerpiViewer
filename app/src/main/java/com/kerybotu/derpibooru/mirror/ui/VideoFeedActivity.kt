@@ -109,9 +109,10 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
     override fun onMore(position: Int, anchor: View) = controller.onMore(position, anchor)
     override fun onRetry(position: Int) = controller.onRetry(position)
 
-    override fun onPause() { binding.videoGlassBackdrop.setActive(false); progressHandler.removeCallbacks(progressTick); controller.playerPool.pauseAll(); super.onPause() }
+    override fun onPause() { binding.videoGlassBackdrop.setActive(false); progressHandler.removeCallbacks(progressTick); controller.setActive(false); super.onPause() }
     override fun onResume() {
         super.onResume()
+        controller.setActive(true)
         PaletteManager.apply(this)
         applyVideoPalette()
         binding.videoGlassBackdrop.setActive(true)

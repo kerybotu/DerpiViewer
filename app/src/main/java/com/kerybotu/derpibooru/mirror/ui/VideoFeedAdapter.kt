@@ -23,7 +23,7 @@ import com.kerybotu.derpibooru.mirror.databinding.ItemVideoFeedBinding
 
 data class VideoPost(
     val id: Int,
-    val url: String,
+    var url: String,
     val thumbnailUrl: String? = null,
     val mimeType: String = "video/mp4",
     val width: Int = 0,
@@ -32,7 +32,9 @@ data class VideoPost(
     val tags: List<String>,
     var upvotes: Int,
     var downvotes: Int,
-    val commentCount: Int
+    val commentCount: Int,
+    val sources: List<String> = listOf(url),
+    val originalUrl: String = url
 )
 
 @SuppressLint("UnsafeOptInUsageError")
@@ -57,6 +59,7 @@ class VideoFeedAdapter(
     private var bottomInset = 0
     private var endInset = 0
     private var landscape = false
+    var onHolderBound: ((Int) -> Unit)? = null
 
     fun replace(posts: List<VideoPost>) { items.clear(); items.addAll(posts); notifyDataSetChanged() }
     fun append(posts: List<VideoPost>) { val start = items.size; items.addAll(posts); notifyItemRangeInserted(start, posts.size) }
@@ -79,7 +82,7 @@ class VideoFeedAdapter(
         bottomInset = normalizedBottom
         endInset = normalizedEnd
         landscape = isLandscape
-        if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size)
+        if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size, PALETTE_PAYLOAD)
     }
     override fun getItemCount(): Int = items.size
 
@@ -94,11 +97,15 @@ class VideoFeedAdapter(
         }
     }
 
-    override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(
-        items[position], position, actions, bottomInset, endInset, landscape
-    )
+    override fun onBindViewHolder(holder: Holder, position: Int) {
+        holder.bind(items[position], position, actions, bottomInset, endInset, landscape)
+        holder.itemView.post { onHolderBound?.invoke(holder.bindingAdapterPosition) }
+    }
     override fun onBindViewHolder(holder: Holder, position: Int, payloads: MutableList<Any>) {
-        if (payloads.isNotEmpty() && payloads.all { it == PALETTE_PAYLOAD }) holder.applyPalette()
+        if (payloads.isNotEmpty() && payloads.all { it == PALETTE_PAYLOAD }) {
+            holder.applyPalette()
+            holder.applyNavigationInsets(bottomInset, endInset, landscape)
+        }
         else onBindViewHolder(holder, position)
     }
     override fun onViewRecycled(holder: Holder) {
@@ -117,6 +124,7 @@ class VideoFeedAdapter(
         val imageRequests = Glide.with(binding.videoAmbientBackground)
         var boundId: Int? = null
         internal val previewState = VideoPreviewState()
+        internal val seekState = VideoSeekState()
         fun bind(
             post: VideoPost,
             position: Int,
@@ -126,6 +134,8 @@ class VideoFeedAdapter(
             landscape: Boolean
         ) = with(binding) {
             boundId = post.id
+            seekState.cancel()
+            videoPlayer.player = null
             previewState.bind(post.id)
             imageRequests.clear(videoAmbientBackground)
             imageRequests.clear(videoPreview)
@@ -134,28 +144,28 @@ class VideoFeedAdapter(
             videoPlaybackError.visibility = View.GONE
             applyNavigationInsets(bottomInset, endInset, landscape)
             applyPalette()
-            imageRequests
-                .load(post.thumbnailUrl ?: post.url)
+            imageRequests.asBitmap()
+                .load(post.thumbnailUrl)
                 .centerCrop()
-                .listener(object : RequestListener<Drawable> {
-                    override fun onLoadFailed(e: GlideException?, model: Any?, target: Target<Drawable>, first: Boolean): Boolean {
+                .listener(object : RequestListener<android.graphics.Bitmap> {
+                    override fun onLoadFailed(e: GlideException?, model: Any?, target: Target<android.graphics.Bitmap>, first: Boolean): Boolean {
                         if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
                         return false
                     }
-                    override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>, dataSource: com.bumptech.glide.load.DataSource, first: Boolean): Boolean {
+                    override fun onResourceReady(resource: android.graphics.Bitmap, model: Any, target: Target<android.graphics.Bitmap>, dataSource: com.bumptech.glide.load.DataSource, first: Boolean): Boolean {
                         if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
                         return false
                     }
                 })
                 .into(videoAmbientBackground)
-            imageRequests.load(post.thumbnailUrl)
+            imageRequests.asBitmap().load(post.thumbnailUrl)
                 .fitCenter()
-                .listener(object : RequestListener<Drawable> {
-                    override fun onLoadFailed(e: GlideException?, model: Any?, target: Target<Drawable>, first: Boolean): Boolean {
+                .listener(object : RequestListener<android.graphics.Bitmap> {
+                    override fun onLoadFailed(e: GlideException?, model: Any?, target: Target<android.graphics.Bitmap>, first: Boolean): Boolean {
                         if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
                         return false
                     }
-                    override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>, dataSource: com.bumptech.glide.load.DataSource, first: Boolean): Boolean {
+                    override fun onResourceReady(resource: android.graphics.Bitmap, model: Any, target: Target<android.graphics.Bitmap>, dataSource: com.bumptech.glide.load.DataSource, first: Boolean): Boolean {
                         if (boundId == post.id) videoPreviewLoading.visibility = View.GONE
                         return false
                     }

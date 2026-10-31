@@ -49,8 +49,6 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
             insets
         }
         ViewCompat.requestApplyInsets(binding.root)
-        ResourceCoordinator.enterVideoTab()
-        CdnImageGate.pausePrefetch(context)
         adapter = VideoFeedAdapter(this, binding.videoGlassBackdrop)
         binding.videoPager.orientation = ViewPager2.ORIENTATION_VERTICAL
         binding.videoPager.offscreenPageLimit = 1
@@ -131,12 +129,17 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
         updateTopIslandPosition()
     }
     fun setActive(active: Boolean) {
+        controller.setActive(active)
+        progressHandler.removeCallbacks(progressTick)
         binding.videoTopIsland.setRenderingActive(active, if (active) binding.videoPager else null)
         if (active) {
+            ResourceCoordinator.enterVideoTab()
+            CdnImageGate.pausePrefetch(context)
             if (!loaded && !controller.loading) { controller.loadNextPage(); loaded = true }
             progressHandler.post(progressTick)
             if (loaded) controller.activate(controller.currentPosition, automatic = true)
         } else {
+            ResourceCoordinator.exitVideoTab()
             progressHandler.removeCallbacks(progressTick); controller.playerPool.pauseAll()
         }
     }

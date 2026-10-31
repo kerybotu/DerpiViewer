@@ -769,6 +769,7 @@ class MainActivity : AppCompatActivity() {
         // palette and shell geometry have been reapplied on return.
         updateShellGlass()
         embeddedVideo?.refreshPalette()
+        embeddedVideo?.setActive(embeddedScreenId == R.id.tab_video_feed)
         embeddedProfile?.applyPalette()
         embeddedFeatured?.refreshPalette()
         ViewCompat.requestApplyInsets(binding.root)
@@ -786,6 +787,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        embeddedVideo?.setActive(false)
         shellGlassResumed = false
         updateShellGlass()
         super.onPause()
