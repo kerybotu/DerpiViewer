@@ -14,6 +14,8 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
@@ -21,6 +23,7 @@ import kotlin.random.Random
 
 data class DeepOptimizeCandidate(val ip: String, var avgLatencyMs: Double = -1.0,
                                  var connectivityPassed: Boolean = false,
+                                 var apiPassed: Boolean = false,
                                  var downloadSpeedKBps: Double = -1.0)
 sealed class DeepOptimizeLog {
     data class Info(val message: String) : DeepOptimizeLog()
@@ -80,20 +83,34 @@ object DeepIpOptimizer {
         val ranked = tcpResults.sortedBy { it.avgLatencyMs }.take(TOP)
         if (ranked.isEmpty()) return@withContext null
 
-        onLog(DeepOptimizeLog.Info("对前 ${ranked.size} 个节点验证 Derpibooru 主站连通性（并发 $CONCURRENCY）"))
+        onLog(DeepOptimizeLog.Info("对前 ${ranked.size} 个节点分阶段验证：TLS、主站 HTTP 和只读 API（并发 $CONCURRENCY）"))
         val sem = Semaphore(CONCURRENCY)
         coroutineScope {
             ranked.map { c -> async {
                 sem.withPermit {
                     delay(Random.nextLong(40, 160))
-                    c.connectivityPassed = validate(c.ip, MAIN)
-                    onLog(if (c.connectivityPassed) DeepOptimizeLog.Success("${c.ip} 主站连通性通过") else DeepOptimizeLog.Warn("${c.ip} 主站连通性失败"))
+                    val homeStatus = validate(c.ip, MAIN)
+                    c.connectivityPassed = homeStatus in 200L..499L && homeStatus != 530L
+                    onLog(if (c.connectivityPassed) {
+                        DeepOptimizeLog.Success("${c.ip} TLS/主站 HTTP 通过（HTTP $homeStatus）")
+                    } else {
+                        DeepOptimizeLog.Warn("${c.ip} TLS/主站 HTTP 失败（未得到可用状态）")
+                    })
+                    if (c.connectivityPassed) {
+                        val api = validateApi(c.ip, MAIN)
+                        c.apiPassed = api.first
+                        onLog(if (api.first) {
+                            DeepOptimizeLog.Success("${c.ip} API 验证通过（HTTP ${api.second}，JSON 结构有效）")
+                        } else {
+                            DeepOptimizeLog.Warn("${c.ip} API 验证失败（HTTP ${api.second} 或响应格式异常）")
+                        })
+                    }
                 }
             }}.awaitAll()
         }
-        val passed = ranked.filter { it.connectivityPassed }
+        val passed = ranked.filter { it.connectivityPassed && it.apiPassed }
         if (passed.isEmpty()) return@withContext null
-        onLog(DeepOptimizeLog.Info("主站验证通过 ${passed.size} 个，全部进入 CDN 下载测速（并发 $SPEED_CONCURRENCY）"))
+        onLog(DeepOptimizeLog.Info("TLS、HTTP、API 均验证通过 ${passed.size} 个，进入 CDN 下载测速（并发 $SPEED_CONCURRENCY）"))
         val speedSemaphore = Semaphore(SPEED_CONCURRENCY)
         val speedProgress = AtomicInteger()
         coroutineScope {
@@ -136,9 +153,27 @@ object DeepIpOptimizer {
         if (values.size >= 2) values.average() else -1.0
     }
 
-    private fun validate(ip: String, domain: String): Boolean {
+    private fun validate(ip: String, domain: String): Long {
         val status = requestStatus(ip, domain, "/")
-        return status in 200L..499L && status != 530L
+        return status
+    }
+
+    /**
+     * Probe the same read-only API family used by the application. A TCP socket
+     * and even a successful homepage response do not prove that the API path is
+     * reachable or that the response is JSON, so this stage is deliberately
+     * separate from [validate].
+     */
+    private fun validateApi(ip: String, domain: String): Pair<Boolean, Int> {
+        val path = "/api/v1/json/search/images?per_page=1&q=safe"
+        val result = requestStatusAndBody(ip, domain, path, 8192)
+        val contentType = result.headers.lineSequence()
+            .firstOrNull { it.startsWith("content-type:", ignoreCase = true) }
+            ?.substringAfter(':')?.trim()?.lowercase().orEmpty()
+        val body = result.body.trimStart()
+        val jsonShape = body.startsWith("{") && body.contains("\"images\"")
+        val acceptedType = contentType.isBlank() || contentType.contains("json")
+        return (result.status in 200..299 && acceptedType && jsonShape) to result.status
     }
 
     private fun speed(ip: String, target: SpeedTarget): Double {
@@ -158,6 +193,101 @@ object DeepIpOptimizer {
             readStatusAndHeaders(ssl.inputStream).first.toLong()
         } catch (_: Exception) { -1L } finally { runCatching { ssl?.close() }; runCatching { raw?.close() } }
     }
+
+    private data class ProbeResponse(val status: Int, val headers: String, val body: String)
+
+    private fun requestStatusAndBody(ip: String, domain: String, path: String, maxBodyBytes: Int): ProbeResponse {
+        var raw: Socket? = null; var ssl: SSLSocket? = null
+        return try {
+            raw = Socket(); raw.connect(InetSocketAddress(ip, 443), 5000); raw.soTimeout = 8000
+            ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(raw, domain, 443, true) as SSLSocket
+            ssl.startHandshake()
+            ssl.outputStream.write("GET $path HTTP/1.1\r\nHost: $domain\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\nUser-Agent: DerpiViewer\r\n\r\n".toByteArray())
+            ssl.outputStream.flush()
+            val input = ssl.inputStream
+            val headerBytes = ArrayList<Byte>(1024); var match = 0
+            while (headerBytes.size < 32 * 1024) {
+                val b = input.read(); if (b < 0) break; headerBytes += b.toByte()
+                match = when {
+                    match == 0 && b == '\r'.code -> 1
+                    match == 1 && b == '\n'.code -> 2
+                    match == 2 && b == '\r'.code -> 3
+                    match == 3 && b == '\n'.code -> 4
+                    b == '\r'.code -> 1
+                    else -> 0
+                }
+                if (match == 4) break
+            }
+            val header = headerBytes.toByteArray().toString(Charsets.ISO_8859_1)
+            val status = header.substringBefore("\r\n").split(" ").getOrNull(1)?.toIntOrNull() ?: 0
+            ProbeResponse(status, header, decodeProbeBody(input, header, maxBodyBytes))
+        } catch (_: Exception) {
+            ProbeResponse(0, "", "")
+        } finally { runCatching { ssl?.close() }; runCatching { raw?.close() } }
+    }
+
+    /**
+     * Decode only the bounded response body used by the API probe. Cloudflare
+     * may use chunked transfer even when the request asks for identity
+     * encoding; feeding chunk framing to the JSON check would incorrectly
+     * reject an otherwise healthy API endpoint.
+     */
+    internal fun decodeProbeBody(input: InputStream, headers: String, maxBodyBytes: Int): String {
+        val limit = maxBodyBytes.coerceIn(1, 64 * 1024)
+        val transferEncoding = headerValue(headers, "transfer-encoding")
+        val contentLength = headerValue(headers, "content-length")?.toLongOrNull()
+        val out = ByteArrayOutputStream(minOf(limit, contentLength?.toInt() ?: limit))
+        if (transferEncoding?.split(',')?.any { it.trim().equals("chunked", true) } == true) {
+            while (out.size() < limit) {
+                val line = readAsciiLine(input)?.trim() ?: break
+                val chunkSize = line.substringBefore(';').trim().toLongOrNull(16) ?: break
+                if (chunkSize <= 0L) break
+                val remaining = (limit - out.size()).toLong()
+                val toRead = minOf(chunkSize, remaining)
+                copyExactly(input, out, toRead)
+                if (toRead < chunkSize) break
+                // Every chunk is followed by CRLF. The connection is closed
+                // immediately after the bounded probe, so trailers are not
+                // needed for validation.
+                input.read(); input.read()
+            }
+        } else {
+            val wanted = contentLength?.coerceAtMost(limit.toLong()) ?: limit.toLong()
+            copyExactly(input, out, wanted)
+        }
+        return out.toByteArray().toString(Charsets.UTF_8)
+    }
+
+    private fun copyExactly(input: InputStream, out: ByteArrayOutputStream, count: Long) {
+        var remaining = count
+        val buffer = ByteArray(8192)
+        while (remaining > 0L) {
+            val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+            if (read <= 0) break
+            out.write(buffer, 0, read)
+            remaining -= read
+        }
+    }
+
+    private fun readAsciiLine(input: InputStream): String? {
+        val bytes = ByteArrayOutputStream(128)
+        var previous = -1
+        while (bytes.size() < 8192) {
+            val next = input.read()
+            if (next < 0) return if (bytes.size() == 0) null else bytes.toString(Charsets.ISO_8859_1.name())
+            if (previous == '\r'.code && next == '\n'.code) {
+                val raw = bytes.toByteArray()
+                return raw.copyOf(raw.size - 1).toString(Charsets.ISO_8859_1)
+            }
+            bytes.write(next)
+            previous = next
+        }
+        return null
+    }
+
+    private fun headerValue(headers: String, name: String): String? = headers.lineSequence()
+        .firstOrNull { it.substringBefore(':').trim().equals(name, true) }
+        ?.substringAfter(':', "")?.trim()
 
     private fun downloadBodySpeed(ip: String, target: SpeedTarget): Double? {
         var raw: Socket? = null; var ssl: SSLSocket? = null

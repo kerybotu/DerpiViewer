@@ -5,8 +5,9 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.concurrent.Executors
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -23,11 +24,12 @@ class LocalProxyServer(
 
     private var serverSocket: ServerSocket? = null
     // Each accepted proxy connection fans out to two relay threads; keep the
-    // admission queue bounded so a burst cannot exhaust the process.
+    // connection count bounded. Do not queue CONNECT behind long-lived relays.
     private val executor = ThreadPoolExecutor(
-        4, 32, 60L, TimeUnit.SECONDS, LinkedBlockingQueue(64),
-        ThreadPoolExecutor.CallerRunsPolicy()
+        0, 32, 60L, TimeUnit.SECONDS, SynchronousQueue(),
+        ThreadPoolExecutor.AbortPolicy()
     )
+    private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     @Volatile private var running = false
 
     var port: Int = 0
@@ -37,21 +39,25 @@ class LocalProxyServer(
         serverSocket = ServerSocket(0, 50, InetSocketAddress("127.0.0.1", 0).address)
         port = serverSocket!!.localPort
         running = true
-        executor.execute {
+        Thread({
             while (running) {
                 try {
                     val client = serverSocket!!.accept()
-                    executor.execute { handleClient(client) }
+                    sockets.add(client)
+                    try { executor.execute { try { handleClient(client) } finally { sockets.remove(client); client.close() } } }
+                    catch (_: RejectedExecutionException) { sockets.remove(client); client.close() }
                 } catch (e: IOException) {
                     if (running) e.printStackTrace()
                 }
             }
-        }
+        }, "DerpiProxyAccept").apply { isDaemon = true; start() }
     }
 
     fun stop() {
         running = false
         try { serverSocket?.close() } catch (_: Exception) {}
+        sockets.forEach { runCatching { it.close() } }
+        sockets.clear()
         executor.shutdownNow()
     }
 
@@ -94,12 +100,17 @@ class LocalProxyServer(
         val connectHost = resolveHost(host)
         Log.d("LocalProxyServer", "目标主机: $host, 连接 IP: $connectHost, 端口: $portNum")
 
-        val remote = Socket()
+        var remote = Socket()
+        sockets.add(remote)
         try {
             remote.connect(InetSocketAddress(connectHost, portNum), 10000)
             Log.d("LocalProxyServer", "远程连接成功: $connectHost:$portNum")
         } catch (e: Exception) {
             Log.e("LocalProxyServer", "远程连接失败: $connectHost:$portNum", e)
+            sockets.remove(remote)
+            runCatching { remote.close() }
+            remote = Socket()
+            sockets.add(remote)
             try {
                 remote.connect(InetSocketAddress(host, portNum), 10000)
                 Log.d("LocalProxyServer", "备用连接成功: $host:$portNum")
@@ -109,13 +120,15 @@ class LocalProxyServer(
                     clientOut.write("HTTP/1.1 502 Bad Gateway\r\n\r\n".toByteArray())
                 } catch (_: Exception) {}
                 client.close()
+                sockets.remove(remote)
+                runCatching { remote.close() }
                 return
             }
         }
 
         clientOut.write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
         clientOut.flush()
-
+        client.soTimeout = 0 // HTTP parsing deadline must not become a tunnel idle deadline.
         relay(client, remote)
     }
 
@@ -138,9 +151,12 @@ class LocalProxyServer(
         val connectHost = resolveHost(host)
 
         val remote = Socket()
+        sockets.add(remote)
         try {
             remote.connect(InetSocketAddress(connectHost, 80), 10000)
         } catch (e: Exception) {
+            sockets.remove(remote)
+            runCatching { remote.close() }
             client.close(); return
         }
 
@@ -149,7 +165,7 @@ class LocalProxyServer(
         for (h in headers) remoteOut.write((h + "\r\n").toByteArray())
         remoteOut.write("\r\n".toByteArray())
         remoteOut.flush()
-
+        client.soTimeout = 0
         relay(client, remote)
     }
 
@@ -160,6 +176,8 @@ class LocalProxyServer(
         t1.join(); t2.join()
         try { a.close() } catch (_: Exception) {}
         try { b.close() } catch (_: Exception) {}
+        sockets.remove(a)
+        sockets.remove(b)
     }
 
     private fun resolveHost(host: String): String {
