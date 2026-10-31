@@ -15,6 +15,8 @@ import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.model.Image
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
+import com.kerybotu.derpibooru.mirror.network.ApiFailureKind
+import com.kerybotu.derpibooru.mirror.network.ApiRequestDiagnostic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,6 +35,7 @@ class FeaturedActivity : AppCompatActivity() {
     private lateinit var grid: RecyclerView
     private lateinit var adapter: ImageAdapter
     private lateinit var refreshLayout: PullRefreshLayout
+    private lateinit var statusText: TextView
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var page = 1
     private var loading = false
@@ -86,6 +89,13 @@ class FeaturedActivity : AppCompatActivity() {
         }
         content.addView(title)
 
+        statusText = TextView(this).apply {
+            visibility = View.GONE
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setOnClickListener { loadFeatured(refresh = true) }
+        }
+        content.addView(statusText, LinearLayout.LayoutParams(-1, -2))
+
         grid = RecyclerView(this).apply {
             isNestedScrollingEnabled = false
             layoutManager = GridLayoutManager(this@FeaturedActivity, AdaptiveLayoutPolicy.artworkColumnCount(this@FeaturedActivity))
@@ -108,42 +118,61 @@ class FeaturedActivity : AppCompatActivity() {
         if (loading) return
         if (refresh) page = 1
         loading = true
+        statusText.visibility = View.GONE
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                val hero = async { fetchFeaturedHero() }
-                val list = async { fetchImages("first_seen_at.gt:3 days ago,-ai generated,-ai composition", sortField, 50, page) }
-                awaitAll(hero, list)
-            }
-            val heroImages = result[0]
-            val listImages = result[1]
-            if (refresh) {
-                featuredItems.clear()
-                featuredItems.addAll(listImages)
-                val hero = heroImages.firstOrNull()
-                if (hero == null) {
-                    heroContainer.visibility = View.GONE
-                } else {
-                    heroContainer.visibility = View.VISIBLE
-                    CdnImageGate.load(heroImage, hero.thumbnailUrl, AppSettings.getCdnThreads(this@FeaturedActivity))
-                    heroImage.setOnClickListener { openDetails(hero) }
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val hero = async { fetchFeaturedHero() }
+                    val list = async { fetchImages("first_seen_at.gt:3 days ago,-ai generated,-ai composition", sortField, 50, page) }
+                    awaitAll(hero, list)
                 }
-                adapter.updateData(featuredItems)
-            } else if (listImages.isNotEmpty()) {
-                featuredItems.addAll(listImages)
-                adapter.updateData(featuredItems)
+                @Suppress("UNCHECKED_CAST")
+                val heroImages = result[0] as List<Image>
+                @Suppress("UNCHECKED_CAST")
+                val listImages = result[1] as List<Image>
+                if (refresh) {
+                    featuredItems.clear()
+                    featuredItems.addAll(listImages)
+                    val hero = heroImages.firstOrNull()
+                    if (hero == null) {
+                        heroContainer.visibility = View.GONE
+                    } else {
+                        heroContainer.visibility = View.VISIBLE
+                        CdnImageGate.load(heroImage, hero.thumbnailUrl, AppSettings.getCdnThreads(this@FeaturedActivity))
+                        heroImage.setOnClickListener { openDetails(hero) }
+                    }
+                    adapter.updateData(featuredItems)
+                } else if (listImages.isNotEmpty()) {
+                    featuredItems.addAll(listImages)
+                    adapter.updateData(featuredItems)
+                }
+                if (listImages.isNotEmpty()) page++
+            } catch (failure: ApiFeaturedFailure) {
+                statusText.text = "精选加载失败：${featuredFailureMessage(failure.diagnostic)} · 诊断 ${failure.diagnostic.requestId}，点击重试"
+                statusText.visibility = View.VISIBLE
+            } catch (failure: Exception) {
+                val diagnostic = ApiRequestDiagnostic(
+                    requestId = "parse-${System.currentTimeMillis().toString(16).takeLast(6)}",
+                    operation = "images/featured", host = "derpibooru.org", phase = "parse",
+                    kind = ApiFailureKind.INVALID_JSON, elapsedMs = 0, attempt = 1,
+                    maxAttempts = 1, networkConfigurationVersion = NetworkManager.configurationVersion.value, retryable = false,
+                    rootCause = failure.javaClass.simpleName
+                )
+                NetworkManager.recordClientDiagnostic(diagnostic)
+                statusText.text = "精选响应格式异常 · 诊断 ${diagnostic.requestId}，点击重试"
+                statusText.visibility = View.VISIBLE
+            } finally {
+                loading = false
+                refreshLayout.isRefreshing = false
             }
-            if (listImages.isNotEmpty()) {
-                page++
-            }
-            loading = false
-            refreshLayout.isRefreshing = false
         }
     }
 
     private val featuredItems = mutableListOf<Image>()
 
     private suspend fun fetchFeaturedHero(): List<Image> {
-        val json = NetworkManager.getApi(this@FeaturedActivity, "images/featured") ?: return emptyList()
+        val result = NetworkManager.getApiWithDiagnostics(this@FeaturedActivity, "images/featured")
+        val json = result.body ?: throw ApiFeaturedFailure(result.failure ?: unknownDiagnostic("images/featured"))
         val root = JSONObject(json)
         val image = root.optJSONObject("image") ?: root.optJSONArray("images")?.optJSONObject(0) ?: return emptyList()
         return parseImages(JSONObject().put("images", org.json.JSONArray().put(image)).toString())
@@ -153,22 +182,44 @@ class FeaturedActivity : AppCompatActivity() {
         val encoded = URLEncoder.encode(query, "UTF-8")
         val filter = NetworkManager.currentFilterParam(this@FeaturedActivity)
         val path = "search/images?q=$encoded&sf=$sort&sd=desc&per_page=$perPage&page=$requestedPage$filter"
-        val json = NetworkManager.getApi(this@FeaturedActivity, path) ?: return emptyList()
+        val result = NetworkManager.getApiWithDiagnostics(this@FeaturedActivity, path)
+        val json = result.body ?: throw ApiFeaturedFailure(result.failure ?: unknownDiagnostic("search/images"))
         return parseImages(json)
     }
 
+    private class ApiFeaturedFailure(val diagnostic: ApiRequestDiagnostic) : RuntimeException()
+
+    private fun unknownDiagnostic(operation: String) = ApiRequestDiagnostic(
+        requestId = "unknown", operation = operation, host = "unknown", phase = "client",
+        kind = ApiFailureKind.UNKNOWN, elapsedMs = 0, attempt = 1, maxAttempts = 1,
+        networkConfigurationVersion = NetworkManager.configurationVersion.value,
+        retryable = true, rootCause = "empty_response"
+    )
+
+    private fun featuredFailureMessage(diagnostic: ApiRequestDiagnostic): String = when (diagnostic.kind) {
+        ApiFailureKind.DNS -> "无法解析服务器地址"
+        ApiFailureKind.TCP, ApiFailureKind.CONNECT_TIMEOUT -> "无法连接服务器"
+        ApiFailureKind.READ_TIMEOUT -> "服务器响应超时"
+        ApiFailureKind.RATE_LIMITED -> "请求过于频繁，请稍后再试"
+        ApiFailureKind.HTTP_4XX -> "服务器拒绝请求（HTTP ${diagnostic.statusCode ?: "4xx"}）"
+        ApiFailureKind.HTTP_5XX -> "服务器暂时异常（HTTP ${diagnostic.statusCode ?: "5xx"}）"
+        ApiFailureKind.CONFIGURATION_CHANGED -> "网络配置已变化"
+        else -> "精选请求失败"
+    }
+
     private fun parseImages(json: String): List<Image> {
-        val array = JSONObject(json).optJSONArray("images") ?: return emptyList()
+        val array = JSONObject(json).optJSONArray("images") ?: error("Missing images field")
         return (0 until array.length()).mapNotNull { index ->
             val obj = array.optJSONObject(index) ?: return@mapNotNull null
             val reps = obj.optJSONObject("representations")
             Image(
-                id = obj.optInt("id", -1), title = "", thumbnailUrl = reps?.optString("small", null) ?: reps?.optString("thumb", null),
+                id = obj.optInt("id", -1), title = "", thumbnailUrl = reps?.optString("small").takeIf { !it.isNullOrBlank() }
+                    ?: reps?.optString("thumb").takeIf { !it.isNullOrBlank() },
                 width = obj.optInt("width"), height = obj.optInt("height"), score = obj.optInt("score"), faves = obj.optInt("faves"),
                 upvotes = obj.optInt("upvotes"), downvotes = obj.optInt("downvotes"), commentCount = obj.optInt("comment_count"),
                 tags = List(obj.optJSONArray("tags")?.length() ?: 0) { obj.optJSONArray("tags")!!.optString(it) },
-                fullUrl = reps?.optString("full", null), uploader = obj.optString("uploader", null),
-                createdAt = obj.optString("created_at", null), description = obj.optString("description", null), mimeType = obj.optString("mime_type", null),
+                fullUrl = reps?.optString("full").takeIf { !it.isNullOrBlank() }, uploader = obj.optString("uploader").takeIf { !it.isNullOrBlank() },
+                createdAt = obj.optString("created_at").takeIf { !it.isNullOrBlank() }, description = obj.optString("description").takeIf { !it.isNullOrBlank() }, mimeType = obj.optString("mime_type").takeIf { !it.isNullOrBlank() },
                 spoilered = obj.optBoolean("spoilered", false)
             )
         }

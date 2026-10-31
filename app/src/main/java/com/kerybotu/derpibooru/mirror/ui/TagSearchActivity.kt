@@ -24,6 +24,8 @@ import com.example.liquidglass.LiquidGlassView
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
+import com.kerybotu.derpibooru.mirror.network.ApiFailureKind
+import com.kerybotu.derpibooru.mirror.network.ApiRequestDiagnostic
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -73,6 +75,7 @@ class TagSearchActivity : AppCompatActivity() {
     private var hasMore = true
     private var failed = false
     private var resumed = false
+    private var loadingVisible = false
     private var summaryText = "正在加载标签…"
     private var leftInset = 0
     private var rightInset = 0
@@ -242,7 +245,7 @@ class TagSearchActivity : AppCompatActivity() {
         loading = true
         failed = false
         statusPanel.visibility = View.GONE
-        loadingPanel.visibility = if (fromPull) View.GONE else View.VISIBLE
+        setLoadingVisible(!fromPull)
         updateContentInsets()
         updateGlassRendering()
         val requestedPage = page
@@ -250,9 +253,17 @@ class TagSearchActivity : AppCompatActivity() {
         loadJob = scope.launch {
             try {
                 val encoded = URLEncoder.encode(requestedQuery, "UTF-8")
-                val raw = withContext(Dispatchers.IO) {
-                    NetworkManager.getApi(this@TagSearchActivity, "search/tags?q=$encoded&page=$requestedPage")
+                val result = withContext(Dispatchers.IO) {
+                    NetworkManager.getApiWithDiagnostics(this@TagSearchActivity, "search/tags?q=$encoded&page=$requestedPage")
                 }
+                val raw = result.body ?: throw ApiTagFailure(
+                    result.failure ?: ApiRequestDiagnostic(
+                        requestId = "unknown", operation = "search/tags", host = "unknown",
+                        phase = "client", kind = ApiFailureKind.UNKNOWN, elapsedMs = 0,
+                        attempt = 1, maxAttempts = 1, networkConfigurationVersion = NetworkManager.configurationVersion.value,
+                        retryable = true, rootCause = "empty_response"
+                    )
+                )
                 val response = JSONObject(raw ?: error("Empty tag response"))
                 val entries = response.optJSONArray("tags") ?: error("Missing tags in response")
                 val newTags = buildList {
@@ -281,26 +292,57 @@ class TagSearchActivity : AppCompatActivity() {
                 }
             } catch (cancel: CancellationException) {
                 throw cancel
-            } catch (_: Exception) {
+            } catch (failure: ApiTagFailure) {
                 failed = true
                 if (tags.isEmpty()) {
-                    summaryText = "标签加载失败"
+                    summaryText = "标签加载失败：${failure.diagnostic.kind.name}"
                     tagAdapter.notifyItemChanged(0)
                 }
                 statusPanel.headline = if (reset) "标签加载失败" else "加载更多失败"
-                statusPanel.supportingText = "点击重试"
+                statusPanel.supportingText = "${tagFailureMessage(failure.diagnostic)} · 诊断 ${failure.diagnostic.requestId}，点击重试"
+                statusPanel.setOnClickListener { load(reset = reset) }
+                statusPanel.visibility = View.VISIBLE
+            } catch (failure: Exception) {
+                failed = true
+                if (tags.isEmpty()) {
+                    summaryText = "标签响应格式异常"
+                    tagAdapter.notifyItemChanged(0)
+                }
+                val diagnostic = ApiRequestDiagnostic(
+                    requestId = "parse-${System.currentTimeMillis().toString(16).takeLast(6)}",
+                    operation = "search/tags", host = "derpibooru.org", phase = "parse",
+                    kind = ApiFailureKind.INVALID_JSON, elapsedMs = 0, attempt = 1,
+                    maxAttempts = 1, networkConfigurationVersion = NetworkManager.configurationVersion.value, retryable = false,
+                    rootCause = failure.javaClass.simpleName
+                )
+                NetworkManager.recordClientDiagnostic(diagnostic)
+                statusPanel.headline = if (reset) "标签加载失败" else "加载更多失败"
+                statusPanel.supportingText = "服务器响应格式异常 · 诊断 ${diagnostic.requestId}，点击重试"
                 statusPanel.setOnClickListener { load(reset = reset) }
                 statusPanel.visibility = View.VISIBLE
             } finally {
                 // A cancelled search must not hide the next search's indicator.
                 if (currentCoroutineContext().isActive) {
                     loading = false
-                    loadingPanel.visibility = View.GONE
+                    setLoadingVisible(false)
                     resultsSurface.isRefreshing = false
                     updateGlassRendering()
                 }
             }
         }
+    }
+
+    private class ApiTagFailure(val diagnostic: ApiRequestDiagnostic) : RuntimeException()
+
+    private fun tagFailureMessage(diagnostic: ApiRequestDiagnostic): String = when (diagnostic.kind) {
+        ApiFailureKind.DNS -> "无法解析服务器地址"
+        ApiFailureKind.TCP, ApiFailureKind.CONNECT_TIMEOUT -> "无法连接服务器"
+        ApiFailureKind.READ_TIMEOUT -> "服务器响应超时"
+        ApiFailureKind.RATE_LIMITED -> "请求过于频繁，请稍后再试"
+        ApiFailureKind.HTTP_4XX -> "服务器拒绝请求（HTTP ${diagnostic.statusCode ?: "4xx"}）"
+        ApiFailureKind.HTTP_5XX -> "服务器暂时异常（HTTP ${diagnostic.statusCode ?: "5xx"}）"
+        ApiFailureKind.CONFIGURATION_CHANGED -> "网络配置已变化"
+        else -> "标签请求失败"
     }
 
     private inner class TagAdapter : RecyclerView.Adapter<TagHolder>() {
@@ -366,6 +408,14 @@ class TagSearchActivity : AppCompatActivity() {
         }
     }
 
+    private fun setLoadingVisible(visible: Boolean) {
+        loadingVisible = visible
+        if (!::loadingPanel.isInitialized || !::loadingIndicator.isInitialized) return
+        loadingPanel.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible && resumed) loadingIndicator.post { loadingIndicator.startLoading() }
+        else if (!visible) loadingIndicator.stopLoading()
+    }
+
     private fun applyPalette() {
         val colors = PaletteManager.colors(this)
         pageBackdrop.setBackgroundColor(colors.surface)
@@ -394,10 +444,12 @@ class TagSearchActivity : AppCompatActivity() {
         super.onResume()
         resumed = true
         applyPalette()
+        if (loadingVisible) loadingIndicator.post { loadingIndicator.startLoading() }
     }
 
     override fun onPause() {
         resumed = false
+        if (::loadingIndicator.isInitialized) loadingIndicator.stopLoading()
         updateGlassRendering()
         super.onPause()
     }

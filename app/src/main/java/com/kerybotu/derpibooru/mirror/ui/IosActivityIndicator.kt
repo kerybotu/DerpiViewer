@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.widget.ProgressBar
+import android.view.View
 import com.kerybotu.derpibooru.mirror.PaletteDefinitions
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.R
@@ -49,6 +50,41 @@ class IosActivityIndicator @JvmOverloads constructor(
     fun startLoading() {
         spinner.pullProgress = null
         if (isShown && windowVisibility == VISIBLE) spinner.start()
+        else if (visibility == VISIBLE && windowVisibility == VISIBLE) {
+            // A caller may start loading in the same frame that the parent
+            // becomes visible. Retry after attach/layout rather than leaving
+            // the drawable permanently on its first spoke.
+            post { if (isShown && windowVisibility == VISIBLE) spinner.start() }
+        }
+    }
+
+    fun stopLoading() {
+        spinner.stop()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // Drawable visibility callbacks are not consistent across ProgressBar
+        // implementations. Start after attach/layout so custom renderers do not
+        // leave the indicator permanently on its first spoke.
+        post { if (isShown) startLoading() }
+    }
+
+    override fun onDetachedFromWindow() {
+        spinner.stop()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (changedView === this) {
+            if (visibility == VISIBLE) post { startLoading() } else spinner.stop()
+        }
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == VISIBLE) post { startLoading() } else spinner.stop()
     }
 }
 
@@ -113,6 +149,7 @@ private class SpokeDrawable(private val intrinsicSize: Int) : Drawable(), Animat
     override fun setVisible(visible: Boolean, restart: Boolean): Boolean {
         val changed = super.setVisible(visible, restart)
         if (!visible) stop()
+        else if (restart || !running) start()
         return changed
     }
 

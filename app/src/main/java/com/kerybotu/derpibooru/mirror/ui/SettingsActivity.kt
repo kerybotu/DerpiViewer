@@ -1,5 +1,7 @@
 package com.kerybotu.derpibooru.mirror.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -95,6 +97,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var deepOptimizeIp: LiquidGlassButton
     private lateinit var restoreAutoIp: LiquidGlassButton
     private lateinit var networkStatus: TextView
+    private lateinit var copyNetworkDiagnostics: LiquidGlassButton
     private lateinit var clearCache: LiquidGlassButton
     private lateinit var updateFrequency: Spinner
     private lateinit var checkUpdate: LiquidGlassButton
@@ -312,6 +315,8 @@ class SettingsActivity : AppCompatActivity() {
         sectionContent(section).addView(advancedRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         networkStatus = bodyText()
         sectionContent(section).addView(infoSurface(networkStatus), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        copyNetworkDiagnostics = actionButton("复制最近网络诊断")
+        sectionContent(section).addView(copyNetworkDiagnostics, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(8) })
         clearCache = actionButton("清除缓存")
         sectionContent(section).addView(clearCache, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(10) })
         addSection(section)
@@ -586,7 +591,10 @@ class SettingsActivity : AppCompatActivity() {
         }
         antiEmbarrassmentInfo.setOnClickListener { showAntiEmbarrassmentInfo() }
         antiEmbarrassmentFilter.setOnClickListener { showAntiEmbarrassmentFilterDialog() }
-        switchIp.setOnCheckedChangeListener { _, value -> AppSettings.setIpOptimizationEnabled(this, value) }
+        switchIp.setOnCheckedChangeListener { _, value ->
+            AppSettings.setIpOptimizationEnabled(this, value)
+            NetworkManager.shutdown()
+        }
         switchCdnDirect.setOnCheckedChangeListener { _, value ->
             AppSettings.setCdnDirect(this, value)
             NetworkManager.shutdown()
@@ -598,7 +606,7 @@ class SettingsActivity : AppCompatActivity() {
             siteGroup.getChildAt(2).id -> saveCustomDomain()
         } }
         saveNetwork.setOnClickListener { saveNetwork() }
-        restoreAutoIp.setOnClickListener { AppSettings.setManualIp(this, null); manualIp.setText(""); networkStatus.text = "已恢复自动优选" }
+        restoreAutoIp.setOnClickListener { AppSettings.setManualIp(this, null); NetworkManager.shutdown(); manualIp.setText(""); networkStatus.text = "已恢复自动优选" }
         optimizeIp.setOnClickListener { optimize() }
         deepOptimizeIp.setOnClickListener {
             AlertDialog.Builder(this).setTitle("深度 IP 优选")
@@ -608,6 +616,12 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
         clearCache.setOnClickListener { clearCache() }
+        copyNetworkDiagnostics.setOnClickListener {
+            val entries = NetworkManager.recentDiagnostics().takeLast(20)
+            val text = if (entries.isEmpty()) "暂无 API 失败诊断记录" else entries.joinToString("\n") { it.summary() }
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("网络诊断", text))
+            Toast.makeText(this, if (entries.isEmpty()) "暂无诊断记录" else "网络诊断已复制", Toast.LENGTH_SHORT).show()
+        }
         aboutDeveloper.setOnClickListener {
             startActivity(android.content.Intent(this, AboutDeveloperActivity::class.java))
         }

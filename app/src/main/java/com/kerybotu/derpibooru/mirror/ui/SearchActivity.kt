@@ -1,6 +1,8 @@
 package com.kerybotu.derpibooru.mirror.ui
 
 import android.animation.ValueAnimator
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
@@ -32,6 +34,9 @@ import com.kerybotu.derpibooru.mirror.dict.TagEntry
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import com.kerybotu.derpibooru.mirror.model.Image
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
+import com.kerybotu.derpibooru.mirror.network.ApiFailureKind
+import com.kerybotu.derpibooru.mirror.network.ApiRequestDiagnostic
+import com.kerybotu.derpibooru.mirror.network.DeepOptimizeActivity
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -77,6 +82,7 @@ class SearchActivity : AppCompatActivity() {
     private var suggestionJob: Job? = null
     private var searchJob: Job? = null
     private var resumed = false
+    private var searchLoading = false
     private val attachedGlass = mutableMapOf<LiquidGlassView, Float>()
     private val visibleRect = Rect()
     private var headerContentHeight = 0
@@ -456,7 +462,7 @@ class SearchActivity : AppCompatActivity() {
             adapter.updateData(emptyList())
         }
         statusPanel.visibility = View.GONE
-        loadingPanel.visibility = if (fromPull) View.GONE else View.VISIBLE
+        setSearchLoading(!fromPull)
         updateGlassRendering()
         val historyPrefs = getSharedPreferences("search_history", 0)
         val history = (historyPrefs.getStringSet("items", emptySet()).orEmpty() + query).toList().takeLast(10).toSet()
@@ -467,25 +473,142 @@ class SearchActivity : AppCompatActivity() {
             try {
                 val filter = NetworkManager.currentFilterParam(this@SearchActivity)
                 val encoded = URLEncoder.encode(query, "UTF-8")
-                val json = withContext(Dispatchers.IO) { NetworkManager.getApi(this@SearchActivity, "search/images?q=$encoded&sf=$sf&sd=$sd&per_page=50$filter") }
-                val images = parseImages(json ?: error("empty response"))
+                val request = withContext(Dispatchers.IO) {
+                    NetworkManager.getApiWithDiagnostics(
+                        this@SearchActivity,
+                        "search/images?q=$encoded&sf=$sf&sd=$sd&per_page=50$filter"
+                    )
+                }
+                val json = request.body ?: throw ApiSearchFailure(
+                    request.failure ?: ApiRequestDiagnostic(
+                        requestId = "unknown",
+                        operation = "search/images",
+                        host = "unknown",
+                        phase = "client",
+                        kind = ApiFailureKind.UNKNOWN,
+                        elapsedMs = 0L,
+                        attempt = 1,
+                        maxAttempts = 1,
+                        networkConfigurationVersion = NetworkManager.configurationVersion.value,
+                        retryable = true,
+                        rootCause = "empty_response"
+                    )
+                )
+                val images = try {
+                    parseImages(json)
+                } catch (e: Exception) {
+                    val diagnostic = ApiRequestDiagnostic(
+                            requestId = request.failure?.requestId ?: "parse",
+                            operation = "search/images",
+                            host = request.failure?.host ?: "unknown",
+                            phase = "parse",
+                            kind = ApiFailureKind.INVALID_JSON,
+                            elapsedMs = request.failure?.elapsedMs ?: 0L,
+                            attempt = request.failure?.attempt ?: 1,
+                            maxAttempts = request.failure?.maxAttempts ?: 1,
+                            networkConfigurationVersion = NetworkManager.configurationVersion.value,
+                            retryable = false,
+                            rootCause = e.javaClass.simpleName
+                        )
+                    NetworkManager.recordClientDiagnostic(diagnostic)
+                    throw ApiSearchFailure(diagnostic)
+                }
                 adapter.updateData(images)
                 if (adapter.itemCount == 0) {
                     statusPanel.headline = "没有找到图片"; statusPanel.supportingText = "试试其他标签或筛选条件"
                     statusPanel.setOnClickListener(null); statusPanel.visibility = View.VISIBLE
                 }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) {
-                statusPanel.headline = "搜索失败"; statusPanel.supportingText = "点击重试"
-                statusPanel.setOnClickListener { runSearch() }; statusPanel.visibility = View.VISIBLE
+            catch (failure: ApiSearchFailure) {
+                showSearchFailure(failure.diagnostic)
+            } catch (error: Exception) {
+                val diagnostic = ApiRequestDiagnostic(
+                    requestId = "unknown",
+                    operation = "search/images",
+                    host = "unknown",
+                    phase = "client",
+                    kind = ApiFailureKind.UNKNOWN,
+                    elapsedMs = 0L,
+                    attempt = 1,
+                    maxAttempts = 1,
+                    networkConfigurationVersion = NetworkManager.configurationVersion.value,
+                    retryable = true,
+                    rootCause = error.javaClass.simpleName
+                )
+                showSearchFailure(diagnostic)
             } finally {
                 if (currentCoroutineContext().isActive) {
-                    loadingPanel.visibility = View.GONE
+                    setSearchLoading(false)
                     resultsSurface.isRefreshing = false
                     updateGlassRendering()
                 }
             }
         }
+    }
+
+    private class ApiSearchFailure(val diagnostic: ApiRequestDiagnostic) : RuntimeException()
+
+    private fun showSearchFailure(diagnostic: ApiRequestDiagnostic) {
+        val networkFailure = diagnostic.kind in setOf(
+            ApiFailureKind.DNS,
+            ApiFailureKind.TCP,
+            ApiFailureKind.CONNECT_TIMEOUT,
+            ApiFailureKind.READ_TIMEOUT,
+            ApiFailureKind.CONFIGURATION_CHANGED
+        )
+        val message = when (diagnostic.kind) {
+            ApiFailureKind.DNS -> "无法解析服务器地址，可检查网络或尝试其他线路"
+            ApiFailureKind.TCP -> "无法连接服务器，可重试或检查当前线路"
+            ApiFailureKind.CONNECT_TIMEOUT -> "连接服务器超时，可重试或尝试其他线路"
+            ApiFailureKind.READ_TIMEOUT -> "服务器响应超时，可稍后重试"
+            ApiFailureKind.RATE_LIMITED -> "请求过于频繁，请稍后再试"
+            ApiFailureKind.HTTP_4XX -> "服务器拒绝了请求（HTTP ${diagnostic.statusCode ?: 4}xx）"
+            ApiFailureKind.HTTP_5XX -> "服务器暂时出现错误（HTTP ${diagnostic.statusCode ?: 5}xx）"
+            ApiFailureKind.TLS -> "安全连接建立失败，请检查当前网络"
+            ApiFailureKind.EMPTY_BODY, ApiFailureKind.INVALID_JSON -> "服务器响应格式异常，已记录诊断信息"
+            ApiFailureKind.CONFIGURATION_CHANGED -> "网络配置已变化，请重试当前请求"
+            ApiFailureKind.CANCELLED -> "请求已取消"
+            else -> "请求失败，已记录诊断信息"
+        }
+        statusPanel.headline = "搜索失败：${diagnostic.kind.name}"
+        statusPanel.supportingText = "$message · 诊断 ${diagnostic.requestId}，点击选择操作"
+        statusPanel.setOnClickListener {
+            val actions = mutableListOf("重试", "复制诊断信息")
+            if (networkFailure) actions.add("深度 IP 优选")
+            AlertDialog.Builder(this)
+                .setTitle("搜索请求失败")
+                .setMessage(message)
+                .setItems(actions.toTypedArray()) { _, which ->
+                    when (actions[which]) {
+                        "重试" -> runSearch()
+                        "复制诊断信息" -> {
+                            getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                                ClipData.newPlainText("API 诊断", diagnostic.summary())
+                            )
+                            Toast.makeText(this, "诊断信息已复制", Toast.LENGTH_SHORT).show()
+                        }
+                        "深度 IP 优选" -> startActivity(Intent(this, DeepOptimizeActivity::class.java))
+                    }
+                }
+                .setNegativeButton("关闭", null)
+                .show()
+        }
+        statusPanel.visibility = View.VISIBLE
+    }
+
+    /**
+     * Drive both the glass loading surface and its custom drawable explicitly.
+     * ProgressBar drawable visibility callbacks are not consistent on all
+     * Android render paths, so relying on the parent visibility alone can leave
+     * the spokes frozen after returning to the search page or after a failed
+     * request.
+     */
+    private fun setSearchLoading(loading: Boolean) {
+        searchLoading = loading
+        if (!::loadingPanel.isInitialized || !::loadingIndicator.isInitialized) return
+        loadingPanel.visibility = if (loading) View.VISIBLE else View.GONE
+        if (loading && resumed) loadingIndicator.post { loadingIndicator.startLoading() }
+        else if (!loading) loadingIndicator.stopLoading()
     }
 
     private fun <T : LiquidGlassView> trackGlass(view: T, source: View = resultsSurface, radius: Float = 24f): T {
@@ -615,8 +738,19 @@ class SearchActivity : AppCompatActivity() {
         }
     }
 
-    override fun onResume() { super.onResume(); resumed = true; if (::searchRoot.isInitialized) applySearchPalette() }
-    override fun onPause() { resumed = false; headerSnapAnimator?.cancel(); updateGlassRendering(); super.onPause() }
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        if (::searchRoot.isInitialized) {
+            applySearchPalette()
+            if (searchLoading) loadingIndicator.post { loadingIndicator.startLoading() }
+        }
+    }
+    override fun onPause() {
+        resumed = false
+        if (::loadingIndicator.isInitialized) loadingIndicator.stopLoading()
+        headerSnapAnimator?.cancel(); updateGlassRendering(); super.onPause()
+    }
     override fun onDestroy() { headerSnapAnimator?.cancel(); scope.cancel(); attachedGlass.clear(); super.onDestroy() }
     private fun parseImages(json: String): List<Image> {
         val a = JSONObject(json).optJSONArray("images") ?: return emptyList()
