@@ -63,6 +63,18 @@ object NetworkManager {
     fun currentFilterParam(context: Context, separator: String = "&"): String =
         AppSettings.getCurrentFilterId(context)?.let { "$separator" + "filter_id=$it" } ?: ""
 
+    /** Merges a locally managed search preset without URL-encoding it twice. */
+    fun mergeCurrentFilterQuery(context: Context, query: String): String {
+        val preset = AppSettings.getCurrentFilterQuery(context)?.trim().orEmpty()
+        val base = query.trim()
+        if (preset.isEmpty()) return base
+        if (base.isEmpty()) return preset
+        return "($base) ($preset)"
+    }
+
+    fun encodeSearchQuery(context: Context, query: String): String =
+        java.net.URLEncoder.encode(mergeCurrentFilterQuery(context, query), "UTF-8")
+
     suspend fun init(
         context: Context,
         forceRefresh: Boolean = false,

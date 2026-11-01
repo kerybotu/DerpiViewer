@@ -615,7 +615,7 @@ class ImageDetailActivity : AppCompatActivity() {
         scope.launch {
             val comparator = if (direction > 0) "gt" else "lt"
             val sortDirection = if (direction > 0) "asc" else "desc"
-            val query = java.net.URLEncoder.encode("id.$comparator:${image.id}", "UTF-8")
+            val query = NetworkManager.encodeSearchQuery(this@ImageDetailActivity, "id.$comparator:${image.id}")
             val filter = NetworkManager.currentFilterParam(this@ImageDetailActivity)
             val raw = withContext(Dispatchers.IO) {
                 NetworkManager.getApi(this@ImageDetailActivity, "search/images?q=$query&sf=id&sd=$sortDirection&per_page=1$filter")

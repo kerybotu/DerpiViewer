@@ -175,7 +175,7 @@ class VideoFeedController(
             }
             val result = withContext(Dispatchers.IO) {
                 val filter = NetworkManager.currentFilterParam(context)
-                val query = java.net.URLEncoder.encode(buildQuery(), "UTF-8")
+                val query = NetworkManager.encodeSearchQuery(context, buildQuery())
                 val direction = if (sort.startsWith("random:")) "" else "&sd=$sortDirection"
                 NetworkManager.getApiWithDiagnostics(context, "search/images?q=$query&per_page=50&page=$page&sf=$sort$direction$filter")
             }

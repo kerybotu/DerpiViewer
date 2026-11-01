@@ -1064,7 +1064,7 @@ class MainActivity : AppCompatActivity() {
         loading = true
         binding.progressBar.visibility = if (binding.homeRefresh.isRefreshing) View.GONE else View.VISIBLE
         try {
-            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val encoded = NetworkManager.encodeSearchQuery(this@MainActivity, query)
             val filterParam = NetworkManager.currentFilterParam(this@MainActivity)
             val json = withContext(Dispatchers.IO) {
                 NetworkManager.getApi(this@MainActivity, "search/images?q=$encoded&per_page=50&page=$targetPage&sf=$currentSort&sd=desc$filterParam")

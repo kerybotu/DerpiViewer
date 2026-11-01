@@ -1,6 +1,7 @@
 package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -27,9 +28,13 @@ import com.kerybotu.derpibooru.mirror.auth.ApiKeyStore
 import com.kerybotu.derpibooru.mirror.databinding.ActivityFiltersBinding
 import com.kerybotu.derpibooru.mirror.databinding.ItemFiltersHeaderBinding
 import com.kerybotu.derpibooru.mirror.model.Filter
+import com.kerybotu.derpibooru.mirror.model.FilterImportParser
+import com.kerybotu.derpibooru.mirror.model.FilterJsonCodec
+import com.kerybotu.derpibooru.mirror.model.FilterSearchCondition
+import com.kerybotu.derpibooru.mirror.model.FilterSearchField
+import com.kerybotu.derpibooru.mirror.model.FilterSearchQuery
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import kotlinx.coroutines.*
-import org.json.JSONObject
 
 /** 2.0 Filters screen. One RecyclerView owns the complete scroll range. */
 class FilterActivity : AppCompatActivity() {
@@ -43,10 +48,16 @@ class FilterActivity : AppCompatActivity() {
     private var allFilters = emptyList<Filter>()
     private var systemFilters = emptyList<Filter>()
     private var userFilters = emptyList<Filter>()
-    private var showingUserFilters = false
+    private var localFilters = emptyList<Filter>()
+    private enum class Source { SYSTEM, USER, LOCAL, SERVER }
+    private var source = Source.SYSTEM
+    private var serverQuery = ""
+    private var serverPage = 1
+    private var serverHasMore = false
+    private var serverLoading = false
     private var initialContentOffsetApplied = false
     private val prefs by lazy { getSharedPreferences("filter_state", Context.MODE_PRIVATE) }
-    private val currentId: Int? get() = prefs.getInt("current_id", -1).takeIf { it > 0 }
+    private val currentId: Int? get() = AppSettings.getCurrentFilterId(this) ?: AppSettings.getCurrentLocalFilterId(this)
     private val palette get() = PaletteManager.colors(this)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,12 +79,20 @@ class FilterActivity : AppCompatActivity() {
         binding.filterList.layoutManager = LinearLayoutManager(this)
         header = ItemFiltersHeaderBinding.inflate(layoutInflater, binding.filterList, false)
         headerAdapter = FilterHeaderAdapter(header.root)
-        adapter = FilterAdapter(emptyList(), { currentId }) { useFilter(it) }
+        adapter = FilterAdapter(
+            emptyList(), { currentId }, { useFilter(it) },
+            onView = { openDetails(it) },
+            onCustomize = { customize(it) },
+            onEdit = { openWebEdit(it) }
+        )
         binding.filterList.adapter = ConcatAdapter(headerAdapter, adapter)
         binding.filterList.clipToPadding = false
         binding.filterList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 islandMotion.onScrolled(dy)
+                if (source == Source.SERVER && serverHasMore && !serverLoading && !recyclerView.canScrollVertically(1)) {
+                    searchServerPage(serverPage + 1, append = true)
+                }
             }
 
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
@@ -91,6 +110,7 @@ class FilterActivity : AppCompatActivity() {
             systemFilters = parseFilters(it)
             showFilterSource()
         }
+        localFilters = FilterStore.getLocalFilters(this)
         loadFilters()
         if (!prefs.getBoolean("notice_seen", false)) {
             binding.root.post { showSafetyNotice() }
@@ -196,6 +216,7 @@ class FilterActivity : AppCompatActivity() {
         header.filterHint.setTextColor(muted)
         header.filterSearch.setTextColor(palette.onSurface)
         header.filterSearch.setHintTextColor(muted)
+        header.filterHint.text = "输入 name:default、creator:AppleDash、id:1 等语法；空白时筛选本地列表"
         header.filterSearchIcon.imageTintList = android.content.res.ColorStateList.valueOf(muted)
         header.filterSearchClear.imageTintList = android.content.res.ColorStateList.valueOf(muted)
         header.filterSearchAction.imageTintList = android.content.res.ColorStateList.valueOf(palette.primary)
@@ -204,9 +225,14 @@ class FilterActivity : AppCompatActivity() {
         header.filterTabs.removeAllTabs()
         header.filterTabs.addTab(header.filterTabs.newTab().setText("系统过滤器"))
         header.filterTabs.addTab(header.filterTabs.newTab().setText("我的过滤器"))
+        header.filterTabs.addTab(header.filterTabs.newTab().setText("本地自定义"))
         header.filterTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
-                showingUserFilters = tab.position == 1
+                source = when (tab.position) {
+                    1 -> Source.USER
+                    2 -> Source.LOCAL
+                    else -> Source.SYSTEM
+                }
                 showFilterSource()
             }
             override fun onTabUnselected(tab: TabLayout.Tab) = Unit
@@ -215,6 +241,8 @@ class FilterActivity : AppCompatActivity() {
         header.currentFilterName.text = AppSettings.getCurrentFilterName(this) ?: prefs.getString("current_name", "默认安全过滤器")
         header.changeFilter.setOnClickListener { showCurrentChooser() }
         header.filterSearchAction.setOnClickListener { triggerSearch() }
+        header.filterStructuredAction.setTextColor(palette.primary)
+        header.filterStructuredAction.setOnClickListener { showStructuredSearch() }
         header.filterSearch.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) { triggerSearch(); true } else false
         }
@@ -243,6 +271,7 @@ class FilterActivity : AppCompatActivity() {
                     val userResult = withContext(Dispatchers.IO) { NetworkManager.getApi(this@FilterActivity, "filters/user?page=1") }
                     userFilters = userResult?.let(::parseFilters).orEmpty()
                 }
+                localFilters = FilterStore.getLocalFilters(this@FilterActivity)
                 showFilterSource()
             } catch (_: Throwable) {
                 if (allFilters.isEmpty()) showEmpty("过滤器加载失败，请下拉或重新打开页面重试")
@@ -253,8 +282,12 @@ class FilterActivity : AppCompatActivity() {
     }
 
     private fun showFilterSource() {
-        allFilters = if (showingUserFilters) userFilters else systemFilters
-        if (showingUserFilters && !ApiKeyStore.isLoggedIn(this)) {
+        allFilters = when (source) {
+            Source.USER -> userFilters
+            Source.LOCAL -> localFilters
+            else -> systemFilters
+        }
+        if (source == Source.USER && !ApiKeyStore.isLoggedIn(this)) {
             adapter.update(emptyList())
             showEmpty("登录后可以查看我的过滤器")
             return
@@ -266,26 +299,111 @@ class FilterActivity : AppCompatActivity() {
         searchJob?.cancel()
         val normalized = header.filterSearch.text?.toString().orEmpty().trim()
         if (normalized.isBlank()) { showFilterSource(); return }
-        val filterId = normalized.toIntOrNull()
-        if (filterId == null || filterId <= 0) {
-            filterLocal(normalized)
-            if (adapter.itemCount == 0) showEmpty("请输入有效的过滤器 ID，或输入名称进行本地筛选")
-            return
+        source = Source.SERVER
+        serverQuery = normalized
+        serverPage = 1
+        searchServerPage(1, append = false)
+    }
+
+    /** Builds the same query string accepted by the raw search field. */
+    private fun showStructuredSearch() {
+        val fields = FilterSearchField.values().toList()
+        val conditions = FilterSearchQuery.parse(header.filterSearch.text?.toString().orEmpty()).toMutableList()
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
         }
-        if (ApiKeyStore.get(this).isNullOrBlank()) {
-            adapter.update(emptyList())
-            showEmpty("查询过滤器需要登录 API key")
-            Toast.makeText(this, "请先登录后再查询过滤器", Toast.LENGTH_SHORT).show()
-            return
+        val fieldSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@FilterActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                fields.map { "${it.key}（${it.kind.name.lowercase()}）" }
+            )
         }
+        val valueInput = EditText(this).apply {
+            hint = "条件值，例如 default、2015、>=10 或 true"
+            setSingleLine(true)
+        }
+        val preview = TextView(this).apply {
+            setTextColor(palette.muted)
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        fun refreshPreview() {
+            preview.text = "查询预览：${FilterSearchQuery.serialize(conditions).ifBlank { "（空）" }}"
+        }
+        box.addView(fieldSpinner)
+        box.addView(valueInput)
+        box.addView(Button(this).apply {
+            text = "添加条件"
+            PaletteManager.styleButton(this)
+            setOnClickListener { addStructuredCondition(fields, fieldSpinner, valueInput, conditions, ::refreshPreview) }
+        })
+        box.addView(preview)
+        refreshPreview()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("结构化过滤器搜索")
+            .setView(box)
+            .setNegativeButton("取消", null)
+            .setNeutralButton("清空", null)
+            .setPositiveButton("应用", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                conditions.clear(); valueInput.text?.clear(); refreshPreview()
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                header.filterSearch.setText(FilterSearchQuery.serialize(conditions))
+                dialog.dismiss()
+                triggerSearch()
+            }
+            valueInput.setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                    addStructuredCondition(fields, fieldSpinner, valueInput, conditions, ::refreshPreview)
+                    true
+                } else false
+            }
+        }
+        dialog.show()
+    }
+
+    private fun addStructuredCondition(
+        fields: List<FilterSearchField>,
+        spinner: Spinner,
+        input: EditText,
+        conditions: MutableList<FilterSearchCondition>,
+        refresh: () -> Unit
+    ) {
+        val value = input.text?.toString()?.trim().orEmpty()
+        if (value.isBlank()) return
+        conditions += FilterSearchCondition(fields[spinner.selectedItemPosition], value)
+        input.text?.clear()
+        refresh()
+    }
+
+    private fun searchServerPage(page: Int, append: Boolean) {
         searchJob = scope.launch {
+            serverLoading = true
             binding.filterEmpty.visibility = View.GONE
             binding.filterLoading.visibility = View.VISIBLE
             try {
-                val remote = withContext(Dispatchers.IO) { NetworkManager.getApi(this@FilterActivity, "filters/$filterId") }
-                val filter = remote?.let(::parseFilterResponse)
-                if (filter != null) adapter.update(listOf(filter)) else showEmpty("没有找到过滤器 #$filterId")
+                val result = withContext(Dispatchers.IO) { FilterSearchClient.search(this@FilterActivity, serverQuery, page) }
+                val merged = if (append) allFilters + result.filters else result.filters
+                allFilters = merged.distinctBy { it.id }
+                adapter.update(allFilters)
+                serverPage = result.page
+                serverHasMore = result.hasMore
+                if (allFilters.isEmpty()) showEmpty("服务器没有找到匹配的过滤器")
+            } catch (_: FilterSearchClient.LoginRequiredException) {
+                adapter.update(emptyList())
+                showEmpty("my:filters 需要登录 API key")
+            } catch (failure: FilterSearchClient.RequestFailedException) {
+                adapter.update(emptyList())
+                showEmpty("服务器搜索失败：${failure.diagnostic.kind.name}（诊断编号 ${failure.diagnostic.requestId}）")
+            } catch (_: Throwable) {
+                adapter.update(emptyList())
+                showEmpty("服务器过滤器搜索失败，请重试")
             } finally {
+                serverLoading = false
                 binding.filterLoading.visibility = View.GONE
                 if (adapter.itemCount > 0) binding.filterEmpty.visibility = View.GONE
             }
@@ -297,20 +415,7 @@ class FilterActivity : AppCompatActivity() {
         binding.filterEmpty.visibility = View.VISIBLE
     }
 
-    private fun parseFilters(json: String): List<Filter> {
-        val arr = JSONObject(json).optJSONArray("filters") ?: return emptyList()
-        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { parseFilter(it) } }
-    }
-
-    private fun parseFilterResponse(json: String): Filter? = JSONObject(json).optJSONObject("filter")?.let(::parseFilter)
-
-    private fun parseFilter(o: JSONObject): Filter = Filter(
-        o.optInt("id"), o.optString("name", "未命名过滤器"), o.optString("description", ""),
-        if (o.isNull("user_id")) null else o.optInt("user_id"), o.optBoolean("system"),
-        o.optBoolean("public"), o.optJSONArray("spoilered_tag_ids")?.length() ?: 0,
-        o.optJSONArray("hidden_tag_ids")?.length() ?: 0,
-        o.optString("creator", o.optString("user_name", null)), o.optString("created_at", null)
-    )
+    private fun parseFilters(json: String): List<Filter> = FilterJsonCodec.parseList(json)
 
     private fun filterLocal(query: String) {
         val value = query.trim()
@@ -321,8 +426,16 @@ class FilterActivity : AppCompatActivity() {
     }
 
     private fun useFilter(filter: Filter) {
-        prefs.edit().putInt("current_id", filter.id).putString("current_name", filter.name).apply()
-        AppSettings.setCurrentFilter(this, filter.id, filter.name)
+        if (filter.isLocal) {
+            val localQuery = filter.localQuery.orEmpty()
+            if (localQuery.isBlank() && filter.sourceId != null) {
+                AppSettings.setCurrentFilter(this, filter.sourceId, filter.name)
+            } else {
+                AppSettings.setCurrentLocalFilter(this, filter.id, filter.name, localQuery)
+            }
+        } else {
+            AppSettings.setCurrentFilter(this, filter.id, filter.name)
+        }
         header.currentFilterName.text = filter.name
         adapter.notifyDataSetChanged()
         Toast.makeText(this, "已使用过滤器：${filter.name}", Toast.LENGTH_SHORT).show()
@@ -331,6 +444,23 @@ class FilterActivity : AppCompatActivity() {
     private fun showCurrentChooser() {
         if (allFilters.isEmpty()) { Toast.makeText(this, "当前列表没有可切换的过滤器", Toast.LENGTH_SHORT).show(); return }
         AlertDialog.Builder(this).setTitle("切换当前过滤器").setItems(allFilters.map { it.name }.toTypedArray()) { _, which -> useFilter(allFilters[which]) }.show()
+    }
+
+    private fun openDetails(filter: Filter) {
+        startActivity(Intent(this, FilterDetailsActivity::class.java).apply {
+            putExtra(FilterDetailsActivity.EXTRA_FILTER_JSON, FilterJsonCodec.toJson(filter).toString())
+        })
+    }
+
+    private fun customize(filter: Filter) {
+        startActivity(Intent(this, FilterEditorActivity::class.java).apply {
+            putExtra(FilterEditorActivity.EXTRA_FILTER_JSON, FilterJsonCodec.toJson(filter).toString())
+        })
+    }
+
+    private fun openWebEdit(filter: Filter) {
+        if (filter.id <= 0) { customize(filter); return }
+        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://${AppSettings.getTargetDomain(this)}/filters/${filter.id}/edit")))
     }
 
     private fun showSafetyNotice() {
@@ -344,8 +474,34 @@ class FilterActivity : AppCompatActivity() {
         val name = EditText(this).apply { hint = "过滤器名称" }
         val tags = EditText(this).apply { hint = "快速添加标签，例如 safe, cute" }
         box.addView(name, LinearLayout.LayoutParams(-1, -2)); box.addView(tags, LinearLayout.LayoutParams(-1, -2))
-        box.addView(Button(this).apply { text = "保存过滤器"; PaletteManager.styleButton(this); setOnClickListener { Toast.makeText(this@FilterActivity, "登录后才能创建过滤器", Toast.LENGTH_SHORT).show(); dialog.dismiss() } })
+        box.addView(Button(this).apply {
+            text = "打开自定义编辑器"
+            PaletteManager.styleButton(this)
+            setOnClickListener {
+                startActivity(Intent(this@FilterActivity, FilterEditorActivity::class.java))
+                dialog.dismiss()
+            }
+        })
+        box.addView(Button(this).apply {
+            text = "从服务器导入 ID 或 URL"
+            PaletteManager.styleButton(this)
+            setOnClickListener {
+                dialog.dismiss()
+                showImportDialog()
+            }
+        })
         dialog.setContentView(box); dialog.show()
+    }
+
+    private fun showImportDialog() {
+        val input = EditText(this).apply { hint = "例如 215340 或 https://derpibooru.org/filters/215340" }
+        AlertDialog.Builder(this).setTitle("导入服务器过滤器")
+            .setView(input).setNegativeButton("取消", null)
+            .setPositiveButton("获取详情") { _, _ ->
+                val id = FilterImportParser.parseId(input.text.toString(), setOf(AppSettings.getTargetDomain(this), "derpibooru.org", "trixiebooru.org"))
+                if (id == null) Toast.makeText(this, "请输入有效的过滤器 ID 或同站点过滤器 URL", Toast.LENGTH_LONG).show()
+                else startActivity(Intent(this, FilterDetailsActivity::class.java).putExtra(FilterDetailsActivity.EXTRA_FILTER_ID, id))
+            }.show()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean { menuInflater.inflate(R.menu.filter_menu, menu); return true }
@@ -354,8 +510,7 @@ class FilterActivity : AppCompatActivity() {
         R.id.action_filter_clear_recent -> {
             AlertDialog.Builder(this).setTitle("清空近期过滤器？").setMessage("这只会清理本地记录，不会删除服务器数据。")
                 .setNegativeButton("取消", null).setPositiveButton("清空") { _, _ ->
-                    prefs.edit().remove("current_id").remove("current_name").apply()
-                    AppSettings.setCurrentFilterId(this, null)
+                    AppSettings.clearCurrentFilter(this)
                     header.currentFilterName.text = "默认安全过滤器"
                     adapter.notifyDataSetChanged()
                 }.show(); true
@@ -364,6 +519,13 @@ class FilterActivity : AppCompatActivity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    override fun onResume() {
+        super.onResume()
+        if (!::adapter.isInitialized) return
+        localFilters = FilterStore.getLocalFilters(this)
+        if (source == Source.LOCAL) showFilterSource()
+        header.currentFilterName.text = AppSettings.getCurrentFilterName(this) ?: "默认安全过滤器"
+    }
     override fun onDestroy() { searchJob?.cancel(); scope.cancel(); super.onDestroy() }
 
     /** Keeps the header in the same single RecyclerView scroll range as cards. */

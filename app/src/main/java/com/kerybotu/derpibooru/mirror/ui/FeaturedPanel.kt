@@ -288,7 +288,7 @@ class FeaturedPanel(context: Context) : FrameLayout(context) {
     }
 
     private suspend fun request(query: String, sort: String, perPage: Int, requestedPage: Int): List<Image> {
-        val q = URLEncoder.encode(query, "UTF-8")
+        val q = NetworkManager.encodeSearchQuery(context, query)
         val filter = NetworkManager.currentFilterParam(context)
         val json = NetworkManager.getApi(context, "search/images?q=$q&sf=$sort&sd=desc&per_page=$perPage&page=$requestedPage$filter") ?: return emptyList()
         val array = JSONObject(json).optJSONArray("images") ?: return emptyList()

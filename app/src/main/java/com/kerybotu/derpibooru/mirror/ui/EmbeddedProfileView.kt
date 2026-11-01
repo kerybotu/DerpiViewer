@@ -343,7 +343,7 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
 
     private fun loadImages(query: String) = scope.launch {
         progress.visibility = VISIBLE; commentsBox.visibility = GONE
-        val q = URLEncoder.encode(query, "UTF-8")
+        val q = NetworkManager.encodeSearchQuery(context, query)
         val raw = withContext(Dispatchers.IO) { NetworkManager.getApi(context, "search/images?q=$q&sf=first_seen_at&sd=desc&per_page=50${NetworkManager.currentFilterParam(context)}") }
         artworkAdapter.updateData(parseImages(raw.orEmpty())); progress.visibility = GONE
     }

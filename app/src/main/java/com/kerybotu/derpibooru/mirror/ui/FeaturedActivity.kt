@@ -179,7 +179,7 @@ class FeaturedActivity : AppCompatActivity() {
     }
 
     private suspend fun fetchImages(query: String, sort: String, perPage: Int, requestedPage: Int = 1): List<Image> {
-        val encoded = URLEncoder.encode(query, "UTF-8")
+        val encoded = NetworkManager.encodeSearchQuery(this@FeaturedActivity, query)
         val filter = NetworkManager.currentFilterParam(this@FeaturedActivity)
         val path = "search/images?q=$encoded&sf=$sort&sd=desc&per_page=$perPage&page=$requestedPage$filter"
         val result = NetworkManager.getApiWithDiagnostics(this@FeaturedActivity, path)

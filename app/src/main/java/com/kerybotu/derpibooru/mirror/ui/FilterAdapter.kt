@@ -6,14 +6,20 @@ import android.graphics.drawable.GradientDrawable
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.PopupMenu
-import android.widget.Toast
 import androidx.recyclerview.widget.RecyclerView
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.databinding.ItemFilterBinding
 import com.kerybotu.derpibooru.mirror.model.Filter
 
-class FilterAdapter(private var items: List<Filter>, private val currentId: () -> Int?, private val onUse: (Filter) -> Unit) : RecyclerView.Adapter<FilterAdapter.Holder>() {
+class FilterAdapter(
+    private var items: List<Filter>,
+    private val currentId: () -> Int?,
+    private val onUse: (Filter) -> Unit,
+    private val onView: (Filter) -> Unit = {},
+    private val onCustomize: (Filter) -> Unit = {},
+    private val onEdit: (Filter) -> Unit = {}
+) : RecyclerView.Adapter<FilterAdapter.Holder>() {
     private val animatedPositions = mutableSetOf<Int>()
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(ItemFilterBinding.inflate(LayoutInflater.from(parent.context), parent, false))
     override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(items[position], position)
@@ -92,11 +98,16 @@ class FilterAdapter(private var items: List<Filter>, private val currentId: () -
 
         private fun showMenu(filter: Filter) {
             PopupMenu(b.root.context, b.filterMore).apply {
-                menu.add("查看详情")
-                menu.add("复制并自定义")
-                menu.add("编辑")
+                val view = menu.add("查看详情")
+                val customize = menu.add(if (filter.isLocal) "编辑本地过滤器" else "导入并自定义")
+                val edit = menu.add("在网页中编辑")
                 setOnMenuItemClickListener {
-                    Toast.makeText(b.root.context, "${it.title}：${filter.name}", Toast.LENGTH_SHORT).show(); true
+                    when (it) {
+                        view -> onView(filter)
+                        customize -> onCustomize(filter)
+                        edit -> onEdit(filter)
+                    }
+                    true
                 }
             }.show()
         }

@@ -24,6 +24,8 @@ object AppSettings {
     private const val KEY_CDN_MODE = "cdn_concurrency_mode"
     private const val KEY_CDN_THREADS = "cdn_concurrency_threads"
     private const val KEY_CDN_DIRECT = "cdn_direct_connection"
+    private const val KEY_CURRENT_LOCAL_FILTER_ID = "current_local_filter_id"
+    private const val KEY_CURRENT_FILTER_QUERY = "current_filter_query"
     private const val KEY_GLASS_PERFORMANCE_FALLBACK = "glass_performance_fallback"
     private const val KEY_ANTI_EMBARRASSMENT = "anti_embarrassment_filter_enabled"
     private const val KEY_ANTI_EMBARRASSMENT_FILTER_ID = "anti_embarrassment_filter_id"
@@ -129,6 +131,8 @@ object AppSettings {
     fun setCurrentFilter(context: Context, id: Int?, name: String? = null) {
         filterPrefs(context).edit()
             .putInt("current_id", id ?: -1)
+            .remove(KEY_CURRENT_LOCAL_FILTER_ID)
+            .remove(KEY_CURRENT_FILTER_QUERY)
             .apply {
                 if (name.isNullOrBlank()) remove("current_name") else putString("current_name", name.trim())
             }
@@ -136,6 +140,30 @@ object AppSettings {
     }
 
     fun setCurrentFilterId(context: Context, id: Int?) = setCurrentFilter(context, id)
+
+    fun getCurrentLocalFilterId(context: Context): Int? =
+        filterPrefs(context).getInt(KEY_CURRENT_LOCAL_FILTER_ID, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }
+
+    fun getCurrentFilterQuery(context: Context): String? = filterPrefs(context)
+        .getString(KEY_CURRENT_FILTER_QUERY, null)?.trim()?.ifBlank { null }
+
+    fun setCurrentLocalFilter(context: Context, id: Int, name: String, query: String) {
+        filterPrefs(context).edit()
+            .putInt("current_id", -1)
+            .putInt(KEY_CURRENT_LOCAL_FILTER_ID, id)
+            .putString("current_name", name.trim())
+            .putString(KEY_CURRENT_FILTER_QUERY, query.trim())
+            .apply()
+    }
+
+    fun clearCurrentFilter(context: Context) {
+        filterPrefs(context).edit()
+            .remove("current_id")
+            .remove("current_name")
+            .remove(KEY_CURRENT_LOCAL_FILTER_ID)
+            .remove(KEY_CURRENT_FILTER_QUERY)
+            .apply()
+    }
 
     /**
      * When enabled, the home screen restores this filter at every app launch.

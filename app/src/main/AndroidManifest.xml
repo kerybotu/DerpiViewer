@@ -59,6 +59,8 @@
         <activity
             android:name=".ui.FilterActivity"
             android:exported="false" />
+        <activity android:name=".ui.FilterDetailsActivity" android:exported="false" />
+        <activity android:name=".ui.FilterEditorActivity" android:exported="false" />
         <activity
             android:name=".ui.VideoFeedActivity"
             android:exported="false"

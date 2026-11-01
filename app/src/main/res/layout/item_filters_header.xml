@@ -22,5 +22,17 @@
         <ImageButton android:id="@+id/filter_search_clear" android:layout_width="48dp" android:layout_height="48dp" android:background="@android:color/transparent" android:contentDescription="清空搜索" android:padding="12dp" android:src="@drawable/ic_close" />
         <ImageButton android:id="@+id/filter_search_action" android:layout_width="48dp" android:layout_height="48dp" android:background="@android:color/transparent" android:contentDescription="搜索" android:padding="12dp" android:src="@drawable/ic_search" />
     </LinearLayout>
+    <TextView
+        android:id="@+id/filter_structured_action"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="end"
+        android:layout_marginTop="4dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:paddingHorizontal="12dp"
+        android:text="结构化条件"
+        android:textStyle="bold" />
     <TextView android:id="@+id/filter_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="可输入 ID 查询，或按名称和描述筛选" android:textSize="12sp" />
 </LinearLayout>

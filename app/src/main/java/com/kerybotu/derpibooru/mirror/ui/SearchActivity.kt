@@ -472,7 +472,7 @@ class SearchActivity : AppCompatActivity() {
         searchJob = scope.launch {
             try {
                 val filter = NetworkManager.currentFilterParam(this@SearchActivity)
-                val encoded = URLEncoder.encode(query, "UTF-8")
+                val encoded = NetworkManager.encodeSearchQuery(this@SearchActivity, query)
                 val request = withContext(Dispatchers.IO) {
                     NetworkManager.getApiWithDiagnostics(
                         this@SearchActivity,
