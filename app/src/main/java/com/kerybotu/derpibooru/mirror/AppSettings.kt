@@ -1,6 +1,7 @@
 package com.kerybotu.derpibooru.mirror
 
 import android.content.Context
+import android.os.Build
 import com.kerybotu.derpibooru.mirror.theme.AccentColor
 
 object AppSettings {
@@ -23,6 +24,7 @@ object AppSettings {
     private const val KEY_CDN_MODE = "cdn_concurrency_mode"
     private const val KEY_CDN_THREADS = "cdn_concurrency_threads"
     private const val KEY_CDN_DIRECT = "cdn_direct_connection"
+    private const val KEY_GLASS_PERFORMANCE_FALLBACK = "glass_performance_fallback"
     private const val KEY_ANTI_EMBARRASSMENT = "anti_embarrassment_filter_enabled"
     private const val KEY_ANTI_EMBARRASSMENT_FILTER_ID = "anti_embarrassment_filter_id"
     private const val KEY_ANTI_EMBARRASSMENT_FILTER_NAME = "anti_embarrassment_filter_name"
@@ -88,6 +90,12 @@ object AppSettings {
     fun setIpOptimizationEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY_USE_IP_OPTIMIZATION, enabled).apply()
     fun isCdnDirect(context: Context): Boolean = prefs(context).getBoolean(KEY_CDN_DIRECT, false)
     fun setCdnDirect(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY_CDN_DIRECT, enabled).apply()
+    /** Defaults to the lower-cost material on devices below Android 9. */
+    fun defaultGlassPerformanceFallbackForSdk(sdkInt: Int): Boolean = sdkInt < Build.VERSION_CODES.P
+    fun isGlassPerformanceFallbackEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_GLASS_PERFORMANCE_FALLBACK, defaultGlassPerformanceFallbackForSdk(Build.VERSION.SDK_INT))
+    fun setGlassPerformanceFallbackEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean(KEY_GLASS_PERFORMANCE_FALLBACK, enabled).apply()
     fun isHighResolution(context: Context): Boolean = prefs(context).getBoolean(KEY_HIGH_RES, false)
     fun setHighResolution(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_HIGH_RES, value).apply()
     fun isVideoThumbnailsEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_VIDEO_THUMBNAILS, true)

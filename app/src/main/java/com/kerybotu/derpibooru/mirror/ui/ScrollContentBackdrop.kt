@@ -2,6 +2,7 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Context
 import android.graphics.Canvas
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 
@@ -10,8 +11,13 @@ internal class ScrollContentBackdrop(
     context: Context,
     private val scroll: ViewGroup
 ) : View(context) {
+    private companion object {
+        const val TAG = "ScrollContentBackdrop"
+    }
+
     private val origin = IntArray(2)
     private val location = IntArray(2)
+    private var loggedDrawRace = false
 
     init {
         setWillNotDraw(false)
@@ -40,7 +46,21 @@ internal class ScrollContentBackdrop(
         canvas.translate(x + content.left - scroll.scrollX, y + content.top - scroll.scrollY)
         canvas.concat(content.matrix)
         canvas.translate(-content.scrollX.toFloat(), -content.scrollY.toFloat())
-        content.draw(canvas)
-        canvas.restoreToCount(save)
+        try {
+            // On Android 9, a ViewGroup can be invalidated or rebound while a
+            // mirrored draw is in progress. The platform's pre-ordered child
+            // array then briefly disagrees with childCount and throws from
+            // dispatchDraw. This backdrop is optional, so skip that frame and
+            // let the real ScrollView render normally instead of crashing the
+            // activity.
+            content.draw(canvas)
+        } catch (_: IndexOutOfBoundsException) {
+            if (!loggedDrawRace) {
+                loggedDrawRace = true
+                Log.w(TAG, "Skipping unstable mirrored content frame")
+            }
+        } finally {
+            canvas.restoreToCount(save)
+        }
     }
 }

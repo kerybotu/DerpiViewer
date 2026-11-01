@@ -76,6 +76,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var paletteGroup: GlassSegmentedControl
     private lateinit var siteGroup: GlassSegmentedControl
     private lateinit var accentSwatches: ResponsiveWrapLayout
+    private lateinit var switchGlassPerformanceFallback: GlassSwitch
     private lateinit var switchHighRes: GlassSwitch
     private lateinit var switchVideoThumb: GlassSwitch
     private lateinit var switchVideoAudio: GlassSwitch
@@ -249,6 +250,12 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(2), dp(10), dp(2), dp(2))
         }
         sectionContent(section).addView(accentSwatches, LinearLayout.LayoutParams(-1, -2))
+        switchGlassPerformanceFallback = settingSwitch("性能回退（低于 Android 9 默认开启）")
+        sectionContent(section).addView(switchGlassPerformanceFallback, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        sectionContent(section).addView(
+            bodyText("开启后使用低成本的半透明毛玻璃材质，减少背景模糊、动态高光和色散计算。切换后立即应用。", 12f),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+        )
         addSection(section)
     }
 
@@ -480,6 +487,7 @@ class SettingsActivity : AppCompatActivity() {
         switchHideUploader.isChecked = AppSettings.isUploaderHidden(this)
         switchHideScore.isChecked = AppSettings.isScoreHidden(this)
         switchTagTranslation.isChecked = AppSettings.isTagTranslationEnabled(this)
+        switchGlassPerformanceFallback.isChecked = AppSettings.isGlassPerformanceFallbackEnabled(this)
         val spoilerModes = AppSettings.SpoilerDisplayMode.values().toList()
         spinnerSpoilerMode.adapter = spinnerAdapter(spoilerModes.map { it.label })
         spinnerSpoilerMode.setSelection(spoilerModes.indexOf(AppSettings.getSpoilerDisplayMode(this)).coerceAtLeast(0))
@@ -578,6 +586,12 @@ class SettingsActivity : AppCompatActivity() {
             AppSettings.setTagTranslationEnabled(this, value)
             Toast.makeText(this, if (value) "标签翻译已开启" else "标签翻译已关闭", Toast.LENGTH_SHORT).show()
         }
+        switchGlassPerformanceFallback.setOnCheckedChangeListener { _, value ->
+            AppSettings.setGlassPerformanceFallbackEnabled(this, value)
+            PaletteManager.apply(this)
+            PaletteManager.notifyChanged(this)
+            applyPalette()
+        }
         spinnerSpoilerMode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 AppSettings.setSpoilerDisplayMode(this@SettingsActivity, AppSettings.SpoilerDisplayMode.values()[position])
@@ -657,8 +671,7 @@ class SettingsActivity : AppCompatActivity() {
         glassSurfaces.forEach { surface ->
             GlassWidgetStyle.apply(surface, if (surface === topIsland) Ui2DesignSystem.Shape.topIsland else Ui2DesignSystem.Shape.large, colors)
             surface.backdropSource = pageBackdrop
-            surface.enableDynamicBackground = false
-            surface.enableSensorHighlight = false
+            GlassWidgetStyle.setRenderingActive(surface, false, null)
         }
         if (::topIsland.isInitialized) {
             topIsland.setPalette(colors)
@@ -667,8 +680,7 @@ class SettingsActivity : AppCompatActivity() {
         glassButtons.forEach { button ->
             GlassWidgetStyle.apply(button, Ui2DesignSystem.Shape.medium, colors)
             button.backdropSource = pageBackdrop
-            button.enableDynamicBackground = false
-            button.enableSensorHighlight = false
+            GlassWidgetStyle.setRenderingActive(button, false, null)
         }
         glassSwitches.forEach { it.applyPalette(colors) }
         segmentedControls.forEach { it.applyPalette(colors) }
@@ -691,12 +703,10 @@ class SettingsActivity : AppCompatActivity() {
         // Section surfaces share a static page backdrop. Only the header samples the
         // scrolling content, avoiding a full scroll-tree capture for every visible row.
         glassSurfaces.forEach {
-            it.enableDynamicBackground = false
-            it.enableSensorHighlight = false
+            GlassWidgetStyle.setRenderingActive(it, false, null)
         }
         glassButtons.forEach {
-            it.enableDynamicBackground = false
-            it.enableSensorHighlight = false
+            GlassWidgetStyle.setRenderingActive(it, false, null)
         }
     }
 

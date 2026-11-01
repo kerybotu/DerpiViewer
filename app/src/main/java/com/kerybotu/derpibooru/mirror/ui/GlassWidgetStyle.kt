@@ -21,6 +21,8 @@ import java.lang.ref.WeakReference
 object GlassWidgetStyle {
     enum class MaterialRole { FLOATING, READING }
     private val materialRoles = java.util.WeakHashMap<LiquidGlassView, MaterialRole>()
+    private val renderingStates = java.util.WeakHashMap<LiquidGlassView, Boolean>()
+    private val renderingSources = java.util.WeakHashMap<LiquidGlassView, View?>()
 
     fun materialRole(view: LiquidGlassView): MaterialRole = materialRoles[view]
         ?: if (view is LiquidGlassListItem) MaterialRole.READING else MaterialRole.FLOATING
@@ -29,12 +31,26 @@ object GlassWidgetStyle {
     fun secondaryTextColor(context: android.content.Context) = PaletteManager.colors(context).glassSecondaryText
     fun iconColor(context: android.content.Context) = PaletteManager.colors(context).glassText
 
+    fun isPerformanceFallback(context: android.content.Context): Boolean =
+        com.kerybotu.derpibooru.mirror.AppSettings.isGlassPerformanceFallbackEnabled(context)
+
+    /** Apply the active rendering policy to a surface and its optional backdrop. */
+    fun setRenderingActive(view: LiquidGlassView, active: Boolean, source: View?) {
+        renderingStates[view] = active
+        renderingSources[view] = source
+        val useDynamic = active && !isPerformanceFallback(view.context)
+        view.backdropSource = if (useDynamic) source else null
+        view.enableDynamicBackground = useDynamic
+        view.enableSensorHighlight = useDynamic
+    }
+
     /** The home header is the reference material for every glass surface. */
     fun applyMaterial(
         view: LiquidGlassView,
         colors: PaletteDefinitions.Scheme = PaletteManager.colors(view.context)
     ) {
         val density = view.resources.displayMetrics.density
+        val performanceFallback = isPerformanceFallback(view.context)
         view.material = GlassMaterial.REGULAR
         // The library's adaptive tint samples the backdrop and replaces the
         // resolved app tint. That makes a light app theme inherit a dark
@@ -50,34 +66,42 @@ object GlassWidgetStyle {
         // Dense text needs the existing reading-surface coverage over bright
         // artwork. It is still a tint on the optical result, never a second
         // opaque background. Floating navigation keeps its lighter coating.
-        view.glassTint = if (materialRole(view) == MaterialRole.READING) colors.glassSurface else colors.glassTint
-        view.enableBackdropBlur = true
+        view.glassTint = if (performanceFallback) colors.glassSurface
+        else if (materialRole(view) == MaterialRole.READING) colors.glassSurface else colors.glassTint
+        view.enableBackdropBlur = !performanceFallback
         // Restore the upstream default optical path. On pre-33 devices the
         // displacement-map aberration pass IS the refraction implementation;
         // disabling both optical effects leaves only a blurred flat panel.
         // Downsample the capture instead of deleting that pass. API 33+ keeps
         // the original GPU lens (SDF refraction, dispersion and highlights).
         view.enableChromaticDispersion = false
-        view.enableChromaticAberration = true
-        view.globalDownsampleFactor = if (Build.VERSION.SDK_INT < 33) 0.5f else 1f
-        view.blurAmount = 0.045f
-        view.saturation = 125f
-        view.adaptiveLensScale = true
+        view.enableChromaticAberration = !performanceFallback
+        view.globalDownsampleFactor = if (performanceFallback) 1f else if (Build.VERSION.SDK_INT < 33) 0.5f else 1f
+        view.blurAmount = if (performanceFallback) 0f else 0.045f
+        view.saturation = if (performanceFallback) 100f else 125f
+        view.adaptiveLensScale = !performanceFallback
         view.bevelWidth = 16f * density
         view.refractionHeight = 48f * density
         view.refractionFalloff = 2f
         view.refractionNoFold = false
         view.edgeSoftness = 0f
-        view.dispersionStrength = 0.08f
-        view.edgeHighlightOpacity = 35f
-        view.enableEdgeHighlight = true
+        view.dispersionStrength = if (performanceFallback) 0f else 0.08f
+        view.edgeHighlightOpacity = if (performanceFallback) 0f else 35f
+        view.enableEdgeHighlight = !performanceFallback
         // Ancestor transforms cannot be represented by the library's backdrop offset.
         view.enablePressEffect = false
         view.enableShadow = false
         view.collectFrameStats = false
         // Only use the solid fallback before a source is available. A live
         // surface must expose its backdrop, not stack two material base coats.
-        view.background = BackdropFallback(view, colors.glassSurface).apply {
+        view.background = if (performanceFallback) {
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = view.cornerRadius
+                setColor(colors.glassSurface)
+                setStroke((density).toInt().coerceAtLeast(1), colors.glassBorder)
+            }
+        } else BackdropFallback(view, colors.glassSurface).apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = view.cornerRadius
             setStroke((density).toInt().coerceAtLeast(1), colors.glassBorder)
@@ -102,6 +126,9 @@ object GlassWidgetStyle {
             }
         }
         view.invalidate()
+        renderingStates[view]?.let { active ->
+            setRenderingActive(view, active, renderingSources[view])
+        }
     }
 
     fun apply(
