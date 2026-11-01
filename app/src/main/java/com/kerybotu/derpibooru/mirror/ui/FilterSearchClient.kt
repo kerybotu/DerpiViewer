@@ -57,7 +57,7 @@ object FilterSearchClient {
             FilterSearchField.ID -> compareNumber(filter.id.toDouble(), value)
             FilterSearchField.SPOILERED_COUNT -> compareNumber(filter.spoilerCount.toDouble(), value)
             FilterSearchField.HIDDEN_COUNT -> compareNumber(filter.hiddenCount.toDouble(), value)
-            FilterSearchField.MY -> true
+            FilterSearchField.MY -> value.equals("filters", ignoreCase = true)
             FilterSearchField.SYSTEM -> filter.system == value.toBooleanStrictOrNull()
             FilterSearchField.PUBLIC -> filter.public == value.toBooleanStrictOrNull()
             FilterSearchField.USER_ID -> filter.userId?.toString() == value
