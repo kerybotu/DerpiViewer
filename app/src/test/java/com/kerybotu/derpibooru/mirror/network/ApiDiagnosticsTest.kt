@@ -24,6 +24,7 @@ class ApiDiagnosticsTest {
 
         val summary = diagnostic.summary()
         assertTrue(summary.contains("a1b2c3d4"))
+        assertTrue(summary.contains("GET search/images"))
         assertTrue(summary.contains("RATE_LIMITED"))
         assertTrue(summary.contains("http=429"))
         assertFalse(summary.contains("secret"))

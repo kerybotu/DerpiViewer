@@ -22,6 +22,7 @@ data class ApiRequestDiagnostic(
     val requestId: String,
     val operation: String,
     val host: String,
+    val method: String = "GET",
     val phase: String,
     val kind: ApiFailureKind,
     val statusCode: Int? = null,
@@ -35,7 +36,7 @@ data class ApiRequestDiagnostic(
 ) {
     fun summary(): String = buildString {
         append(requestId).append(' ')
-        append(operation).append(' ')
+        append(method).append(' ').append(operation).append(' ')
         append(kind.name).append(" phase=").append(phase)
         statusCode?.let { append(" http=").append(it) }
         append(" elapsedMs=").append(elapsedMs)
