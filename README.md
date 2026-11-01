@@ -41,7 +41,7 @@ DerpiViewer 使用原生 Android UI 和官方 JSON API 构建，不是网页套�
 - 首页底栏使用 `HomeGlassTabBar` 和 Liquid Glass 组件，五个一级页面共享同一个浮岛与动态选中状态；不再通过 Beta 开关切换旧版界面。
 - 首页默认使用 [Liquid-Glass-Android v2.0.11](https://github.com/QWEA0/Liquid-Glass-Android#chinese)：TopIsland、五个一级页面共用的 `HomeGlassTabBar` 和 `LiquidGlassFab` 使用统一玻璃材质。底栏选中液滴按实际 tab bounds 定位，支持点击、拖动和重复点击首页刷新；导航玻璃表面使用 inset 圆角，图标和文字绘制在采样层上方。FAB 保持 56dp 表面，上传／下载动作只动画图标，不再提供 Beta/旧版 UI 切换。
 - 搜索页统一使用库内按钮、Chip／ChipGroup、ListItem／ListGroup 和玻璃弹窗；输入框、加载指示器使用 `LiquidGlassView` 承载，保留原生输入法。搜索补全、快捷条件、排序、高级筛选、结果卡片及其统计／选中／媒体类型标记均使用玻璃表面，保留点击详情和批量下载。搜索框常驻，附加筛选区域随滚动收起并释放空间。
-- 搜索页和标签搜索页的 `IosActivityIndicator` 由请求状态显式驱动，并在 View attach、页面恢复和窗口可见性变化后重新启动；请求结束、取消或页面离开时停止，避免部分设备上只显示静止首帧。
+- 搜索页和标签搜索页的 `IosActivityIndicator` 由请求状态显式驱动，并在 View attach、页面恢复和窗口可见性变化后重新启动；请求结束、取消或页面离开时停止，避免部分设备上只显示静止首帧，并有模拟器生命周期回归测试覆盖。
 - 标签页使用液态玻璃输入区域、搜索按钮与可回收列表项，页眉复用首页的玻璃材质、60dp 高度和 30dp 圆角；保留数量、说明、分页和跳转图片搜索，支持空结果与失败重试提示，加载动画复用 `IosActivityIndicator`。不可见列表项和后台页面停止持续渲染。
 - 底栏评论、全站评论和图集页共用 `GlassFeedLayout`，采用首页同款固定玻璃页眉、白色文字、可回收玻璃卡片及加载／重试提示。评论翻译、原文切换和查看图片使用玻璃按钮，翻译状态按评论保存；底栏评论保留滚动位置并避让底部／侧边导航。图集筛选使用玻璃弹窗，保留标题、描述、创建者和打开图集功能。
 - 论坛、收藏夹和下载管理页也复用固定玻璃页眉及 `LiquidGlassListItem` 卡片，收藏夹与下载管理使用库内 `LiquidGlassTabBar` 分页。论坛保留板块／主题／帖子浏览、翻译及分页；收藏夹保留文件夹管理、导入站点收藏、长按多选和批量下载；下载管理保留进度、取消、重试、打开文件和删除确认，删除文件选项使用玻璃 Chip。输入框及弹窗由玻璃表面承载，按钮采用 `LiquidGlassButton`；下载进度条保留在玻璃卡片内，进度变化只更新数值与进度条。
@@ -72,7 +72,7 @@ DerpiViewer 使用原生 Android UI 和官方 JSON API 构建，不是网页套�
 - 本地代理为 `challenges.cloudflare.com` 单独测速并路由 Turnstile 资源；其优选 IP 使用独立缓存键，TLS 仍保留原始主机名/SNI，避免复用主站或 CDN 节点造成验证 Cookie 失效。
 - 支持手动指定 IP、主站/CDN 分开配置，以及 `derpicdn.net` 直连选项。
 - 请求包含限流、重试、Challenge 检测和 500/501 退避逻辑。
-- API 请求保留有界的脱敏诊断记录，区分 DNS、TCP、TLS、连接/读取超时、HTTP、限流、空响应和 JSON 解析阶段；搜索失败可重试、复制诊断编号，并在网络类错误时进入深度 IP 优选。
+- API 请求保留有界的脱敏诊断记录，区分 HTTP 方法、DNS、TCP、TLS、连接/读取超时、HTTP、限流、空响应和 JSON 解析阶段；搜索失败可重试、复制诊断编号，并在网络类错误时进入深度 IP 优选。
 - 深度 IP 优选依次验证 TCP、TLS/主站 HTTP、只读 API JSON 和 CDN Range；TCP 连通本身不再被当作 API 可用。主站、CDN、Cloudflare 的普通优选流程只进行一次共享测速，并保留每个域名独立的 TCPing 结果。API 失败保留请求关联 ID、阶段、耗时、状态码、网络配置版本和有限重试结果，设置页可复制脱敏的最近诊断摘要。
 - 人机验证页面仅在检测到 Derpibooru challenge 表单时进入验证流程，并显示加载进度。
 
