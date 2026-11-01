@@ -60,6 +60,8 @@ class VideoFeedAdapter(
     private var endInset = 0
     private var landscape = false
     var onHolderBound: ((Int) -> Unit)? = null
+    /** Called after a ViewPager2 page has actually been attached to the inner RecyclerView. */
+    var onHolderAttached: ((Holder, Int) -> Unit)? = null
 
     fun replace(posts: List<VideoPost>) { items.clear(); items.addAll(posts); notifyDataSetChanged() }
     fun append(posts: List<VideoPost>) { val start = items.size; items.addAll(posts); notifyItemRangeInserted(start, posts.size) }
@@ -99,7 +101,21 @@ class VideoFeedAdapter(
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         holder.bind(items[position], position, actions, bottomInset, endInset, landscape)
-        holder.itemView.post { onHolderBound?.invoke(holder.bindingAdapterPosition) }
+        holder.itemView.post {
+            val boundPosition = holder.bindingAdapterPosition
+            if (boundPosition != RecyclerView.NO_POSITION) onHolderBound?.invoke(boundPosition)
+        }
+    }
+
+    override fun onViewAttachedToWindow(holder: Holder) {
+        super.onViewAttachedToWindow(holder)
+        val position = holder.bindingAdapterPosition
+        if (position != RecyclerView.NO_POSITION) onHolderAttached?.invoke(holder, position)
+    }
+
+    override fun onViewDetachedFromWindow(holder: Holder) {
+        onHolderAttached?.invoke(holder, RecyclerView.NO_POSITION)
+        super.onViewDetachedFromWindow(holder)
     }
     override fun onBindViewHolder(holder: Holder, position: Int, payloads: MutableList<Any>) {
         if (payloads.isNotEmpty() && payloads.all { it == PALETTE_PAYLOAD }) {

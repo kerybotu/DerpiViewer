@@ -72,6 +72,22 @@ class VideoFeedController(
         adapter.onHolderBound = { position ->
             if (active && position == currentPosition) activate(position, automatic = true)
         }
+        adapter.onHolderAttached = { holder, position ->
+            if (active && position != RecyclerView.NO_POSITION && position == currentPosition) {
+                val post = adapter.item(position)
+                val player = playerPool.get(position)
+                if (post == null) {
+                    Unit
+                } else if (player == null) {
+                    activate(position, automatic = true)
+                } else {
+                    // ViewPager2 may attach the page after prepare() has already
+                    // completed. Bind at the attach boundary instead of relying
+                    // on a bounded sequence of frame retries.
+                    bindPlayerView(position, post, player, player.playWhenReady, attempt = 0)
+                }
+            }
+        }
         scope.launch {
             NetworkManager.configurationVersion.collect { version ->
                 if (version != appliedNetworkVersion) {
@@ -195,12 +211,23 @@ class VideoFeedController(
             }
             Log.d(TAG, "feed_loaded page=$page count=${posts.size} ids=${posts.take(3).map { it.id }}")
             if (page == 1) adapter.replace(posts) else adapter.append(posts)
+            pager.post {
+                Log.d(TAG, "feed_layout items=${adapter.itemCount} pager=${pager.width}x${pager.height} recyclerChildren=${pagerRecycler.childCount} attached=${pager.isAttachedToWindow} adapter=${pagerRecycler.adapter?.javaClass?.simpleName} lm=${pagerRecycler.layoutManager?.javaClass?.simpleName} computing=${pagerRecycler.isComputingLayout}")
+            }
             if (posts.isNotEmpty()) page++
             onEmptyView(adapter.itemCount == 0, if (adapter.itemCount == 0) "没有可播放的视频" else "")
             loading = false
             onLoadingView(false)
             if (adapter.itemCount > 0) {
-                pager.post { activate(currentPosition, automatic = true) }
+                pager.post {
+                    // A feed can arrive while ViewPager2 is still completing
+                    // its empty-adapter layout. Re-assert the selected page
+                    // and request a layout before preparing the player; this
+                    // guarantees a holder exists for PlayerView binding.
+                    pager.setCurrentItem(currentPosition.coerceIn(0, adapter.itemCount - 1), false)
+                    pagerRecycler.requestLayout()
+                    pagerRecycler.postOnAnimation { activate(currentPosition, automatic = true) }
+                }
             }
         }
     }
@@ -635,6 +662,7 @@ class VideoFeedController(
         transientRetryCounts.clear()
         prepareStartedAt.clear()
         adapter.onHolderBound = null
+        adapter.onHolderAttached = null
         detachPlayers()
         savedPlayback.clear()
         playerPool.dispose()

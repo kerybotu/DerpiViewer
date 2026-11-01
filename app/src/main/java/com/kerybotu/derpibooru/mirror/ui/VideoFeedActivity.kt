@@ -44,7 +44,7 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         binding.videoPager.apply {
             orientation = ViewPager2.ORIENTATION_VERTICAL
             offscreenPageLimit = 1
-            this.adapter = adapter
+            this.adapter = this@VideoFeedActivity.adapter
         }
         val pagerRecycler = binding.videoPager.getChildAt(0) as RecyclerView
         binding.videoGlassBackdrop.results = pagerRecycler
