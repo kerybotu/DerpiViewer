@@ -72,7 +72,7 @@ DerpiViewer 使用原生 Android UI 和官方 JSON API 构建，不是网页套�
 - 本地代理为 `challenges.cloudflare.com` 单独测速并路由 Turnstile 资源；其优选 IP 使用独立缓存键，TLS 仍保留原始主机名/SNI，避免复用主站或 CDN 节点造成验证 Cookie 失效。
 - 支持手动指定 IP、主站/CDN 分开配置，以及 `derpicdn.net` 直连选项。
 - 请求包含限流、重试、Challenge 检测和 500/501 退避逻辑。
-- API 请求保留有界的脱敏诊断记录，区分 HTTP 方法、DNS、TCP、TLS、连接/读取超时、HTTP、限流、空响应和 JSON 解析阶段；搜索失败可重试、复制诊断编号，并在网络类错误时进入深度 IP 优选。
+- API 请求保留有界的脱敏诊断记录，区分 HTTP 方法、DNS、TCP、TLS、连接/读取超时、HTTP、限流、业务错误、空响应和 JSON 解析阶段；搜索失败可重试、复制诊断编号，并在网络类错误时进入深度 IP 优选。
 - 深度 IP 优选依次验证 TCP、TLS/主站 HTTP、只读 API JSON 和 CDN Range；TCP 连通本身不再被当作 API 可用。主站、CDN、Cloudflare 的普通优选流程只进行一次共享测速，并保留每个域名独立的 TCPing 结果。API 失败保留请求关联 ID、阶段、耗时、状态码、网络配置版本和有限重试结果，设置页可复制脱敏的最近诊断摘要。
 - 人机验证页面仅在检测到 Derpibooru challenge 表单时进入验证流程，并显示加载进度。
 
