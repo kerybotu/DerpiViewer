@@ -19,20 +19,17 @@
     <LinearLayout android:id="@+id/filter_search_container" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="12dp" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="14dp" android:paddingEnd="4dp">
         <ImageView android:id="@+id/filter_search_icon" android:layout_width="22dp" android:layout_height="22dp" android:contentDescription="搜索过滤器" android:src="@drawable/ic_search" />
         <EditText android:id="@+id/filter_search" android:layout_width="0dp" android:layout_height="match_parent" android:layout_marginStart="10dp" android:layout_weight="1" android:background="@android:color/transparent" android:ellipsize="end" android:gravity="center_vertical" android:hint="输入过滤器 ID 或名称" android:imeOptions="actionSearch" android:inputType="text" android:maxLines="1" android:singleLine="true" />
-        <ImageButton android:id="@+id/filter_search_clear" android:layout_width="48dp" android:layout_height="48dp" android:background="@android:color/transparent" android:contentDescription="清空搜索" android:padding="12dp" android:src="@drawable/ic_close" />
         <ImageButton android:id="@+id/filter_search_action" android:layout_width="48dp" android:layout_height="48dp" android:background="@android:color/transparent" android:contentDescription="搜索" android:padding="12dp" android:src="@drawable/ic_search" />
+        <TextView
+            android:id="@+id/filter_parameter_action"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="64dp"
+            android:paddingHorizontal="10dp"
+            android:text="参数"
+            android:textStyle="bold" />
     </LinearLayout>
-    <TextView
-        android:id="@+id/filter_structured_action"
-        android:layout_width="wrap_content"
-        android:layout_height="40dp"
-        android:layout_gravity="end"
-        android:layout_marginTop="4dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center"
-        android:paddingHorizontal="12dp"
-        android:text="结构化条件"
-        android:textStyle="bold" />
-    <TextView android:id="@+id/filter_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="可输入 ID 查询，或按名称和描述筛选" android:textSize="12sp" />
 </LinearLayout>

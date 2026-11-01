@@ -22,5 +22,11 @@ data class Filter(
     val sourceDomain: String? = null,
     /** Search expression for a locally managed custom filter. */
     val localQuery: String? = null,
-    val isLocal: Boolean = false
+    val isLocal: Boolean = false,
+    /** Links discovered on the HTML filters page; absent for JSON-only data. */
+    val ownerProfilePath: String? = null,
+    val remoteViewPath: String? = null,
+    val remoteCopyPath: String? = null,
+    val remoteEditPath: String? = null,
+    val remoteUseAction: String? = null
 ) : Serializable

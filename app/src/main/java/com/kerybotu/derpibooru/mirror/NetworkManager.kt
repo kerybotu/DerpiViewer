@@ -75,6 +75,14 @@ object NetworkManager {
     fun encodeSearchQuery(context: Context, query: String): String =
         java.net.URLEncoder.encode(mergeCurrentFilterQuery(context, query), "UTF-8")
 
+    /** Builds a normal site URL while letting Uri encode each query value once. */
+    fun sitePageUrl(context: Context, path: String, parameters: Map<String, String> = emptyMap()): String {
+        val base = "https://${AppSettings.getTargetDomain(context)}/${path.trimStart('/')}"
+        return Uri.parse(base).buildUpon().apply {
+            parameters.forEach { (key, value) -> appendQueryParameter(key, value) }
+        }.build().toString()
+    }
+
     suspend fun init(
         context: Context,
         forceRefresh: Boolean = false,
@@ -302,6 +310,15 @@ object NetworkManager {
 
     suspend fun getApiWithDiagnostics(context: Context, path: String): ApiRequestResult =
         getWithDiagnostics(apiUrl(context, path), operation = path.substringBefore('?'))
+
+    suspend fun getSitePageWithDiagnostics(
+        context: Context,
+        path: String,
+        parameters: Map<String, String> = emptyMap()
+    ): ApiRequestResult = getWithDiagnostics(
+        sitePageUrl(context, path, parameters),
+        operation = "site:${path.trimStart('/')}"
+    )
 
     fun recentDiagnostics(): List<ApiRequestDiagnostic> = synchronized(diagnosticsLock) { diagnostics.toList() }
     fun lastDiagnostic(): ApiRequestDiagnostic? = lastApiFailure

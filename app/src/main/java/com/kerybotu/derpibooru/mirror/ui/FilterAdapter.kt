@@ -41,8 +41,8 @@ class FilterAdapter(
             b.filterDescription.text = filter.description.ifBlank { "公共场合可用的安全过滤器" }
             b.filterDescription.setTextColor(PaletteManager.colors(b.root.context).muted)
             b.filterChips.removeAllViews()
-            addChip(b.filterChips, "剧透 ${filter.spoilerCount}")
-            addChip(b.filterChips, "隐藏 ${filter.hiddenCount}")
+            addChip(b.filterChips, "剧透 ${countText(filter.spoilerCount)}")
+            addChip(b.filterChips, "隐藏 ${countText(filter.hiddenCount)}")
             val isCurrent = currentId() == filter.id
             b.filterUse.text = if (isCurrent) "✓ 使用中" else "使用此过滤器"
             b.filterUse.isEnabled = !isCurrent
@@ -91,6 +91,8 @@ class FilterAdapter(
 
         private fun dp(value: Int) = (value * b.root.resources.displayMetrics.density).toInt()
 
+        private fun countText(value: Int): String = if (value < 0) "?" else value.toString()
+
         private fun Int.copyAlpha(alpha: Float): Int = android.graphics.Color.argb(
             (alpha.coerceIn(0f, 1f) * 255).toInt(),
             android.graphics.Color.red(this), android.graphics.Color.green(this), android.graphics.Color.blue(this)
@@ -100,7 +102,7 @@ class FilterAdapter(
             PopupMenu(b.root.context, b.filterMore).apply {
                 val view = menu.add("查看详情")
                 val customize = menu.add(if (filter.isLocal) "编辑本地过滤器" else "导入并自定义")
-                val edit = menu.add("在网页中编辑")
+                val edit = filter.remoteEditPath?.let { menu.add("在网页中编辑") }
                 setOnMenuItemClickListener {
                     when (it) {
                         view -> onView(filter)

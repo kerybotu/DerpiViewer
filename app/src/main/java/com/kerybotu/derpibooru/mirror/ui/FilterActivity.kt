@@ -30,9 +30,7 @@ import com.kerybotu.derpibooru.mirror.databinding.ItemFiltersHeaderBinding
 import com.kerybotu.derpibooru.mirror.model.Filter
 import com.kerybotu.derpibooru.mirror.model.FilterImportParser
 import com.kerybotu.derpibooru.mirror.model.FilterJsonCodec
-import com.kerybotu.derpibooru.mirror.model.FilterSearchCondition
-import com.kerybotu.derpibooru.mirror.model.FilterSearchField
-import com.kerybotu.derpibooru.mirror.model.FilterSearchQuery
+import com.kerybotu.derpibooru.mirror.model.FilterSearchInput
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import kotlinx.coroutines.*
 
@@ -213,12 +211,9 @@ class FilterActivity : AppCompatActivity() {
         header.currentFilterLabel.setTextColor(muted)
         header.currentFilterName.setTextColor(palette.onSurface)
         header.changeFilter.setTextColor(palette.primary)
-        header.filterHint.setTextColor(muted)
         header.filterSearch.setTextColor(palette.onSurface)
         header.filterSearch.setHintTextColor(muted)
-        header.filterHint.text = "输入 name:default、creator:AppleDash、id:1 等语法；空白时筛选本地列表"
         header.filterSearchIcon.imageTintList = android.content.res.ColorStateList.valueOf(muted)
-        header.filterSearchClear.imageTintList = android.content.res.ColorStateList.valueOf(muted)
         header.filterSearchAction.imageTintList = android.content.res.ColorStateList.valueOf(palette.primary)
         header.filterTabs.setTabTextColors(muted, palette.onSurface)
         header.filterTabs.setSelectedTabIndicatorColor(palette.primary)
@@ -241,24 +236,18 @@ class FilterActivity : AppCompatActivity() {
         header.currentFilterName.text = AppSettings.getCurrentFilterName(this) ?: prefs.getString("current_name", "默认安全过滤器")
         header.changeFilter.setOnClickListener { showCurrentChooser() }
         header.filterSearchAction.setOnClickListener { triggerSearch() }
-        header.filterStructuredAction.setTextColor(palette.primary)
-        header.filterStructuredAction.setOnClickListener { showStructuredSearch() }
+        header.filterParameterAction.setTextColor(palette.primary)
+        header.filterParameterAction.setOnClickListener { showParameterMenu() }
         header.filterSearch.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) { triggerSearch(); true } else false
-        }
-        header.filterSearchClear.setOnClickListener {
-            header.filterSearch.text?.clear()
-            header.filterSearch.requestFocus()
         }
         header.filterSearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
-                header.filterSearchClear.visibility = if (s.isNullOrBlank()) View.GONE else View.VISIBLE
                 if (searchJob?.isActive != true) filterLocal(s?.toString().orEmpty())
             }
         })
-        header.filterSearchClear.visibility = View.GONE
     }
 
     private fun loadFilters() {
@@ -305,79 +294,41 @@ class FilterActivity : AppCompatActivity() {
         searchServerPage(1, append = false)
     }
 
-    /** Builds the same query string accepted by the raw search field. */
-    private fun showStructuredSearch() {
-        val fields = FilterSearchField.values().toList()
-        val conditions = FilterSearchQuery.parse(header.filterSearch.text?.toString().orEmpty()).toMutableList()
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(4))
-        }
-        val fieldSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@FilterActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                fields.map { "${it.key}（${it.kind.name.lowercase()}）" }
-            )
-        }
-        val valueInput = EditText(this).apply {
-            hint = "条件值，例如 default、2015、>=10 或 true"
-            setSingleLine(true)
-        }
-        val preview = TextView(this).apply {
-            setTextColor(palette.muted)
-            setPadding(0, dp(12), 0, dp(8))
-        }
-        fun refreshPreview() {
-            preview.text = "查询预览：${FilterSearchQuery.serialize(conditions).ifBlank { "（空）" }}"
-        }
-        box.addView(fieldSpinner)
-        box.addView(valueInput)
-        box.addView(Button(this).apply {
-            text = "添加条件"
-            PaletteManager.styleButton(this)
-            setOnClickListener { addStructuredCondition(fields, fieldSpinner, valueInput, conditions, ::refreshPreview) }
-        })
-        box.addView(preview)
-        refreshPreview()
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("结构化过滤器搜索")
-            .setView(box)
-            .setNegativeButton("取消", null)
-            .setNeutralButton("清空", null)
-            .setPositiveButton("应用", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                conditions.clear(); valueInput.text?.clear(); refreshPreview()
-            }
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                header.filterSearch.setText(FilterSearchQuery.serialize(conditions))
+    private fun showParameterMenu() {
+        val entries = listOf(
+            "名称：name:" to "name:",
+            "创建者：creator:" to "creator:",
+            "描述：description:\"\"" to "description:\"\"",
+            "创建时间：created_at:" to "created_at:",
+            "过滤器 ID：id:" to "id:",
+            "剧透标签数量：spoilered_count:" to "spoilered_count:",
+            "隐藏标签数量：hidden_count:" to "hidden_count:",
+            "我的过滤器：my:filters" to "my:filters",
+            "系统过滤器：system:true" to "system:true",
+            "公共过滤器：public:true" to "public:true",
+            "私人过滤器：public:false" to "public:false",
+            "用户 ID：user_id:" to "user_id:"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("快速填入参数")
+            .setItems(entries.map { it.first }.toTypedArray()) { dialog, which ->
+                val syntax = entries[which].second
+                val cursorOffset = if (syntax == "description:\"\"") syntax.length - 1 else syntax.length
+                insertSearchParameter(syntax, cursorOffset)
                 dialog.dismiss()
-                triggerSearch()
             }
-            valueInput.setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_DONE) {
-                    addStructuredCondition(fields, fieldSpinner, valueInput, conditions, ::refreshPreview)
-                    true
-                } else false
-            }
-        }
-        dialog.show()
+            .setNegativeButton("取消", null)
+            .show()
     }
 
-    private fun addStructuredCondition(
-        fields: List<FilterSearchField>,
-        spinner: Spinner,
-        input: EditText,
-        conditions: MutableList<FilterSearchCondition>,
-        refresh: () -> Unit
-    ) {
-        val value = input.text?.toString()?.trim().orEmpty()
-        if (value.isBlank()) return
-        conditions += FilterSearchCondition(fields[spinner.selectedItemPosition], value)
-        input.text?.clear()
-        refresh()
+    private fun insertSearchParameter(value: String, cursorOffset: Int) {
+        val input = header.filterSearch
+        val insertion = FilterSearchInput.insert(
+            input.text?.toString().orEmpty(), input.selectionStart, input.selectionEnd, value, cursorOffset
+        )
+        input.setText(insertion.text)
+        input.setSelection(insertion.cursor)
+        input.requestFocus()
     }
 
     private fun searchServerPage(page: Int, append: Boolean) {
@@ -399,6 +350,9 @@ class FilterActivity : AppCompatActivity() {
             } catch (failure: FilterSearchClient.RequestFailedException) {
                 adapter.update(emptyList())
                 showEmpty("服务器搜索失败：${failure.diagnostic.kind.name}（诊断编号 ${failure.diagnostic.requestId}）")
+            } catch (_: FilterSearchClient.HtmlPageException) {
+                adapter.update(emptyList())
+                showEmpty("服务器返回了验证页面，暂时无法解析过滤器结果；请稍后重试")
             } catch (_: Throwable) {
                 adapter.update(emptyList())
                 showEmpty("服务器过滤器搜索失败，请重试")
@@ -448,7 +402,8 @@ class FilterActivity : AppCompatActivity() {
 
     private fun openDetails(filter: Filter) {
         startActivity(Intent(this, FilterDetailsActivity::class.java).apply {
-            putExtra(FilterDetailsActivity.EXTRA_FILTER_JSON, FilterJsonCodec.toJson(filter).toString())
+            if (!filter.isLocal && filter.id > 0) putExtra(FilterDetailsActivity.EXTRA_FILTER_ID, filter.id)
+            else putExtra(FilterDetailsActivity.EXTRA_FILTER_JSON, FilterJsonCodec.toJson(filter).toString())
         })
     }
 
@@ -459,8 +414,9 @@ class FilterActivity : AppCompatActivity() {
     }
 
     private fun openWebEdit(filter: Filter) {
-        if (filter.id <= 0) { customize(filter); return }
-        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://${AppSettings.getTargetDomain(this)}/filters/${filter.id}/edit")))
+        val path = filter.remoteEditPath ?: if (filter.id > 0) "/filters/${filter.id}/edit" else null
+        if (path == null) { customize(filter); return }
+        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://${AppSettings.getTargetDomain(this)}$path")))
     }
 
     private fun showSafetyNotice() {
