@@ -99,15 +99,27 @@ object NetworkManager {
                 })
                 .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             if (AppSettings.isIpOptimizationEnabled(context)) {
-                val bestIp = AppSettings.getManualIp(context)
-                    ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = targetDomain) { tested, total ->
-                        onOptimizationProgress?.invoke(targetDomain, tested, total)
-                    }.ip
+                val manualIp = AppSettings.getManualIp(context)
+                val domainsToOptimize = buildList {
+                    if (manualIp == null) add(targetDomain)
+                    if (!AppSettings.isCdnDirect(context) && manualIp == null) add(CDN_DOMAIN)
+                    add(CHALLENGE_DOMAIN)
+                }
+                val sharedResults = IpOptimizer.getBestIpsShared(
+                    context,
+                    domainsToOptimize,
+                    forceRefresh = forceRefresh
+                ) { domain, tested, total ->
+                    onOptimizationProgress?.invoke(domain, tested, total)
+                }
+                // The candidate benchmark is shared once; each hostname is
+                // selected from that ranking after its own short TCPing pass.
+                val bestIp = manualIp ?: sharedResults[targetDomain]?.ip
+                    ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = targetDomain).ip
                 val routes = mutableMapOf(targetDomain to bestIp)
                 if (!AppSettings.isCdnDirect(context)) {
-                    val cdnIp = AppSettings.getManualIp(context) ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = CDN_DOMAIN) { tested, total ->
-                        onOptimizationProgress?.invoke(CDN_DOMAIN, tested, total)
-                    }.ip
+                    val cdnIp = manualIp ?: sharedResults[CDN_DOMAIN]?.ip
+                        ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = CDN_DOMAIN).ip
                     routes[CDN_DOMAIN] = cdnIp
                 } else {
                     Log.d(TAG, "derpicdn.net 使用直连，不设置 CDN 优选 IP")
@@ -116,13 +128,8 @@ object NetworkManager {
                 // different Cloudflare hostname. Keep its route independent
                 // from the site's and CDN's preferred IPs: the proxy still
                 // tunnels TLS with the original hostname/SNI.
-                val challengeIp = IpOptimizer.getBestIpSmart(
-                    context,
-                    forceRefresh = forceRefresh,
-                    domainKey = CHALLENGE_DOMAIN
-                ) { tested, total ->
-                    onOptimizationProgress?.invoke(CHALLENGE_DOMAIN, tested, total)
-                }.ip
+                val challengeIp = sharedResults[CHALLENGE_DOMAIN]?.ip
+                    ?: IpOptimizer.getBestIpSmart(context, forceRefresh = forceRefresh, domainKey = CHALLENGE_DOMAIN).ip
                 routes[CHALLENGE_DOMAIN] = challengeIp
                 pendingRoutes = routes
                 Log.d(TAG, "使用优选 IP 路由: $routes")

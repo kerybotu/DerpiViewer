@@ -257,8 +257,49 @@ object IpOptimizer {
     private const val CONNECT_TIMEOUT_MS = 1200
     private const val OVERALL_TIMEOUT_MS = 8000L // 候选池扩大，总超时适当放宽
     private const val MAX_CONCURRENT_TESTS = 20 // 并发测速上限，避免资源耗尽
+    private const val DOMAIN_TCP_CANDIDATES = 8
 
     data class OptimizeResult(val ip: String, val didOptimize: Boolean)
+
+    /**
+     * Runs the expensive candidate speed ranking once and reuses it for all
+     * Cloudflare-backed hostnames. Each hostname still performs its own small
+     * TCPing pass over the ranked candidates before a route is selected.
+     */
+    suspend fun getBestIpsShared(
+        context: Context,
+        domainKeys: List<String>,
+        forceRefresh: Boolean = false,
+        onProgress: ((domain: String, tested: Int, total: Int) -> Unit)? = null
+    ): Map<String, OptimizeResult> {
+        val domains = domainKeys.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
+        if (domains.isEmpty()) return emptyMap()
+        val results = LinkedHashMap<String, OptimizeResult>()
+        val missing = domains.filter { domain ->
+            val cached = if (forceRefresh) null else readCachedResult(context, domain)
+            if (cached != null) {
+                results[domain] = cached
+                false
+            } else true
+        }
+        if (missing.isEmpty()) return results
+
+        val candidates = buildCandidatePool(context, forceRefresh)
+        val ranked = speedTestRanked(candidates, 443) { tested, total ->
+            // The shared speed stage is deliberately reported once. Callers
+            // can show this as a single global progress bar.
+            onProgress?.invoke("shared", tested, total)
+        }
+        val usable = ranked.ifEmpty { candidates }
+        missing.forEach { domain ->
+            val domainRanked = tcpRankForDomain(domain, usable.take(DOMAIN_TCP_CANDIDATES), onProgress)
+            val best = domainRanked.firstOrNull() ?: usable.firstOrNull() ?: FALLBACK_IP_LIST.first()
+            val result = OptimizeResult(best, didOptimize = true)
+            persistResult(context, domain, best)
+            results[domain] = result
+        }
+        return results
+    }
 
     suspend fun getBestIpSmart(
         context: Context,
@@ -291,6 +332,24 @@ object IpOptimizer {
             .apply()
 
         return OptimizeResult(best, didOptimize = true)
+    }
+
+    private fun readCachedResult(context: Context, domainKey: String): OptimizeResult? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val suffix = domainKey.lowercase().replace(Regex("[^a-z0-9]"), "_")
+        val ip = prefs.getString("${KEY_LAST_BEST_IP}_$suffix", null)
+        val time = prefs.getLong("${KEY_LAST_BEST_TIME}_$suffix", 0L)
+        return if (!ip.isNullOrBlank() && System.currentTimeMillis() - time < SHORT_CACHE_TTL_MS) {
+            OptimizeResult(ip, didOptimize = false)
+        } else null
+    }
+
+    private fun persistResult(context: Context, domainKey: String, ip: String) {
+        val suffix = domainKey.lowercase().replace(Regex("[^a-z0-9]"), "_")
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("${KEY_LAST_BEST_IP}_$suffix", ip)
+            .putLong("${KEY_LAST_BEST_TIME}_$suffix", System.currentTimeMillis())
+            .apply()
     }
 
     /**
@@ -539,26 +598,55 @@ object IpOptimizer {
         ipList: List<String>,
         port: Int,
         onProgress: ((tested: Int, total: Int) -> Unit)? = null
-    ): String? =
-        withContext(Dispatchers.IO) {
-            withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
-                val semaphore = Semaphore(MAX_CONCURRENT_TESTS)
-                val completed = java.util.concurrent.atomic.AtomicInteger(0)
-                val deferredResults = ipList.map { ip ->
-                    async {
-                        semaphore.withPermit {
-                            val latency = measureTcpConnectLatency(ip, port)
-                            onProgress?.invoke(completed.incrementAndGet(), ipList.size)
-                            ip to latency
-                        }
+    ): String? = speedTestRanked(ipList, port, onProgress).firstOrNull()
+
+    /** One shared raw TCP speed pass, sorted for reuse by all hostnames. */
+    private suspend fun speedTestRanked(
+        ipList: List<String>,
+        port: Int,
+        onProgress: ((tested: Int, total: Int) -> Unit)? = null
+    ): List<String> = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
+            val semaphore = Semaphore(MAX_CONCURRENT_TESTS)
+            val completed = java.util.concurrent.atomic.AtomicInteger(0)
+            val deferredResults = ipList.map { ip ->
+                async {
+                    semaphore.withPermit {
+                        val latency = measureTcpConnectLatency(ip, port)
+                        onProgress?.invoke(completed.incrementAndGet(), ipList.size)
+                        ip to latency
                     }
                 }
-                deferredResults.awaitAll()
-                    .filter { it.second >= 0 }
-                    .minByOrNull { it.second }
-                    ?.first
             }
-        }
+            deferredResults.awaitAll()
+                .filter { it.second >= 0 }
+                .sortedBy { it.second }
+                .map { it.first }
+        } ?: emptyList()
+    }
+
+    /**
+     * A short per-host TCPing pass. It intentionally runs only on the best
+     * shared-speed candidates, so host-specific routing remains independent
+     * without repeating the full candidate benchmark three times.
+     */
+    private suspend fun tcpRankForDomain(
+        domain: String,
+        candidates: List<String>,
+        onProgress: ((domain: String, tested: Int, total: Int) -> Unit)?
+    ): List<String> = withContext(Dispatchers.IO) {
+        val semaphore = Semaphore(minOf(MAX_CONCURRENT_TESTS, DOMAIN_TCP_CANDIDATES))
+        val completed = java.util.concurrent.atomic.AtomicInteger(0)
+        candidates.map { ip ->
+            async {
+                semaphore.withPermit {
+                    val latency = measureTcpConnectLatency(ip, 443)
+                    onProgress?.invoke(domain, completed.incrementAndGet(), candidates.size)
+                    ip to latency
+                }
+            }
+        }.awaitAll().filter { it.second >= 0 }.sortedBy { it.second }.map { it.first }
+    }
 
     private fun measureTcpConnectLatency(ip: String, port: Int): Long {
         return try {

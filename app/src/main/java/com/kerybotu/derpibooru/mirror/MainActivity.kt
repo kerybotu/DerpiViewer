@@ -252,7 +252,8 @@ class MainActivity : AppCompatActivity() {
                 updateStartup("正在优选网络节点…", "正在连接最快的 Cloudflare 节点")
                 NetworkManager.init(applicationContext) { domain, tested, total ->
                     runOnUiThread {
-                        updateStartup("正在测速 $domain", "已完成 $tested / $total 个节点")
+                        val stage = if (domain == "shared") "正在统一测速" else "正在 TCPing $domain"
+                        updateStartup(stage, "已完成 $tested / $total 个节点")
                     }
                 }
                 activityScope.launch { preloadSystemFilters() }
