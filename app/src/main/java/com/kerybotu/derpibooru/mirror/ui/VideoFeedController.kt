@@ -250,6 +250,7 @@ class VideoFeedController(
             ApiFailureKind.HTTP_4XX -> "服务器拒绝请求（HTTP ${failure.statusCode ?: "4xx"}）"
             ApiFailureKind.HTTP_5XX -> "服务器暂时异常（HTTP ${failure.statusCode ?: "5xx"}）"
             ApiFailureKind.INVALID_JSON, ApiFailureKind.EMPTY_BODY -> "服务器响应格式异常"
+            ApiFailureKind.BUSINESS_ERROR -> "服务器返回了业务错误"
             ApiFailureKind.CONFIGURATION_CHANGED -> "网络配置已变化"
             else -> "视频请求失败"
         }

@@ -31,4 +31,11 @@ class ApiDiagnosticsTest {
         assertFalse(summary.contains("private"))
         assertFalse(summary.contains("https://"))
     }
+
+    @Test
+    fun businessErrorPayloadIsNotTreatedAsTransportFailure() {
+        assertTrue(isBusinessErrorPayload("{\"success\":false,\"error\":\"quota\"}"))
+        assertTrue(isBusinessErrorPayload("{\"errors\":[{\"code\":403}]}"))
+        assertFalse(isBusinessErrorPayload("{\"images\":[]}"))
+    }
 }

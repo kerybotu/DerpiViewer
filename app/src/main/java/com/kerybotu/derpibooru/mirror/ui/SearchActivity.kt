@@ -566,6 +566,7 @@ class SearchActivity : AppCompatActivity() {
             ApiFailureKind.HTTP_5XX -> "服务器暂时出现错误（HTTP ${diagnostic.statusCode ?: 5}xx）"
             ApiFailureKind.TLS -> "安全连接建立失败，请检查当前网络"
             ApiFailureKind.EMPTY_BODY, ApiFailureKind.INVALID_JSON -> "服务器响应格式异常，已记录诊断信息"
+            ApiFailureKind.BUSINESS_ERROR -> "服务器返回了业务错误，请检查请求条件"
             ApiFailureKind.CONFIGURATION_CHANGED -> "网络配置已变化，请重试当前请求"
             ApiFailureKind.CANCELLED -> "请求已取消"
             else -> "请求失败，已记录诊断信息"

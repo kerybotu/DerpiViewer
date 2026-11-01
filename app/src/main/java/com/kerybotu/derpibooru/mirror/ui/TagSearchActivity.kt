@@ -341,6 +341,7 @@ class TagSearchActivity : AppCompatActivity() {
         ApiFailureKind.RATE_LIMITED -> "请求过于频繁，请稍后再试"
         ApiFailureKind.HTTP_4XX -> "服务器拒绝请求（HTTP ${diagnostic.statusCode ?: "4xx"}）"
         ApiFailureKind.HTTP_5XX -> "服务器暂时异常（HTTP ${diagnostic.statusCode ?: "5xx"}）"
+        ApiFailureKind.BUSINESS_ERROR -> "服务器返回了业务错误，请检查搜索条件"
         ApiFailureKind.CONFIGURATION_CHANGED -> "网络配置已变化"
         else -> "标签请求失败"
     }

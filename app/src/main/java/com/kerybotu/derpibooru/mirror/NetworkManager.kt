@@ -228,6 +228,12 @@ object NetworkManager {
                             recordDiagnostic(failure)
                             return ApiRequestResult(null, failure)
                         }
+                        if (isBusinessErrorPayload(body)) {
+                            val failure = diagnostic(url, operation, "body", ApiFailureKind.BUSINESS_ERROR, requestId, elapsed(requestStartedAt), attempt, attempts, false, "business_error_payload")
+                            finalFailure = failure
+                            recordDiagnostic(failure)
+                            return ApiRequestResult(null, failure)
+                        }
                         return ApiRequestResult(body)
                     }
                     val kind = when {

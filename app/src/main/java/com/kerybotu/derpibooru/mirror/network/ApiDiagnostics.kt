@@ -1,5 +1,6 @@
 package com.kerybotu.derpibooru.mirror.network
 
+
 /** Stable, user-independent categories for failures in the shared API client. */
 enum class ApiFailureKind {
     DNS,
@@ -49,3 +50,10 @@ data class ApiRequestDiagnostic(
         .replace(Regex("(?i)(authorization|cookie|token|key|password)=([^&\\s]+)"), "$1=***")
         .replace(Regex("(?i)https?://[^\\s]+"), "<url>")
 }
+
+/** Detects a structured API rejection returned with an otherwise successful HTTP status. */
+internal fun isBusinessErrorPayload(body: String): Boolean = runCatching {
+    val normalized = body.trim()
+    Regex("(?i)\\\"(?:error|errors)\\\"\\s*:").containsMatchIn(normalized) ||
+        Regex("(?i)\\\"success\\\"\\s*:\\s*false\\b").containsMatchIn(normalized)
+}.getOrDefault(false)
