@@ -61,8 +61,9 @@ object TagDictionary {
 
     suspend fun search(context: Context, query: String): List<TagEntry> {
         val q = query.trim()
-        if (q.isBlank()) return emptyList()
         val all = all(context)
+        if (q.isBlank()) return emptyList()
+        if (q == "*") return all.asSequence().sortedWith(tagComparator()).take(20).toList()
         val chinese = q.any { it in '\u4e00'..'\u9fff' }
         val normalized = q.lowercase().replace(' ', '_')
         return all.asSequence().filter { entry ->
