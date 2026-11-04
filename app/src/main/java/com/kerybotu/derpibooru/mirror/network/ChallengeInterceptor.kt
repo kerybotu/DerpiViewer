@@ -14,7 +14,7 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         runBlocking { ChallengeBackoff.awaitReady() }
         val request = chain.request()
-        val filterSearch = request.url.encodedPath == "/filters" && request.url.queryParameter("fq") != null
+        val source = "${request.url.host}${request.url.encodedPath}"
         val requestVersion = ChallengeCoordinator.requestVersion(request.url)
         val response = chain.proceed(request)
         if (response.code == 501) {
@@ -25,9 +25,17 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
             // Do not let any queued image/API request reset the remote 15-minute ban timer.
             ChallengeBackoff.blockFor(15 * 60 * 1_000L)
         }
-        val challengeType = detectChallengeType(response)
+        val assessment = assessResponse(response)
+        if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
+            Log.d("AnubisCoordinator", "response_inspected source=$source status=${response.code} final=${response.request.url.host}${response.request.url.encodedPath} contentType=${response.header("Content-Type").orEmpty()} category=${assessment.category} challenge=${assessment.challengeType ?: "none"} title=${assessment.title}")
+        }
+        val challengeType = assessment.challengeType
         if (challengeType != null) {
-            if (filterSearch) Log.w("FilterSearch", "challenge_detected type=$challengeType status=${response.code} contentType=${response.header("Content-Type").orEmpty()} cookieNames=${SharedCookieJar.cookieNames(request.url.toString()).joinToString(",").ifBlank { "none" }}")
+            if (request.method != "GET" && request.method != "HEAD") {
+                Log.w("AnubisCoordinator", "challenge_not_replayed source=$source method=${request.method} type=$challengeType reason=non_idempotent")
+                return response
+            }
+            Log.i("AnubisCoordinator", "challenge_detected source=$source type=$challengeType status=${response.code} category=${assessment.category} cookieNames=${SharedCookieJar.cookieNames(request.url.toString()).joinToString(",").ifBlank { "none" }}")
             response.close()
             val challengeUrl = request.url.newBuilder()
                 .removeAllQueryParameters("key")
@@ -36,33 +44,41 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
             val resolved = runBlocking {
                 ChallengeCoordinator.awaitResolved(appContext, challengeUrl, challengeType, requestVersion)
             }
-            if (filterSearch) Log.i("FilterSearch", "challenge_resolved type=$challengeType success=$resolved cookieNames=${SharedCookieJar.cookieNames(request.url.toString()).joinToString(",").ifBlank { "none" }}")
+            Log.i("AnubisCoordinator", "challenge_resolved source=$source type=$challengeType success=$resolved cookieNames=${SharedCookieJar.cookieNames(request.url.toString()).joinToString(",").ifBlank { "none" }}")
             if (!resolved) throw ChallengeCancelledException()
             var retriedResponse = chain.proceed(request)
             // CookieManager.flush() is asynchronous on some WebView providers.
             // Give the clearance cookie a few bounded propagation chances, without
             // opening another Activity or turning a transient race into a loop.
             var propagationAttempt = 0
-            while (propagationAttempt < 3 && detectChallengeType(retriedResponse) != null) {
-                if (filterSearch) Log.w("FilterSearch", "challenge_retry_still_blocked propagationAttempt=${propagationAttempt + 1} status=${retriedResponse.code}")
+            while (propagationAttempt < 3 && assessResponse(retriedResponse).challengeType != null) {
+                Log.w("AnubisCoordinator", "challenge_retry_still_blocked source=$source attempt=${propagationAttempt + 1} status=${retriedResponse.code}")
                 retriedResponse.close()
                 Thread.sleep(250L)
                 retriedResponse = chain.proceed(request)
                 propagationAttempt++
             }
-            if (filterSearch) Log.i("FilterSearch", "challenge_retry_complete status=${retriedResponse.code} finalUrl=${retriedResponse.request.url.newBuilder().removeAllQueryParameters("key").build()} contentType=${retriedResponse.header("Content-Type").orEmpty()} cookieNames=${SharedCookieJar.cookieNames(retriedResponse.request.url.toString()).joinToString(",").ifBlank { "none" }}")
+            val retryAssessment = assessResponse(retriedResponse)
+            Log.i("AnubisCoordinator", "request_replayed source=$source status=${retriedResponse.code} final=${retriedResponse.request.url.host}${retriedResponse.request.url.encodedPath} category=${retryAssessment.category} challenge=${retryAssessment.challengeType ?: "none"} cookieNames=${SharedCookieJar.cookieNames(retriedResponse.request.url.toString()).joinToString(",").ifBlank { "none" }}")
             // BridgeInterceptor reads the shared cookie store again for this retry.
             return retriedResponse
         }
         return response
     }
 
-    private fun detectChallengeType(response: Response): ChallengePageType? {
+    private fun assessResponse(response: Response): ChallengeResponseAssessment {
         val contentType = response.header("Content-Type").orEmpty()
-        if (!contentType.contains("text/html", ignoreCase = true)) return null
+        if (!contentType.contains("text/html", ignoreCase = true)) {
+            return ChallengeResponseAssessment(ChallengeResponseCategory.NON_HTML)
+        }
         // Keep the body bounded: challenge markers are emitted in the document head and
         // there is no reason to retain a complete error page in memory.
         val snippet = runCatching { response.peekBody(64L * 1024L).string() }.getOrDefault("")
-        return ChallengePageDetector.detect(contentType, snippet)
+        return ChallengePageDetector.assess(
+            statusCode = response.code,
+            finalUrl = response.request.url.toString(),
+            contentType = contentType,
+            html = snippet
+        )
     }
 }

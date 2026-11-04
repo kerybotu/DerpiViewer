@@ -18,7 +18,22 @@ internal class ChallengeSessionGate {
 
     fun version(scope: String): Long = synchronized(lock) { outcomes[scope]?.version ?: 0L }
 
-    suspend fun awaitResolved(scope: String, requestVersion: Long, launch: (Long) -> Unit): Boolean {
+    suspend fun awaitResolved(scope: String, requestVersion: Long, launch: (Long) -> Unit): Boolean =
+        awaitResolvedInternal(scope, requestVersion, { _, _ -> }, launch)
+
+    suspend fun awaitResolvedWithObserver(
+        scope: String,
+        requestVersion: Long,
+        onSession: (sessionId: Long, owner: Boolean) -> Unit = { _, _ -> },
+        launch: suspend (Long) -> Unit
+    ): Boolean = awaitResolvedInternal(scope, requestVersion, onSession, launch)
+
+    private suspend fun awaitResolvedInternal(
+        scope: String,
+        requestVersion: Long,
+        onSession: (sessionId: Long, owner: Boolean) -> Unit,
+        launch: suspend (Long) -> Unit
+    ): Boolean {
         while (true) {
             val (session, owner) = synchronized(lock) {
                 val outcome = outcomes[scope]
@@ -32,6 +47,7 @@ internal class ChallengeSessionGate {
                     created to true
                 }
             }
+            onSession(session.id, owner)
             if (owner) {
                 try {
                     launch(session.id)

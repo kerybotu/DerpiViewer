@@ -113,7 +113,13 @@ abstract class ChallengeWebViewActivity : AppCompatActivity() {
         // can race CookieManager's asynchronous persistence and immediately
         // receive the same challenge again.
         CookieManager.getInstance().flush()
-        ChallengeCoordinator.notifyResolved(intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L), success)
+        val sessionId = intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L)
+        val url = intent.getStringExtra(ChallengeActivity.EXTRA_URL).orEmpty()
+        Log.i(
+            "AnubisCoordinator",
+            "webview_finished session=$sessionId success=$success cookieNames=${SharedCookieJar.cookieNames(url).joinToString(",").ifBlank { "none" }} anubisCookie=${SharedCookieJar.hasAnubisCookie(url)} clearanceCookie=${SharedCookieJar.hasClearanceCookie(url)}"
+        )
+        ChallengeCoordinator.notifyResolved(sessionId, success)
         finish()
     }
 

@@ -128,7 +128,10 @@ class ChallengeActivity : AppCompatActivity() {
         if (resolved) return
         resolved = true
         if (success) CookieManager.getInstance().flush()
-        ChallengeCoordinator.notifyResolved(intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L), success)
+        val sessionId = intent.getLongExtra(ChallengeCoordinator.EXTRA_SESSION_ID, -1L)
+        val url = intent.getStringExtra(EXTRA_URL).orEmpty()
+        Log.i(TAG, "验证完成 success=$success session=$sessionId cookieNames=${SharedCookieJar.cookieNames(url).joinToString(",").ifBlank { "none" }}")
+        ChallengeCoordinator.notifyResolved(sessionId, success)
         finish()
     }
 

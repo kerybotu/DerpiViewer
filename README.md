@@ -36,6 +36,7 @@ DerpiViewer 使用原生 Android UI 和官方 JSON API 构建，不是网页套�
 - 过滤器页支持通过过滤器 ID 调用 `GET /api/v1/json/filters/:filter_id` 查询，并显示过滤器 ID。
 - 过滤器页现在区分系统、我的过滤器和本地自定义三类。服务器过滤器搜索直接请求站点 `/filters?fq=...` HTML 页面，输入框接受 `creator`、`name`、`description`、`created_at`、`id`、`spoilered_count`、`hidden_count`、`my`、`system`、`public`、`user_id` 等原生语法；“参数”按钮只负责将常用前缀插入输入框，不会自动执行搜索。
 - 搜索结果使用 Jsoup 解析 `.filter` 卡片，兼容翻译服务产生的多层 `font` 包装；站点验证页、登录失效、访问拒绝或 HTML 结构异常会显示可重试的错误，不会误报为零结果。过滤器详情和导入仍使用文档化 JSON 详情接口。
+- 统一 OkHttp 拦截器检查 HTML 响应中的 Derpibooru、Anubis 与 Cloudflare 验证结构；识别到验证时复用单个 WebView 验证会话、共享 WebView Cookie，并仅自动重放 GET/HEAD 请求。普通访问拒绝页会独立分类，不会伪装成验证流程。
 - 本地自定义过滤器可编辑名称、描述、包含/排除标签并生成去重后的作品搜索表达式；启用本地过滤器不会覆盖服务器过滤器 ID，搜索请求会合并两者。服务器详情可导入为本地副本，保留完整的剧透/隐藏标签 ID 与复杂规则，并支持从 ID 或同站点详情/编辑 URL 导入。
 - 过滤器详情中的“使用”会调用现有 API 过滤器 ID 机制；“网页编辑”仅打开站点真实编辑页面，写操作仍由站点会话、权限和动态 CSRF 令牌处理。当前客户端不会伪造未验证的创建/编辑 POST。
 - 视频流支持随机/多维度排序、筛选、收藏、评论、复制视频链接和跳转图片详情页。
