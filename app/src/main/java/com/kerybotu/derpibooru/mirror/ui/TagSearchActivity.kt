@@ -8,6 +8,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.util.Log
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -39,6 +40,7 @@ import java.text.NumberFormat
 import java.util.Locale
 
 class TagSearchActivity : AppCompatActivity() {
+    private companion object { const val FILTER_LOG_TAG = "FilterSearch" }
     private data class Tag(val name: String, val images: Long, val description: String)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     /* Legacy non-glass tag search implementation retained in the checkpoint.
@@ -372,6 +374,7 @@ class TagSearchActivity : AppCompatActivity() {
                         tagAdapter.notifyDataSetChanged()
                     }
                     TagSearchRouting.Handler.FILTER_HTML -> {
+                        Log.d(FILTER_LOG_TAG, "dispatch mode=REMOTE_FILTER generation=$generation query=${requestedQuery.replace(Regex("[\\r\\n]"), " ").take(160)} page=$requestedPage")
                         val result = withContext(Dispatchers.IO) { FilterSearchClient.search(this@TagSearchActivity, requestedQuery, requestedPage) }
                         if (generation != requestGeneration || requestedMode != mode) return@launch
                         if (reset) filters.clear()
@@ -380,6 +383,7 @@ class TagSearchActivity : AppCompatActivity() {
                         if (reset) tagAdapter.notifyDataSetChanged()
                         else if (result.filters.isNotEmpty()) tagAdapter.notifyItemRangeInserted(start, result.filters.size)
                         summaryText = "云端过滤器 · ${numberFormat.format(filters.size)} 个结果"
+                        Log.d(FILTER_LOG_TAG, "ui_results generation=$generation count=${filters.size} hasMore=${result.hasMore}")
                         tagAdapter.notifyItemChanged(0)
                         hasMore = result.hasMore
                         if (hasMore) page = result.page + 1
@@ -424,12 +428,13 @@ class TagSearchActivity : AppCompatActivity() {
                 statusPanel.supportingText = "my:filters 需要有效登录状态，点击重试"
                 statusPanel.setOnClickListener { load(reset = true) }
                 statusPanel.visibility = View.VISIBLE
-            } catch (_: FilterSearchClient.HtmlPageException) {
+            } catch (failure: FilterSearchClient.HtmlPageException) {
                 failed = true
-                summaryText = "云端过滤器页面暂不可解析"
+                val accessDenied = failure.message == "access_denied"
+                summaryText = if (accessDenied) "云端过滤器服务器拒绝访问" else "云端过滤器页面暂不可解析"
                 tagAdapter.notifyItemChanged(0)
-                statusPanel.headline = "服务器返回了验证页面"
-                statusPanel.supportingText = "请稍后重试"
+                statusPanel.headline = if (accessDenied) "服务器暂时拒绝访问" else "服务器返回了验证页面"
+                statusPanel.supportingText = if (accessDenied) "这不是无匹配结果；请稍后重试。" else "请完成验证后重试"
                 statusPanel.setOnClickListener { load(reset = true) }
                 statusPanel.visibility = View.VISIBLE
             } catch (failure: Exception) {

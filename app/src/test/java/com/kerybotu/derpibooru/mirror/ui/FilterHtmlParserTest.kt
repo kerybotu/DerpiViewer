@@ -97,4 +97,14 @@ class FilterHtmlParserTest {
         assertEquals("system:true creator:foo", atMiddle.text)
         assertEquals(11, atMiddle.cursor)
     }
+
+    @Test
+    fun classifiesAccessDeniedPageInsteadOfReturningNoResults() {
+        val result = FilterHtmlParser.parse(
+            "<html><head><title>Derpibooru - Oh noes!</title></head><body><h1>Oh noes!</h1><p>You have been blocked from accessing this site.</p></body></html>",
+            "derpibooru.org"
+        )
+        assertTrue(result.accessDenied)
+        assertTrue(result.filters.isEmpty())
+    }
 }

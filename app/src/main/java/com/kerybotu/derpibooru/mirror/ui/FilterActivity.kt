@@ -350,9 +350,13 @@ class FilterActivity : AppCompatActivity() {
             } catch (failure: FilterSearchClient.RequestFailedException) {
                 adapter.update(emptyList())
                 showEmpty("服务器搜索失败：${failure.diagnostic.kind.name}（诊断编号 ${failure.diagnostic.requestId}）")
-            } catch (_: FilterSearchClient.HtmlPageException) {
+            } catch (failure: FilterSearchClient.HtmlPageException) {
                 adapter.update(emptyList())
-                showEmpty("服务器返回了验证页面，暂时无法解析过滤器结果；请稍后重试")
+                if (failure.message == "access_denied") {
+                    showEmpty("服务器暂时拒绝访问过滤器搜索；这不是无匹配结果，请稍后重试")
+                } else {
+                    showEmpty("服务器返回了验证页面，暂时无法解析过滤器结果；请完成验证后重试")
+                }
             } catch (_: Throwable) {
                 adapter.update(emptyList())
                 showEmpty("服务器过滤器搜索失败，请重试")

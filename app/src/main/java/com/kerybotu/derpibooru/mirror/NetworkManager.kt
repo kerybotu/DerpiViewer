@@ -217,7 +217,7 @@ object NetworkManager {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", activeUserAgent)
-                .header("Accept", "application/json")
+                .header("Accept", if (operation == "site:filters") "text/html,application/xhtml+xml" else "application/json")
                 .build()
             val requestStartedAt = System.nanoTime() / 1_000_000L
             try {
@@ -234,6 +234,9 @@ object NetworkManager {
                         return ApiRequestResult(null, failure)
                     }
                     val code = it.code
+                    if (operation == "site:filters") {
+                        Log.d(TAG, "FilterSearch response requestId=$requestId attempt=$attempt status=$code finalUrl=${safeDiagnosticUrl(it.request.url.toString())} contentType=${it.header("Content-Type").orEmpty()} cookies=${SharedCookieJar.cookieNames(it.request.url.toString()).joinToString(",").ifBlank { "none" }}")
+                    }
                     if (it.isSuccessful) {
                         val body = it.body?.string()
                         if (revision.value != startedConfig) {
@@ -349,6 +352,14 @@ object NetworkManager {
         }
         Log.w(TAG, "api_failure ${value.summary()}")
     }
+
+    private fun safeDiagnosticUrl(url: String): String = runCatching {
+        val parsed = Uri.parse(url)
+        parsed.buildUpon().clearQuery().apply {
+            parsed.getQueryParameter("fq")?.let { appendQueryParameter("fq", it.take(160)) }
+            parsed.getQueryParameter("page")?.let { appendQueryParameter("page", it) }
+        }.build().toString()
+    }.getOrDefault("https://derpibooru.org/filters")
 
     private fun classify(error: Throwable): ApiFailureKind = when {
         error is UnknownHostException -> ApiFailureKind.DNS

@@ -7,12 +7,41 @@ import java.net.URI
 
 /** Parses the server's filters page without exposing its HTML to the UI. */
 object FilterHtmlParser {
+    data class PageSummary(val type: String, val filterCount: Int, val challenge: Boolean, val login: Boolean, val title: String, val bodyCategory: String, val markers: String)
     data class Result(
         val filters: List<Filter>,
         val nextPage: Int? = null,
         val loginRequired: Boolean = false,
-        val challengePage: Boolean = false
+        val challengePage: Boolean = false,
+        val accessDenied: Boolean = false
     )
+
+    fun pageSummary(html: String): PageSummary {
+        val document = Jsoup.parse(html)
+        val normalized = document.body()?.text().orEmpty().lowercase()
+        val challenge = document.select("form[action*=/anubis], #anubis_challenge, script[src*=anubis]").isNotEmpty() || normalized.contains("anubis challenge")
+        val login = document.select("form[action*=/login], input[name=password]").isNotEmpty() || (normalized.contains("log in") && normalized.contains("password"))
+        val accessDenied = isAccessDenied(document.title(), normalized)
+        val count = document.select(".filter").size
+        val title = clean(document.title()).take(120)
+        val bodyCategory = when {
+            normalized.contains("access denied") || normalized.contains("you have been blocked") -> "access_denied"
+            normalized.contains("too many requests") || normalized.contains("rate limit") -> "rate_limited"
+            normalized.contains("internal server error") || normalized.contains("something went wrong") -> "server_error"
+            normalized.contains("no filters found") || normalized.contains("no results") -> "no_results"
+            normalized.contains("verify you are human") || normalized.contains("checking your browser") -> "verification_page"
+            else -> "unclassified_html"
+        }
+        val markers = listOf("filters", "filter", "anubis", "error", "blocked", "captcha", "login", "html").filter { normalized.contains(it) }.joinToString(",")
+        val type = when {
+            challenge -> "anubis_or_challenge"
+            login -> "login"
+            accessDenied -> "access_denied"
+            count > 0 -> "filters_html"
+            else -> "html_without_filter_cards"
+        }
+        return PageSummary(type, count, challenge, login, title, bodyCategory, markers)
+    }
 
     fun parse(html: String, allowedDomain: String, currentPage: Int = 1): Result {
         val document = Jsoup.parse(html)
@@ -22,7 +51,10 @@ object FilterHtmlParser {
             normalized.contains("anubis challenge")
         val login = document.select("form[action*=/login], input[name=password]").isNotEmpty() ||
             normalized.contains("log in") && normalized.contains("password")
-        if (challenge || login) return Result(emptyList(), loginRequired = login, challengePage = challenge)
+        val accessDenied = isAccessDenied(document.title(), normalized)
+        if (challenge || login || accessDenied) {
+            return Result(emptyList(), loginRequired = login, challengePage = challenge, accessDenied = accessDenied)
+        }
 
         val filters = document.select(".filter").mapNotNull { parseCard(it, allowedDomain) }
         val next = document.select("a[rel=next], .pagination a, a[href]")
@@ -73,6 +105,13 @@ object FilterHtmlParser {
     }
 
     private fun clean(value: String?): String = value.orEmpty().replace(WHITESPACE, " ").trim()
+
+    private fun isAccessDenied(title: String, normalizedBody: String): Boolean {
+        val normalizedTitle = title.lowercase()
+        return normalizedBody.contains("access denied") ||
+            normalizedBody.contains("you have been blocked") ||
+            (normalizedTitle.contains("oh noes") && (normalizedBody.contains("blocked") || normalizedBody.contains("denied")))
+    }
 
     private fun findCount(text: String, patterns: List<Regex>): Int? = patterns.firstNotNullOfOrNull { pattern ->
         pattern.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
