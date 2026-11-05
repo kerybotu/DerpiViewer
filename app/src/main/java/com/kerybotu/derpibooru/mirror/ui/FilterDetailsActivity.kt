@@ -14,6 +14,7 @@ import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.model.Filter
 import com.kerybotu.derpibooru.mirror.model.FilterJsonCodec
+import com.kerybotu.derpibooru.mirror.model.FilterTagLabels
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +26,8 @@ import kotlinx.coroutines.withContext
 class FilterDetailsActivity : AppCompatActivity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var content: LinearLayout
+    private lateinit var spoilerTagsText: TextView
+    private lateinit var hiddenTagsText: TextView
     private var filter: Filter? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,16 +82,42 @@ class FilterDetailsActivity : AppCompatActivity() {
             content.addView(TextView(this).apply { text = "维护者：$creator"; setTextColor(colors.muted) })
         }
         content.addView(section("描述", value.description.ifBlank { "（无描述）" }, colors))
-        content.addView(section("剧透标签 ID", value.spoileredTagIds.joinToString(", ").ifBlank { "（无）" }, colors))
-        content.addView(section("隐藏标签 ID", value.hiddenTagIds.joinToString(", ").ifBlank { "（无）" }, colors))
+        spoilerTagsText = TextView(this).apply { setTextColor(colors.onSurface); textSize = 15f }
+        hiddenTagsText = TextView(this).apply { setTextColor(colors.onSurface); textSize = 15f }
+        spoilerTagsText.text = FilterTagLabels.display(value.spoileredTagIds, emptyMap()).ifEmpty { listOf("（无）") }.joinToString("\n")
+        hiddenTagsText.text = FilterTagLabels.display(value.hiddenTagIds, emptyMap()).ifEmpty { listOf("（无）") }.joinToString("\n")
+        content.addView(section("剧透标签", spoilerTagsText, colors))
+        content.addView(section("隐藏标签", hiddenTagsText, colors))
+        resolveTagNames(value)
         value.spoileredComplex?.takeIf { it.isNotBlank() }?.let { content.addView(section("复杂剧透规则", it, colors)) }
         value.hiddenComplex?.takeIf { it.isNotBlank() }?.let { content.addView(section("复杂隐藏规则", it, colors)) }
 
         val actions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(16), 0, 0) }
-        actions.addView(action("导入为本地过滤器") { importLocally(value) })
-        actions.addView(action("使用此服务器过滤器") { use(value) })
-        actions.addView(action("在网页中编辑") { openWeb("filters/${value.id}/edit") })
+        if (value.isLocal) {
+            actions.addView(action("编辑本地过滤器") { editLocally(value) })
+        } else {
+            actions.addView(action("导入为本地过滤器") { importLocally(value) })
+        }
+        actions.addView(action(if (value.isLocal) "使用此过滤器" else "使用此服务器过滤器") { use(value) })
+        if (!value.isLocal) actions.addView(action("在网页中编辑") { openWeb("filters/${value.id}/edit") })
         content.addView(actions)
+    }
+
+    private fun resolveTagNames(value: Filter) {
+        val ids = (value.spoileredTagIds + value.hiddenTagIds).distinct()
+        if (ids.isEmpty()) return
+        scope.launch {
+            val names = withContext(Dispatchers.IO) { FilterTagRepository.resolve(this@FilterDetailsActivity, ids) }
+            spoilerTagsText.text = FilterTagLabels.display(value.spoileredTagIds, names).ifEmpty { listOf("（无）") }.joinToString("\n")
+            hiddenTagsText.text = FilterTagLabels.display(value.hiddenTagIds, names).ifEmpty { listOf("（无）") }.joinToString("\n")
+        }
+    }
+
+    private fun editLocally(value: Filter) {
+        startActivity(Intent(this, FilterEditorActivity::class.java).putExtra(
+            FilterEditorActivity.EXTRA_FILTER_JSON,
+            FilterJsonCodec.toJson(value).toString()
+        ))
     }
 
     private fun section(title: String, value: String, colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme): View =
@@ -97,6 +126,16 @@ class FilterDetailsActivity : AppCompatActivity() {
             setPadding(dp(14), dp(12), dp(14), dp(12))
             addView(TextView(this@FilterDetailsActivity).apply { text = title; textSize = 13f; setTextColor(colors.muted) })
             addView(TextView(this@FilterDetailsActivity).apply { text = value; textSize = 15f; setTextColor(colors.onSurface); setPadding(0, dp(5), 0, 0) })
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
+            Ui2DesignSystem.styleIsland(this, colors, 18f)
+        }
+
+    private fun section(title: String, value: TextView, colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            addView(TextView(this@FilterDetailsActivity).apply { text = title; textSize = 13f; setTextColor(colors.muted) })
+            addView(value, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
             Ui2DesignSystem.styleIsland(this, colors, 18f)
         }
