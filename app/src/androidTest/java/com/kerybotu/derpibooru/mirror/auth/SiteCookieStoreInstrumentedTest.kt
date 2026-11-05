@@ -29,7 +29,7 @@ class SiteCookieStoreInstrumentedTest {
         val result = SiteCookieStore.applyConsentEvent(
             context,
             CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
-            OfficialSiteCookieSnapshot(cookieHeader)
+            snapshot(cookieHeader)
         )
 
         assertEquals(SiteCookieStore.Result.SAVED, result)
@@ -49,7 +49,7 @@ class SiteCookieStoreInstrumentedTest {
         assertEquals(SiteCookieStore.Result.NOT_AUTHORIZED, result)
         assertEquals(
             SiteCookieStore.Result.NOT_AUTHORIZED,
-            SiteCookieStore.applyConsentEvent(context, null, OfficialSiteCookieSnapshot("session=fake-value"))
+            SiteCookieStore.applyConsentEvent(context, null, snapshot("session=fake-value"))
         )
         assertFalse(SiteCookieStore.hasConsent(context))
         assertFalse(SiteCookieStore.hasStoredCookie(context))
@@ -62,12 +62,12 @@ class SiteCookieStoreInstrumentedTest {
         SiteCookieStore.applyConsentEvent(
             context,
             CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
-            OfficialSiteCookieSnapshot("session=old-synthetic-value; old_flag=1")
+            snapshot("session=old-synthetic-value; old_flag=1")
         )
 
         val result = SiteCookieStore.syncSnapshot(
             context,
-            OfficialSiteCookieSnapshot("session=new-synthetic-value; new_flag=2")
+            snapshot("session=new-synthetic-value; new_flag=2")
         )
 
         assertEquals(SiteCookieStore.Result.SAVED, result)
@@ -80,7 +80,7 @@ class SiteCookieStoreInstrumentedTest {
         SiteCookieStore.applyConsentEvent(
             context,
             CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
-            OfficialSiteCookieSnapshot("session=fake-session-value")
+            snapshot("session=fake-session-value")
         )
 
         assertEquals(
@@ -98,7 +98,7 @@ class SiteCookieStoreInstrumentedTest {
         SiteCookieStore.applyConsentEvent(
             context,
             CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
-            OfficialSiteCookieSnapshot("session=another-fake-value")
+            snapshot("session=another-fake-value")
         )
         SiteCookieStore.clear(context)
         assertFalse(SiteCookieStore.hasConsent(context))
@@ -110,7 +110,7 @@ class SiteCookieStoreInstrumentedTest {
         SiteCookieStore.applyConsentEvent(
             context,
             CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
-            OfficialSiteCookieSnapshot("session=fake-session-value")
+            snapshot("session=fake-session-value")
         )
         preferences().edit().putString(SiteCookieStore.KEY_CIPHERTEXT, "tampered-ciphertext").commit()
 
@@ -120,10 +120,42 @@ class SiteCookieStoreInstrumentedTest {
     }
 
     @Test
-    fun unsupportedOriginIsRejectedBeforeCookieManagerRead() {
-        assertNull(OfficialSiteCookieSnapshot.capture(CookieManager.getInstance(), "https://derpibooru.org.example/"))
-        assertNull(OfficialSiteCookieSnapshot.capture(CookieManager.getInstance(), "http://derpibooru.org/"))
+    fun malformedCookieSnapshotIsRejectedWithoutRetainingOldCookie() {
+        SiteCookieStore.applyConsentEvent(
+            context,
+            CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
+            snapshot("session=old-synthetic-value")
+        )
+
+        val result = SiteCookieStore.syncSnapshot(
+            context,
+            snapshot("not-a-cookie")
+        )
+
+        assertEquals(SiteCookieStore.Result.INVALID_SNAPSHOT, result)
+        assertFalse(SiteCookieStore.hasConsent(context))
+        assertNull(SiteCookieStore.read(context))
+    }
+
+    @Test
+    fun unsupportedOriginSnapshotIsRejectedAndCleared() {
+        SiteCookieStore.applyConsentEvent(
+            context,
+            CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
+            snapshot("session=synthetic-value")
+        )
+
+        val result = SiteCookieStore.syncSnapshot(
+            context,
+            OfficialSiteCookieSnapshot("session=other-value", "https://derpibooru.org.example/")
+        )
+
+        assertEquals(SiteCookieStore.Result.INVALID_SNAPSHOT, result)
+        assertFalse(SiteCookieStore.hasConsent(context))
+        assertNull(SiteCookieStore.read(context))
     }
 
     private fun preferences() = context.getSharedPreferences(SiteCookieStore.PREFERENCES_NAME, 0)
+
+    private fun snapshot(header: String) = OfficialSiteCookieSnapshot(header, "https://derpibooru.org/")
 }

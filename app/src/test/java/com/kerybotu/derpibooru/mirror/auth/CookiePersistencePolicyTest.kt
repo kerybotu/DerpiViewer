@@ -1,11 +1,28 @@
 package com.kerybotu.derpibooru.mirror.auth
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CookiePersistencePolicyTest {
+    @Test
+    fun failedCleanupIsNeverReportedAsSuccessfulDecline() {
+        assertEquals(
+            SiteCookieStore.Result.CLEARED,
+            SiteCookieStore.resultAfterClearing { true }
+        )
+        assertEquals(
+            SiteCookieStore.Result.STORAGE_ERROR,
+            SiteCookieStore.resultAfterClearing { false }
+        )
+        assertEquals(
+            SiteCookieStore.Result.STORAGE_ERROR,
+            SiteCookieStore.resultAfterClearing { error("synthetic cleanup failure") }
+        )
+    }
+
     @Test
     fun acceptedEventIsDistinctFromDecline() {
         val granted = CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice()

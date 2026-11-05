@@ -12,11 +12,13 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Encrypted, consent-gated storage for a Derpibooru WebView cookie snapshot. */
-object SiteCookieStore {
+internal object SiteCookieStore {
     private const val KEYSTORE = "AndroidKeyStore"
     private const val KEY_ALIAS = "derpiviewer_site_cookie_v1"
+    private const val OFFICIAL_ORIGIN = "https://derpibooru.org/"
     private const val AAD = "https://derpibooru.org|site-cookie-v1"
     private const val MAX_COOKIE_HEADER_LENGTH = 64 * 1024
+    private val COOKIE_NAME = Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 
     const val PREFERENCES_NAME = "site_cookie_credentials"
     const val KEY_CIPHERTEXT = "site_cookie_ciphertext"
@@ -31,7 +33,7 @@ object SiteCookieStore {
         STORAGE_ERROR
     }
 
-    fun applyConsentEvent(
+    internal fun applyConsentEvent(
         context: Context,
         event: CookiePersistenceConsentEvent?,
         snapshot: OfficialSiteCookieSnapshot?
@@ -42,26 +44,28 @@ object SiteCookieStore {
                 else persistSnapshot(context, snapshot, grantConsent = true)
             }
             CookiePersistenceConsentEvent.Declined -> {
-                clear(context)
-                Result.CLEARED
+                resultAfterClearing { clear(context) }
             }
             null -> Result.NOT_AUTHORIZED
         }
     }
 
-    fun syncSnapshot(context: Context, snapshot: OfficialSiteCookieSnapshot): Result {
+    internal fun syncSnapshot(context: Context, snapshot: OfficialSiteCookieSnapshot): Result {
         if (!hasConsent(context)) return Result.NOT_AUTHORIZED
+        if (!CookiePersistencePolicy.isOfficialOrigin(snapshot.sourceOrigin)) {
+            return if (clear(context)) Result.INVALID_SNAPSHOT else Result.STORAGE_ERROR
+        }
         return persistSnapshot(context, snapshot, grantConsent = false)
     }
 
-    fun syncFromWebView(context: Context, cookieManager: CookieManager): Result {
+    internal fun syncFromWebView(context: Context, cookieManager: CookieManager): Result {
         if (!hasConsent(context)) return Result.NOT_AUTHORIZED
-        val snapshot = OfficialSiteCookieSnapshot.capture(cookieManager)
+        val snapshot = captureOfficialSnapshot(cookieManager)
             ?: return Result.INVALID_SNAPSHOT
         return syncSnapshot(context, snapshot)
     }
 
-    fun read(context: Context): String? {
+    internal fun read(context: Context): String? {
         val preferences = preferences(context)
         if (!preferences.getBoolean(KEY_CONSENT, false)) return null
 
@@ -85,17 +89,23 @@ object SiteCookieStore {
         }.getOrElse { invalidate(context) }
     }
 
-    fun hasConsent(context: Context): Boolean =
+    internal fun hasConsent(context: Context): Boolean =
         preferences(context).getBoolean(KEY_CONSENT, false)
 
-    fun hasStoredCookie(context: Context): Boolean = read(context) != null
+    internal fun hasStoredCookie(context: Context): Boolean = read(context) != null
 
-    fun clear(context: Context) {
-        preferences(context).edit().clear().commit()
-        runCatching {
+    internal fun clear(context: Context): Boolean {
+        val preferencesCleared = runCatching { preferences(context).edit().clear().commit() }
+            .getOrDefault(false)
+        val keyDeleted = runCatching {
             KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(KEY_ALIAS)
-        }
+            !KeyStore.getInstance(KEYSTORE).apply { load(null) }.containsAlias(KEY_ALIAS)
+        }.getOrDefault(false)
+        return preferencesCleared && keyDeleted
     }
+
+    internal fun resultAfterClearing(clearAction: () -> Boolean): Result =
+        if (runCatching(clearAction).getOrDefault(false)) Result.CLEARED else Result.STORAGE_ERROR
 
     private fun persistSnapshot(
         context: Context,
@@ -104,9 +114,10 @@ object SiteCookieStore {
     ): Result {
         val header = snapshot.cookieHeader
         val plaintext = header.toByteArray(Charsets.UTF_8)
-        if (!isValidCookieHeader(header, plaintext.size)) {
-            clear(context)
-            return Result.INVALID_SNAPSHOT
+        if (!CookiePersistencePolicy.isOfficialOrigin(snapshot.sourceOrigin) ||
+            !isValidCookieHeader(header, plaintext.size)
+        ) {
+            return if (clear(context)) Result.INVALID_SNAPSHOT else Result.STORAGE_ERROR
         }
 
         val editor = preferences(context).edit().clear()
@@ -139,9 +150,26 @@ object SiteCookieStore {
         return null
     }
 
-    private fun isValidCookieHeader(header: String, byteLength: Int = header.toByteArray(Charsets.UTF_8).size): Boolean =
-        byteLength <= MAX_COOKIE_HEADER_LENGTH &&
-            header.none { it == '\r' || it == '\n' || it == '\u0000' }
+    private fun isValidCookieHeader(
+        header: String,
+        byteLength: Int = header.toByteArray(Charsets.UTF_8).size
+    ): Boolean {
+        if (byteLength > MAX_COOKIE_HEADER_LENGTH ||
+            header.any { it == '\r' || it == '\n' || it == '\u0000' || it == '\u007f' || it < ' ' }
+        ) return false
+        if (header.isEmpty()) return true
+        return header.split(';').all { segment ->
+            val pair = segment.trim()
+            val separator = pair.indexOf('=')
+            separator > 0 && COOKIE_NAME.matches(pair.substring(0, separator).trim())
+        }
+    }
+
+    private fun captureOfficialSnapshot(cookieManager: CookieManager): OfficialSiteCookieSnapshot? {
+        if (!CookiePersistencePolicy.isOfficialOrigin(OFFICIAL_ORIGIN)) return null
+        val header = runCatching { cookieManager.getCookie(OFFICIAL_ORIGIN).orEmpty() }.getOrNull() ?: return null
+        return OfficialSiteCookieSnapshot(header, OFFICIAL_ORIGIN)
+    }
 
     private fun preferences(context: Context) =
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
