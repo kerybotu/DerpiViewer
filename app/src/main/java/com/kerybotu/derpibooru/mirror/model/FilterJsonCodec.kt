@@ -14,7 +14,8 @@ object FilterJsonCodec {
 
     fun parseResponse(json: String): Filter? = runCatching {
         val objectValue = JSONObject(json)
-        objectValue.optJSONObject("filter")?.let(::parse) ?: parse(objectValue)
+        val filterObject = objectValue.optJSONObject("filter") ?: objectValue
+        parse(filterObject, local = filterObject.optBoolean("is_local", objectValue.optBoolean("is_local", false)))
     }.getOrNull()
 
     fun parse(o: JSONObject, local: Boolean = false, localQuery: String? = null): Filter {

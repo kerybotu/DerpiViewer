@@ -7,6 +7,28 @@ import org.json.JSONObject
 
 class FilterJsonCodecEditorTest {
     @Test
+    fun parseResponseRestoresLocalIdentityFromEditorIntentJson() {
+        val original = Filter(
+            id = -12,
+            name = "Local",
+            description = "",
+            userId = null,
+            system = false,
+            public = false,
+            spoilerCount = 0,
+            hiddenCount = 0,
+            sourceId = 215340,
+            sourceDomain = "derpibooru.org",
+            localQuery = "safe",
+            isLocal = true
+        )
+
+        val restored = FilterJsonCodec.parseResponse(FilterJsonCodec.toJson(original).toString())
+
+        assertEquals(original, restored)
+    }
+
+    @Test
     fun roundTripsAllEditorFieldsAndImportedSourceIdentity() {
         val original = Filter(
             id = -12,
