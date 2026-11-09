@@ -18,6 +18,13 @@ class LocalFavoritesStore(context: Context) {
     fun deleteFolder(folderId: Long) { folders.removeAll { it.id == folderId && !it.isDefault }; save() }
     fun add(folderId: Long, item: FavoriteItem) { folders.firstOrNull { it.id == folderId }?.items?.removeAll { it.imageId == item.imageId }; folders.firstOrNull { it.id == folderId }?.items?.add(0, item); save() }
     fun remove(folderId: Long, imageId: Int) { folders.firstOrNull { it.id == folderId }?.items?.removeAll { it.imageId == imageId }; save() }
+    fun isFavoriteInDefaultFolder(imageId: Int): Boolean = folders.firstOrNull { it.isDefault }?.items?.any { it.imageId == imageId } == true
+    fun toggleDefaultFavorite(item: FavoriteItem): Boolean {
+        val folder = folders.firstOrNull { it.isDefault } ?: return false
+        val isFavorite = FavoriteMembership.toggle(folder.items, item)
+        save()
+        return isFavorite
+    }
     private fun load() { runCatching { JSONArray(prefs.getString("folders", "[]")) }.getOrNull()?.let { array -> for (i in 0 until array.length()) { val o = array.optJSONObject(i) ?: continue; val f = FavoriteFolder(o.optLong("id"), o.optString("name"), o.optBoolean("default")); val items = o.optJSONArray("items") ?: JSONArray(); for (j in 0 until items.length()) { val item = items.optJSONObject(j) ?: continue; f.items.add(FavoriteItem(item.optInt("id"), item.optString("url").ifBlank { null }, item.optString("format").ifBlank { null })) }; folders.add(f) } } }
     private fun save() { val array = JSONArray(); folders.forEach { f -> val o = JSONObject().put("id", f.id).put("name", f.name).put("default", f.isDefault); val items = JSONArray(); f.items.forEach { items.put(JSONObject().put("id", it.imageId).put("url", it.thumbnailUrl ?: "").put("format", it.format ?: "")) }; o.put("items", items); array.put(o) }; prefs.edit().putString("folders", array.toString()).apply() }
 }

@@ -555,8 +555,14 @@ class VideoFeedController(
     override fun onDownvote(position: Int) { adapter.item(position)?.let { it.downvotes++; adapter.notifyItemChanged(position); Toast.makeText(context, "已记录踩", Toast.LENGTH_SHORT).show() } }
     override fun onFavorite(position: Int) {
         val post = adapter.item(position) ?: return
-        LocalFavoritesStore(context).allFolders().firstOrNull { it.isDefault }?.let { folder -> LocalFavoritesStore(context).add(folder.id, FavoriteItem(post.id, post.thumbnailUrl ?: post.url, post.mimeType)) }
-        Toast.makeText(context, "已收藏到本地", Toast.LENGTH_SHORT).show()
+        runCatching {
+            val store = LocalFavoritesStore(context)
+            val isFavorite = store.toggleDefaultFavorite(FavoriteItem(post.id, post.thumbnailUrl ?: post.url, post.mimeType))
+            (pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder)?.renderFavoriteState()
+            Toast.makeText(context, if (isFavorite) "已收藏到本地" else "已取消收藏", Toast.LENGTH_SHORT).show()
+        }.onFailure {
+            Toast.makeText(context, "收藏状态更新失败", Toast.LENGTH_SHORT).show()
+        }
     }
     override fun onComments(position: Int) { Toast.makeText(context, "评论面板请从详情页打开", Toast.LENGTH_SHORT).show() }
     override fun onDownload(position: Int) {

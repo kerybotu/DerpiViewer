@@ -94,16 +94,20 @@ object NetworkManager {
         var pendingProxy: LocalProxyServer? = null
         var pendingRoutes = emptyMap<String, String>()
         try {
-            // Keep OkHttp and the challenge WebView on the exact same device UA.
-            // A desktop UA paired with Android WebView navigator values is a common
-            // source of low Turnstile scores and repeated challenge pages.
-            activeUserAgent = runCatching {
-                WebSettings.getDefaultUserAgent(context.applicationContext)
-            }.getOrNull()?.takeIf { it.isNotBlank() } ?: HTTP_USER_AGENT
             val targetDomain = AppSettings.getTargetDomain(context)
-            // Clearance cookies belong to the browser identity used for verification.
-            val userAgent = withContext(Dispatchers.Main) { WebSettings.getDefaultUserAgent(context) }
+            // Keep OkHttp and the challenge WebView on one UA. Derive it from the
+            // actual runtime, removing only Chrome's version token as validated by
+            // the sibling browser project for Anubis difficulty on Android 9.
+            val runtimeUserAgent = withContext(Dispatchers.Main) {
+                WebSettings.getDefaultUserAgent(context.applicationContext)
+            }.takeIf { it.isNotBlank() } ?: HTTP_USER_AGENT
+            val userAgent = AnubisEnvironmentPolicy.versionlessUserAgent(runtimeUserAgent)
             activeUserAgent = userAgent
+            Log.i(
+                "AnubisEnvironment",
+                "event=request_user_agent_policy mode=versionless chrome_major=none " +
+                    "runtimeChromeMajor=${Regex("Chrome/(\\d+)", RegexOption.IGNORE_CASE).find(runtimeUserAgent)?.groupValues?.get(1) ?: "none"}"
+            )
             val builder = OkHttpClient.Builder()
                 .cookieJar(SharedCookieJar())
                 .addInterceptor { chain ->

@@ -17,6 +17,8 @@ import android.widget.TextView
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.ui.IslandGlassView
 import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
+import com.kerybotu.derpibooru.mirror.ui.PreparedBackdropSource
+import com.kerybotu.derpibooru.mirror.ui.ScrollContentBackdrop
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
 import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
 
@@ -26,6 +28,8 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
     private val panelWidth: Int
     private val panelHeight: Int
     private var anchorLayoutListener: View.OnLayoutChangeListener? = null
+    private var backdropSource: ScrollContentBackdrop? = null
+    private var backdropHost: android.view.ViewGroup? = null
     private val rows = mutableListOf<LinearLayout>()
     private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyGlassPalette(it) }
     private var removePaletteObserver: (() -> Unit)? = null
@@ -145,7 +149,8 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
         }
         applyGlassPalette(PaletteManager.colors(context))
         glassContainer.post {
-            glassContainer.setRenderingActive(true, activityContentRoot())
+            attachBackdropSource()
+            glassContainer.setRenderingActive(true, backdropSource)
         }
         window?.decorView?.let { decor ->
             decor.animate()
@@ -197,6 +202,12 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
         anchor?.let { trigger -> anchorLayoutListener?.let(trigger::removeOnLayoutChangeListener) }
         anchorLayoutListener = null
         glassContainer.setRenderingActive(false, null)
+        backdropSource?.let {
+            PreparedBackdropSource.release(it)
+            it.detachFromOverlay()
+        }
+        backdropSource = null
+        backdropHost = null
         window?.decorView?.let { decor ->
             decor.animate()
                 .scaleX(0.97f)
@@ -210,12 +221,23 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
         } ?: super.dismiss()
     }
 
-    private fun activityContentRoot(): View? {
+    private fun attachBackdropSource() {
+        val activity = activity() ?: return
+        val host = activity.window.decorView as? android.view.ViewGroup ?: return
+        val content = activity.findViewById<android.view.ViewGroup>(android.R.id.content) ?: host
+        backdropSource?.let {
+            if (backdropHost === host) return
+            PreparedBackdropSource.release(it)
+            it.detachFromOverlay()
+        }
+        backdropHost = host
+        backdropSource = ScrollContentBackdrop(context, content).also { it.attachToOverlay(host) }
+    }
+
+    private fun activity(): Activity? {
         var current: Context? = context
         while (current is ContextWrapper) {
-            if (current is Activity) {
-                return current.findViewById(android.R.id.content) ?: current.window.decorView
-            }
+            if (current is Activity) return current
             current = current.baseContext
         }
         return null
@@ -223,6 +245,7 @@ class GlassMenuCard(context: Context, val items: List<GlassMenuItem>, private va
 
     private fun applyGlassPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) {
         GlassWidgetStyle.apply(glassContainer, GlassMenuTokens.cornerRadiusDp, colors, GlassWidgetStyle.MaterialRole.READING)
+        backdropSource?.let(PreparedBackdropSource::invalidateSource)
         rows.forEachIndexed { index, row ->
             val item = items[index]
             val foreground = if (item.selected) colors.primary else colors.glassText

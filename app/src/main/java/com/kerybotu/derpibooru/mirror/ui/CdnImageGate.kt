@@ -2,9 +2,12 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.widget.ImageView
 import android.content.Context
+import android.graphics.drawable.Drawable
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.Priority
+import com.bumptech.glide.load.engine.GlideException
+import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.target.Target
 import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.network.ResourceCoordinator
@@ -23,12 +26,44 @@ object CdnImageGate {
         load(view, url, null, maxConcurrent)
     }
 
-    fun load(view: ImageView, url: String?, placeholderUrl: String?, @Suppress("UNUSED_PARAMETER") maxConcurrent: Int = 0) {
+    fun load(
+        view: ImageView,
+        url: String?,
+        placeholderUrl: String?,
+        @Suppress("UNUSED_PARAMETER") maxConcurrent: Int = 0,
+        onResourceChanged: (() -> Unit)? = null,
+        onFailure: ((Exception) -> Unit)? = null
+    ) {
         ensureRegistered(view.context)
         var req = Glide.with(view).load(url).priority(Priority.HIGH)
             .placeholder(R.drawable.ic_image_placeholder)
         if (!placeholderUrl.isNullOrBlank()) {
             req = req.thumbnail(Glide.with(view).load(placeholderUrl))
+        }
+        if (onFailure != null || onResourceChanged != null) {
+            req.listener(object : RequestListener<Drawable> {
+                override fun onLoadFailed(
+                    e: GlideException?,
+                    model: Any?,
+                    target: Target<Drawable>,
+                    isFirstResource: Boolean
+                ): Boolean {
+                    onFailure?.invoke(e ?: java.io.IOException("Image load failed"))
+                    onResourceChanged?.invoke()
+                    return false
+                }
+
+                override fun onResourceReady(
+                    resource: Drawable,
+                    model: Any,
+                    target: Target<Drawable>,
+                    dataSource: com.bumptech.glide.load.DataSource,
+                    isFirstResource: Boolean
+                ): Boolean {
+                    onResourceChanged?.invoke()
+                    return false
+                }
+            })
         }
         req.into(view)
     }

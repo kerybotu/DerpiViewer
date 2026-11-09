@@ -131,7 +131,7 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     fun setActive(active: Boolean) {
         controller.setActive(active)
         progressHandler.removeCallbacks(progressTick)
-        binding.videoTopIsland.setRenderingActive(active, if (active) binding.videoPager else null)
+        binding.videoGlassBackdrop.setActive(active)
         if (active) {
             ResourceCoordinator.enterVideoTab()
             CdnImageGate.pausePrefetch(context)

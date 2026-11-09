@@ -17,7 +17,11 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 2
-        versionName = "2.0.0"
+        versionName = "2.0.3"
+        resValue("string", "render_crash_experiment", providers.gradleProperty("renderCrashExperiment").getOrElse("baseline"))
+        if (providers.gradleProperty("renderCrashInstallSuffix").isPresent) {
+            applicationIdSuffix = ".renderdiag"
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -33,6 +33,8 @@ import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
 import com.kerybotu.derpibooru.mirror.ui.HomeTopIslandController
 import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
+import com.kerybotu.derpibooru.mirror.ui.ScrollContentBackdrop
+import com.kerybotu.derpibooru.mirror.ui.PreparedBackdropSource
 import com.example.liquidglass.LiquidGlassTabBar
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +52,8 @@ import com.kerybotu.derpibooru.mirror.update.UpdateUi
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var homeBackdrop: ScrollContentBackdrop
+    private lateinit var embeddedBackdrop: ScrollContentBackdrop
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var adapter: ImageAdapter
     private lateinit var drawerToggle: ActionBarDrawerToggle
@@ -94,6 +98,15 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        val contentHost = binding.drawerLayout.getChildAt(0) as android.view.ViewGroup
+        homeBackdrop = ScrollContentBackdrop(this, binding.homeRefresh).apply {
+            setBackgroundColor(PaletteManager.colors(this@MainActivity).surface)
+        }
+        embeddedBackdrop = ScrollContentBackdrop(this, binding.mainContentHost).apply {
+            setBackgroundColor(PaletteManager.colors(this@MainActivity).surface)
+        }
+        contentHost.addView(homeBackdrop, 0, android.view.ViewGroup.LayoutParams(-1, -1))
+        contentHost.addView(embeddedBackdrop, 0, android.view.ViewGroup.LayoutParams(-1, -1))
         PaletteManager.apply(this)
         lastPaletteSignature = paletteSignature()
         applyStartupPalette()
@@ -171,8 +184,14 @@ class MainActivity : AppCompatActivity() {
         adapter = ImageAdapter(currentImages, { image ->
             val intent = Intent(this, ImageDetailActivity::class.java)
             intent.putExtra("image", image)
+            intent.putExtra(
+                com.kerybotu.derpibooru.mirror.ui.SearchActivity.EXTRA_GALLERY_IMAGE_IDS,
+                adapter.displayedItems().map { it.id }.toIntArray()
+            )
             startActivity(intent)
-        }, { count -> updateSelectionUi(count) }, this)
+        }, { count -> updateSelectionUi(count) }, this, onBackdropChanged = {
+            if (::homeBackdrop.isInitialized) PreparedBackdropSource.invalidateSource(homeBackdrop)
+        })
         binding.recyclerView.layoutManager = GridLayoutManager(this, columnCount)
         AdaptiveLayoutPolicy.configureArtworkGrid(this, binding.recyclerView)
         artworkBasePaddingTop = binding.recyclerView.paddingTop
@@ -520,7 +539,25 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_downloads -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.DownloadManagerActivity::class.java))
             R.id.nav_favorites -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.FavoritesActivity::class.java))
             R.id.nav_settings -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.SettingsActivity::class.java))
+            R.id.nav_diagnostics -> exportCrashDiagnostics()
         }
+    }
+
+    private fun exportCrashDiagnostics() {
+        val report = CrashDiagnostics.lastCrashFile(this)
+        if (report == null) {
+            Toast.makeText(this, "尚无崩溃记录", Toast.LENGTH_SHORT).show()
+            return
+        }
+        CrashDiagnostics.recordEvent("MainActivity", "crash_report_exported")
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            this, "$packageName.fileprovider", report
+        )
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }, "分享崩溃诊断"))
     }
 
     private fun handlePrimaryNavigation(itemId: Int): Boolean {
@@ -612,6 +649,7 @@ class MainActivity : AppCompatActivity() {
             host.visibility = View.VISIBLE
             listOf(embeddedVideo, embeddedFeatured, embeddedMessages, embeddedProfile).forEach { it?.visibility = if (it === target) View.VISIBLE else View.GONE }
             embeddedVideo?.setActive(target === embeddedVideo)
+            embeddedProfile?.setActive(target === embeddedProfile)
             if (itemId == R.id.tab_featured) {
                 // Keep the in-memory featured list and scroll position when
                 // returning from another primary tab. Pull-to-refresh remains
@@ -771,6 +809,7 @@ class MainActivity : AppCompatActivity() {
         updateShellGlass()
         embeddedVideo?.refreshPalette()
         embeddedVideo?.setActive(embeddedScreenId == R.id.tab_video_feed)
+        embeddedProfile?.setActive(embeddedScreenId == R.id.tab_profile)
         embeddedProfile?.applyPalette()
         embeddedFeatured?.refreshPalette()
         ViewCompat.requestApplyInsets(binding.root)
@@ -789,6 +828,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         embeddedVideo?.setActive(false)
+        embeddedProfile?.setActive(false)
         shellGlassResumed = false
         updateShellGlass()
         super.onPause()
@@ -801,25 +841,22 @@ class MainActivity : AppCompatActivity() {
         val enabled = true
         val visible = true
         val source = when (embeddedScreenId) {
-            R.id.tab_home -> binding.homeRefresh
-            R.id.tab_video_feed -> embeddedVideo?.glassBackdropSource ?: binding.mainContentHost
-            else -> binding.mainContentHost
+            R.id.tab_home -> homeBackdrop
+            else -> embeddedBackdrop
         }
         binding.glassBottomNavigation.visibility = if (visible) View.VISIBLE else View.GONE
         binding.glassBottomNavigation.setRenderingActive(visible && shellGlassResumed, source)
 
         binding.headerGlass.visibility = View.VISIBLE
-        val headerVisible = enabled && embeddedScreenId == R.id.tab_home &&
-            binding.appBarLayout.visibility == View.VISIBLE && binding.appBarLayout.alpha > 0f
-        // Sample only the opaque page content; the header must never capture itself.
-        binding.headerGlass.setRenderingActive(headerVisible && shellGlassResumed, binding.homeRefresh)
+        val headerVisible = enabled && binding.appBarLayout.visibility == View.VISIBLE &&
+            binding.appBarLayout.alpha > 0f
+        // Follow the selected page source; the header must never capture itself.
+        binding.headerGlass.setRenderingActive(headerVisible && shellGlassResumed, source)
 
         binding.fabUploadGlass.visibility = View.VISIBLE
         binding.fabUpload.visibility = View.GONE
         val fabVisible = enabled && binding.fabUploadContainer.visibility == View.VISIBLE
-        binding.fabUploadGlass.backdropSource = source
-        binding.fabUploadGlass.enableDynamicBackground = fabVisible && shellGlassResumed
-        binding.fabUploadGlass.enableSensorHighlight = fabVisible && shellGlassResumed
+        GlassWidgetStyle.setRenderingActive(binding.fabUploadGlass, fabVisible && shellGlassResumed, source)
     }
 
     private fun updateGlassHeaderTint() {
@@ -874,6 +911,8 @@ class MainActivity : AppCompatActivity() {
         // Paint the page surface into the capture so gaps between cards stay opaque
         // and retain the current theme color instead of sampling transparent black.
         binding.homeRefresh.setBackgroundColor(colors.surface)
+        if (::homeBackdrop.isInitialized) homeBackdrop.setBackgroundColor(colors.surface)
+        if (::embeddedBackdrop.isInitialized) embeddedBackdrop.setBackgroundColor(colors.surface)
         binding.mainContentHost.setBackgroundColor(colors.surface)
         if (enabled) {
             window.statusBarColor = colors.surface
@@ -1291,6 +1330,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (::homeBackdrop.isInitialized) PreparedBackdropSource.release(homeBackdrop)
+        if (::embeddedBackdrop.isInitialized) PreparedBackdropSource.release(embeddedBackdrop)
         embeddedVideo?.dispose()
         embeddedMessages?.dispose()
         embeddedProfile?.dispose()

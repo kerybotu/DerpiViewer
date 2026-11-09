@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="diagnostics" path="diagnostics/" />
     <external-files-path name="update_files" path="Download/updates/" />
     <files-path name="internal_update_files" path="updates/" />
 </paths>

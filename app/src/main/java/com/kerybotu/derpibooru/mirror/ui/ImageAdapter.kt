@@ -27,7 +27,8 @@ class ImageAdapter(
     private val onSelectionChanged: ((Int) -> Unit)? = null,
     private val settingsContext: Context,
     private val glassBackdrop: View? = null,
-    private val onGlassCreated: ((LiquidGlassView) -> Unit)? = null
+    private val onGlassCreated: ((LiquidGlassView, View) -> Unit)? = null,
+    private val onBackdropChanged: (() -> Unit)? = null
 ) : RecyclerView.Adapter<ImageAdapter.ImageViewHolder>() {
     private var allItems: List<Image> = initialItems
     private var items: List<Image> = filterForDisplay(initialItems)
@@ -41,7 +42,6 @@ class ImageAdapter(
         if (glassBackdrop == null) return ImageViewHolder(binding)
         val card = LiquidGlassListItem(parent.context).apply {
             layoutParams = binding.root.layoutParams
-            backdropSource = glassBackdrop
             groupCornerRadius = 16f * resources.displayMetrics.density
             isClickable = false
             isFocusable = false
@@ -68,7 +68,6 @@ class ImageAdapter(
                 // Decorative badges must not consume the card's click or long press.
                 override fun onTouchEvent(event: MotionEvent): Boolean = false
             }.apply {
-                backdropSource = artwork
                 addView(overlay, FrameLayout.LayoutParams(
                     if (params.width > 0) -1 else -2,
                     if (params.height > 0) -1 else -2
@@ -78,12 +77,17 @@ class ImageAdapter(
             overlays[overlay] = glass
             surfaces += glass
         }
-        surfaces.forEach { GlassWidgetStyle.apply(it, 16f); onGlassCreated?.invoke(it) }
+        surfaces.forEach { glass ->
+            val source: View = if (glass === card) glassBackdrop else artwork
+            GlassWidgetStyle.apply(glass, 16f)
+            GlassWidgetStyle.setRenderingActive(glass, false, source)
+            onGlassCreated?.invoke(glass, source)
+        }
         return ImageViewHolder(binding, card, surfaces, overlays)
     }
 
     override fun onBindViewHolder(holder: ImageViewHolder, position: Int) {
-        holder.bind(items[position], onClick, selectedIds.isNotEmpty(), selectedIds.contains(items[position].id)) { image, anchor -> toggleSelection(image, anchor) }
+        holder.bind(items[position], onClick, selectedIds.isNotEmpty(), selectedIds.contains(items[position].id), onBackdropChanged) { image, anchor -> toggleSelection(image, anchor) }
     }
 
     override fun getItemCount(): Int = items.size
@@ -99,16 +103,21 @@ class ImageAdapter(
         selectedIds.retainAll(items.map { it.id }.toSet())
         onSelectionChanged?.invoke(selectedIds.size)
         notifyDataSetChanged()
+        onBackdropChanged?.invoke()
     }
 
     fun appendData(newItems: List<Image>) {
         if (newItems.isEmpty()) return
-        allItems = allItems + newItems
-        val visibleItems = filterForDisplay(newItems)
+        val existingIds = allItems.asSequence().map { it.id }.toHashSet()
+        val uniqueItems = newItems.filter { existingIds.add(it.id) }
+        if (uniqueItems.isEmpty()) return
+        allItems = allItems + uniqueItems
+        val visibleItems = filterForDisplay(uniqueItems)
         if (visibleItems.isEmpty()) return
         val start = items.size
         items = items + visibleItems
         notifyItemRangeInserted(start, visibleItems.size)
+        onBackdropChanged?.invoke()
     }
 
     /** Re-evaluates cards after the user changes the global spoiler setting. */
@@ -119,6 +128,7 @@ class ImageAdapter(
         selectedIds.retainAll(items.map { it.id }.toSet())
         onSelectionChanged?.invoke(selectedIds.size)
         notifyDataSetChanged()
+        onBackdropChanged?.invoke()
     }
 
     private fun filterForDisplay(source: List<Image>): List<Image> =
@@ -127,10 +137,11 @@ class ImageAdapter(
         } else source
 
     fun selectedItems(): List<Image> = items.filter { selectedIds.contains(it.id) }
+    fun displayedItems(): List<Image> = items
     fun clearSelection() {
         selectedIds.clear()
         selectionSnackbar?.dismiss(); selectionSnackbar = null
-        onSelectionChanged?.invoke(0); notifyDataSetChanged()
+        onSelectionChanged?.invoke(0); notifyDataSetChanged(); onBackdropChanged?.invoke()
     }
 
     class ImageViewHolder(
@@ -141,7 +152,14 @@ class ImageAdapter(
     ) : RecyclerView.ViewHolder(root) {
         val imageRequests = Glide.with(binding.imageThumbnail)
 
-        fun bind(image: Image, onClick: (Image) -> Unit, selectionActive: Boolean, selected: Boolean, toggle: (Image, android.view.View) -> Unit) {
+        fun bind(
+            image: Image,
+            onClick: (Image) -> Unit,
+            selectionActive: Boolean,
+            selected: Boolean,
+            onBackdropChanged: (() -> Unit)?,
+            toggle: (Image, android.view.View) -> Unit
+        ) {
             val palette = PaletteManager.colors(binding.root.context)
             val glass = glassSurfaces.isNotEmpty()
             (binding.root as? androidx.cardview.widget.CardView)?.apply {
@@ -170,7 +188,13 @@ class ImageAdapter(
             binding.textFaves.setTextColor(textColor)
             tintInfoIcons(binding.infoBar, foreground)
             tintInfoIcons(binding.statsBar, foreground)
-            CdnImageGate.load(binding.imageThumbnail, image.thumbnailUrl, AppSettings.getCdnThreads(binding.root.context))
+            CdnImageGate.load(
+                binding.imageThumbnail,
+                image.thumbnailUrl,
+                placeholderUrl = null,
+                maxConcurrent = AppSettings.getCdnThreads(binding.root.context),
+                onResourceChanged = { onBackdropChanged?.invoke() }
+            )
             bindMediaTypeBadge(image)
             when (AppSettings.getSpoilerDisplayMode(binding.root.context)) {
                 AppSettings.SpoilerDisplayMode.SHOW ->
@@ -235,6 +259,7 @@ class ImageAdapter(
     private fun toggleSelection(image: Image, anchor: android.view.View) {
         if (selectedIds.contains(image.id)) selectedIds.remove(image.id) else selectedIds.add(image.id)
         notifyDataSetChanged()
+        onBackdropChanged?.invoke()
         onSelectionChanged?.invoke(selectedIds.size)
         if (selectedIds.isEmpty()) {
             selectionSnackbar?.dismiss(); selectionSnackbar = null
@@ -252,6 +277,7 @@ class ImageAdapter(
                     selectionSnackbar = null
                     onSelectionChanged?.invoke(0)
                     notifyDataSetChanged()
+                    onBackdropChanged?.invoke()
                     Snackbar.make(anchor, "已加入下载队列", Snackbar.LENGTH_SHORT).show()
                 }
             selectionSnackbar?.show()

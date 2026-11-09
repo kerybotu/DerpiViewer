@@ -37,6 +37,7 @@ DerpiViewer 使用原生 Android UI 和官方 JSON API 构建，不是网页套�
 - 过滤器页现在区分系统、我的过滤器和本地自定义三类。服务器过滤器搜索直接请求站点 `/filters?fq=...` HTML 页面，输入框接受 `creator`、`name`、`description`、`created_at`、`id`、`spoilered_count`、`hidden_count`、`my`、`system`、`public`、`user_id` 等原生语法；“参数”按钮只负责将常用前缀插入输入框，不会自动执行搜索。
 - 搜索结果使用 Jsoup 解析 `.filter` 卡片，兼容翻译服务产生的多层 `font` 包装；站点验证页、登录失效、访问拒绝或 HTML 结构异常会显示可重试的错误，不会误报为零结果。过滤器详情和导入仍使用文档化 JSON 详情接口。
 - 统一 OkHttp 拦截器检查 HTML 响应中的 Derpibooru、Anubis 与 Cloudflare 验证结构；识别到验证时复用单个 WebView 验证会话、共享 WebView Cookie，并仅自动重放 GET/HEAD 请求。普通访问拒绝页会独立分类，不会伪装成验证流程。
+- OkHttp 与验证 WebView 从系统 WebView 运行时 UA 派生同一请求身份；遵循 Anubis 环境实测策略，仅移除 `Chrome/<version>` 令牌，保留 Android、设备、WebView 与 WebKit 标记，不伪造更新的浏览器版本或客户端难度。目标设备上的最终难度仍由服务器决定。
 - 本地自定义过滤器可编辑名称、描述、包含/排除标签并生成去重后的作品搜索表达式；启用本地过滤器不会覆盖服务器过滤器 ID，搜索请求会合并两者。服务器详情可导入为本地副本，保留完整的剧透/隐藏标签 ID 与复杂规则，并支持从 ID 或同站点详情/编辑 URL 导入。
 - 本地过滤器及导入副本可编辑名称、描述、剧透/隐藏标签、复杂剧透/隐藏表达式和本地作品查询。标签名称通过官方标签搜索接口解析并缓存；名称不可用时显示“未知标签（ID: n）”，保存仍保留原 ID。复杂规则按原文保存；应用内只更新本地副本，不向服务器写回，服务器过滤器仍通过官方网站编辑。
 - 过滤器详情中的“使用”会调用现有 API 过滤器 ID 机制；“网页编辑”仅打开站点真实编辑页面，写操作仍由站点会话、权限和动态 CSRF 令牌处理。当前客户端不会伪造未验证的创建/编辑 POST。
@@ -179,6 +180,20 @@ Cloudflare/Turnstile 验证页与旧 Derpibooru 验证页使用独立 Activity�
 ### Anubis 验证
 
 Anubis Proof-of-Work 页面通过独立的 Anubis WebView 验证界面处理；验证计算由 Anubis 官方页面脚本在浏览器环境中完成，应用等待其回跳到原 API 页面，并以有效 JSON 或 Anubis 授权 Cookie 确认完成。Anubis 检测要求页面同时包含 `anubis_challenge` 与 Anubis 专属资源标记，避免将普通 HTML 错误页误判为验证页面。Anubis、Cloudflare/Turnstile 和旧 Derpibooru 表单流程保持独立。
+
+### 崩溃诊断
+
+Application 会在本地保留最近 80 条页面生命周期/关键操作记录，并在未处理异常时写入设备、Android/API、App 版本、当前页面和完整堆栈。首页导航抽屉中的“导出崩溃诊断”不依赖设置页面，可通过系统分享面板导出最近一次报告。报告在本地保存，只有用户主动分享时才离开设备；常见 API Key、Cookie、Authorization 和 Token 字段会脱敏。缓存清理只操作应用缓存目录，不清除 SharedPreferences 中的主题、网络或账户设置。当前已知 iQOO Neo11 至尊 / Android 16 / OriginOS 6 用户反馈尚未取得崩溃堆栈，也未在该真机验证，不能据此确认厂商或系统根因。
+
+RenderThread 原生崩溃无法由 Java 未处理异常处理器捕获。复现渲染问题时需在主机持续采集 `main`、`events`、`crash` 三个 logcat buffer，以保留崩溃前的页面及玻璃组件事件：
+
+```powershell
+adb logcat -b main -b events -b crash -v threadtime > render-crash-logcat.txt
+```
+
+停止采集后，保留原始文件并检查 `AppDiagnostics`、`ScrollContentBackdrop` 和 `LiquidGlassView` 标签。诊断实验通过 Gradle 属性选择，例如 `-PrenderCrashExperiment=a_no_scroll_mirror`；`ab_static_settings` 组合 A 与 B 以定位两条设置页渲染路径的交互；未指定时为完整基线 `baseline`。若设备已有正式包且签名不同，可用 `-PrenderCrashInstallSuffix` 构建独立包名的诊断安装包，避免替换现有安装。实验构建仅用于定位，不代表正式修复。Android 16 模拟器结果不能替代 iQOO / OriginOS 6 真机验证。
+
+Backdrop 依赖拓扑审计记录在 `docs/superpowers/plans/2026-11-07-backdrop-dependency-audit.md`。隔离实验中，三个 sibling glass 同步捕获包含自身与其他 glass 的共同父级时 10/10 复现 RenderThread SIGSEGV；两个 sibling、两个 glass 共用父级、三个 glass 使用外部非玻璃 source，以及移除回边的单向关系均为 10/10 未复现。该结果确认了高风险捕获拓扑及一个同步 Java 绘制回边，但没有暴露 native RenderNode 的具体循环边。拓扑检查原型目前未接入正式页面，设置页和详情页尚未通过新架构的完整回归，因此当前状态是诊断进展，不是正式修复。
 
 ### Home TopIsland 动画与按钮规范
 

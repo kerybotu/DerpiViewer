@@ -147,14 +147,10 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
     }
 
     fun setRenderingActive(active: Boolean, source: View) {
-        backdropSource = source
-        enableDynamicBackground = active
-        enableSensorHighlight = active
+        GlassWidgetStyle.setRenderingActive(this, active, source)
         // Both surfaces sample the same opaque page, avoiding double tint/blur.
         for (i in 0 until childCount) (getChildAt(i) as? LiquidGlassView)?.let {
-            it.backdropSource = source
-            it.enableDynamicBackground = active
-            it.enableSensorHighlight = active
+            GlassWidgetStyle.setRenderingActive(it, active, source)
         }
     }
 

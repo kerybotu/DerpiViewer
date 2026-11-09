@@ -22,7 +22,7 @@ import kotlin.math.roundToInt
 class VideoGlassBackdrop @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
-) : View(context, attrs) {
+) : View(context, attrs), PreparedBackdropContentSource {
     var results: RecyclerView? = null
     private val surfaces = mutableSetOf<LiquidGlassView>()
     private val frames = WeakHashMap<TextureView, Frame>()
@@ -32,6 +32,7 @@ class VideoGlassBackdrop @JvmOverloads constructor(
     private val destination = RectF()
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private var active = false
+    private var lastSourceRefreshAt = Long.MIN_VALUE
     private var observer: ViewTreeObserver? = null
     private val beforeDraw = ViewTreeObserver.OnPreDrawListener {
         updateRendering()
@@ -50,9 +51,7 @@ class VideoGlassBackdrop @JvmOverloads constructor(
         view.elevation = Ui2DesignSystem.Elevation.islandDp * resources.displayMetrics.density
         view.isClickable = false
         view.isFocusable = false
-        view.enableDynamicBackground = false
-        view.enableSensorHighlight = false
-        view.backdropSource = this
+        GlassWidgetStyle.setRenderingActive(view, false, this)
         view.addOnAttachStateChangeListener(object : OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
                 surfaces += view
@@ -61,8 +60,7 @@ class VideoGlassBackdrop @JvmOverloads constructor(
 
             override fun onViewDetachedFromWindow(v: View) {
                 surfaces -= view
-                view.enableDynamicBackground = false
-                view.enableSensorHighlight = false
+                GlassWidgetStyle.setRenderingActive(view, false, null)
             }
         })
         if (view.isAttachedToWindow) surfaces += view
@@ -78,14 +76,32 @@ class VideoGlassBackdrop @JvmOverloads constructor(
         val visible = active && isAttachedToWindow && isShown && windowVisibility == VISIBLE
         surfaces.forEach { glass ->
             val render = visible && glass.isShown && glass.getGlobalVisibleRect(visibleRect)
-            if (glass.enableDynamicBackground != render) glass.enableDynamicBackground = render
-            if (glass.enableSensorHighlight != render) glass.enableSensorHighlight = render
+            GlassWidgetStyle.setRenderingActive(glass, render, this)
+        }
+        if (visible) {
+            val now = SystemClock.uptimeMillis()
+            if (lastSourceRefreshAt == Long.MIN_VALUE || now - lastSourceRefreshAt >= 33L) {
+                lastSourceRefreshAt = now
+                BackdropRenderNodeCache.request(this)
+            }
         }
     }
 
     @SuppressLint("UnsafeOptInUsageError")
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        drawArtwork(canvas)
+    }
+
+    override fun drawPreparedBackdrop(canvas: Canvas, consumer: LiquidGlassView?): Boolean {
+        if (!active) return false
+        canvas.drawColor(PaletteManager.colors(context).surface)
+        drawArtwork(canvas)
+        return true
+    }
+
+    @SuppressLint("UnsafeOptInUsageError")
+    private fun drawArtwork(canvas: Canvas) {
         if (!active) return
         val grid = results ?: return
         getLocationOnScreen(origin)
@@ -154,8 +170,7 @@ class VideoGlassBackdrop @JvmOverloads constructor(
         observer?.takeIf { it.isAlive }?.removeOnPreDrawListener(beforeDraw)
         observer = null
         surfaces.forEach {
-            it.enableDynamicBackground = false
-            it.enableSensorHighlight = false
+            GlassWidgetStyle.setRenderingActive(it, false, null)
         }
         frames.clear()
         super.onDetachedFromWindow()

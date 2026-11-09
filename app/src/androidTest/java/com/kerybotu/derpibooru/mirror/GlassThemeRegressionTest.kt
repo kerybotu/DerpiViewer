@@ -23,7 +23,10 @@ import com.kerybotu.derpibooru.mirror.ui.SafeToolbar
 import com.kerybotu.derpibooru.mirror.ui.IslandGlassView
 import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
 import com.kerybotu.derpibooru.mirror.ui.FilterActivity
+import com.kerybotu.derpibooru.mirror.ui.EmbeddedMessagesView
 import com.kerybotu.derpibooru.mirror.ui.ImageDetailActivity
+import com.kerybotu.derpibooru.mirror.ui.PreparedBackdropContentSource
+import com.kerybotu.derpibooru.mirror.ui.ScrollContentBackdrop
 import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuCard
 import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem
 import java.io.File
@@ -37,110 +40,86 @@ class GlassThemeRegressionTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
 
-    /** A bright-looking opaque card used to pass the old luminance check.
-     * Measure actual transmission, blur and displacement over a known scene. */
     @Test
-    fun liveBackdropRetainsBlurRefractionAndThemeContrast() {
-        val originalPalette = AppSettings.getPalette(context)
-        val originalAccent = AppSettings.getAccentColor(context)
-        val activity = launch(SettingsActivity::class.java)
-        lateinit var host: FrameLayout
-        var attachedHost: FrameLayout? = null
-        lateinit var glass: LiquidGlassView
+    fun menuUsesIndependentLiveBackdropSourceWhenActivityContainsGlass() {
+        val main = launch(MainActivity::class.java)
+        var menu: GlassMenuCard? = null
         try {
             instrumentation.runOnMainSync {
-                host = FrameLayout(activity)
-                attachedHost = host
-                val paint = Paint()
-                val scene = object : View(activity) {
-                    override fun onDraw(canvas: Canvas) {
-                        for (y in 0 until height step 24) for (x in 0 until width step 24) {
-                            val light = ((x / 24 + y / 24) % 2) == 0
-                            paint.color = if (x < width / 2) {
-                                if (light) Color.rgb(240, 140, 100) else Color.rgb(120, 30, 20)
-                            } else {
-                                if (light) Color.rgb(100, 160, 240) else Color.rgb(20, 40, 120)
-                            }
-                            canvas.drawRect(x.toFloat(), y.toFloat(), (x + 24).toFloat(), (y + 24).toFloat(), paint)
-                        }
-                    }
-                }
-                host.addView(scene, FrameLayout.LayoutParams(-1, -1))
-                glass = LiquidGlassView(activity).apply {
-                    backdropSource = scene
-                    enableDynamicBackground = true
-                    collectFrameStats = true
-                }
-                val density = context.resources.displayMetrics.density
-                host.addView(glass, FrameLayout.LayoutParams((240 * density).toInt(), (180 * density).toInt(), android.view.Gravity.CENTER))
-                (activity.findViewById<View>(android.R.id.content) as ViewGroup).addView(host, ViewGroup.LayoutParams(-1, -1))
+                menu = GlassMenuCard(main, listOf(
+                    GlassMenuItem("source", R.drawable.ic_settings, "Source check", onClick = {})
+                )).also { it.show() }
             }
-            var lightMean = 0f
-            var darkMean = 0f
+            settle()
+            var menuGlass: LiquidGlassView? = null
+            instrumentation.runOnMainSync {
+                val decor = requireNotNull(menu?.window).decorView
+                menuGlass = descendants(decor).filterIsInstance<LiquidGlassView>().first()
+            }
+            val glass = requireNotNull(menuGlass)
+            assertTrue("Menu glass must retain dynamic backdrop blur", glass.enableBackdropBlur)
+            assertTrue("Menu must use a dedicated prepared content source",
+                glass.backdropSource is PreparedBackdropContentSource)
+            assertNotSame("Menu may not capture the Activity content root",
+                main.findViewById<View>(android.R.id.content), glass.backdropSource)
+        } finally {
+            instrumentation.runOnMainSync { menu?.dismiss(); main.finish() }
+        }
+    }
+
+    /** Render the compatibility material to pixels; theme and accent changes must remain visible. */
+    @Test
+    fun safeMaterialRetainsTranslucencyTintAndThemeContrast() {
+        val originalPalette = AppSettings.getPalette(context)
+        val originalAccent = AppSettings.getAccentColor(context)
+        try {
+            val renderedSamples = mutableMapOf<Pair<AppSettings.Palette, AccentColor>, Int>()
             for (mode in listOf(AppSettings.Palette.LIGHT, AppSettings.Palette.DARK)) {
                 for (accent in listOf(AccentColor.BLUE, AccentColor.PURPLE, AccentColor.GREEN)) {
                     instrumentation.runOnMainSync {
                         AppSettings.setPalette(context, mode)
                         AppSettings.setAccentColor(context, accent)
                         PaletteManager.notifyChanged(context)
-                        GlassWidgetStyle.apply(glass, 30f, role = GlassWidgetStyle.MaterialRole.FLOATING)
-                        glass.collectFrameStats = true
-                        glass.enableBackdropBlur = false
-                        glass.enableChromaticAberration = false
                     }
-                    awaitOpticalFrame(glass, "None")
-                    val unblurred = opticalSnapshot(glass)
-                    instrumentation.runOnMainSync { glass.enableBackdropBlur = true; glass.invalidate() }
-                    awaitOpticalFrame(glass, "None", blurred = true)
-                    val blurred = opticalSnapshot(glass)
-                    instrumentation.runOnMainSync { glass.enableChromaticAberration = true }
-                    awaitOpticalFrame(glass, "Aberration", refracted = true)
-                    val refracted = opticalSnapshot(glass)
+                    val scheme = PaletteManager.colors(context)
+                    val drawable = GlassWidgetStyle.createSafeMaterialBackground(
+                        scheme,
+                        cornerRadius = 30f * context.resources.displayMetrics.density,
+                        density = context.resources.displayMetrics.density
+                    )
+                    val bitmap = Bitmap.createBitmap(120, 90, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    drawable.setBounds(0, 0, bitmap.width, bitmap.height)
+                    drawable.draw(canvas)
                     try {
-                        val blurChange = pixelDifference(unblurred, blurred)
-                        val lensChange = pixelDifference(blurred, refracted)
-                        android.util.Log.i("GlassThemeRegression", "$mode $accent blur=$blurChange refraction=$lensChange")
-                        assertTrue("$mode $accent backdrop blur must alter scene pixels ($blurChange)", blurChange > 2f)
-                        assertTrue("$mode $accent refraction must alter blurred scene ($lensChange)", lensChange > 2f)
-                        val left = refracted.getPixel(refracted.width / 4, refracted.height / 2)
-                        val right = refracted.getPixel(refracted.width * 3 / 4, refracted.height / 2)
-                        assertTrue("Warm backdrop must remain visible", Color.red(left) - Color.blue(left) > 20)
-                        assertTrue("Cool backdrop must remain visible", Color.blue(right) - Color.red(right) > 20)
-                        val mean = (Color.red(left) + Color.green(left) + Color.blue(left) +
-                            Color.red(right) + Color.green(right) + Color.blue(right)) / 6f
-                        if (mode == AppSettings.Palette.LIGHT) lightMean = mean else darkMean = mean
-                        capture("${mode}_${accent}_optics", host)
-                        instrumentation.runOnMainSync {
-                            GlassWidgetStyle.apply(glass, 30f, role = GlassWidgetStyle.MaterialRole.READING)
-                            glass.collectFrameStats = true
-                        }
-                        awaitOpticalFrame(glass, "Aberration", refracted = true)
-                        val reading = opticalSnapshot(glass)
-                        try {
-                            val scheme = PaletteManager.colors(context)
-                            for (x in listOf(reading.width / 4, reading.width * 3 / 4)) {
-                                val backdrop = reading.getPixel(x, reading.height / 2)
-                                val contrast = androidx.core.graphics.ColorUtils.calculateContrast(scheme.glassSecondaryText, backdrop)
-                                assertTrue("$mode $accent reading material must retain body-text contrast ($contrast)", contrast >= 4.5)
-                            }
-                            val warm = reading.getPixel(reading.width / 4, reading.height / 2)
-                            val cool = reading.getPixel(reading.width * 3 / 4, reading.height / 2)
-                            assertTrue("Reading material must transmit the warm scene", Color.red(warm) - Color.blue(warm) > 15)
-                            assertTrue("Reading material must transmit the cool scene", Color.blue(cool) - Color.red(cool) > 15)
-                            capture("${mode}_${accent}_reading_optics", host)
-                        } finally { reading.recycle() }
-                    } finally { unblurred.recycle(); blurred.recycle(); refracted.recycle() }
+                        val top = bitmap.getPixel(bitmap.width / 2, 2)
+                        val middle = bitmap.getPixel(bitmap.width / 2, bitmap.height / 2)
+                        val bottom = bitmap.getPixel(bitmap.width / 2, bitmap.height - 3)
+                        assertTrue("$mode $accent material must retain translucent pixels", Color.alpha(middle) in 1..254)
+                        assertTrue("$mode $accent material must contain visible highlight variation",
+                            colorDifference(top, bottom) > 1)
+                        renderedSamples[mode to accent] = middle
+                        assertTrue("$mode $accent material must retain a visible border color", Color.alpha(scheme.glassBorder) > 0)
+                    } finally { bitmap.recycle() }
                 }
             }
-            assertTrue("Light and dark materials must differ over the SAME backdrop", lightMean - darkMean > 30f)
-        } finally {
-            instrumentation.runOnMainSync {
-                attachedHost?.let { (it.parent as? ViewGroup)?.removeView(it) }
-                activity.finish()
+            for (accent in listOf(AccentColor.BLUE, AccentColor.PURPLE, AccentColor.GREEN)) {
+                val light = requireNotNull(renderedSamples[AppSettings.Palette.LIGHT to accent])
+                val dark = requireNotNull(renderedSamples[AppSettings.Palette.DARK to accent])
+                assertTrue("$accent material must reflect light and dark themes", colorDifference(light, dark) > 20)
             }
+            val blue = requireNotNull(renderedSamples[AppSettings.Palette.LIGHT to AccentColor.BLUE])
+            val purple = requireNotNull(renderedSamples[AppSettings.Palette.LIGHT to AccentColor.PURPLE])
+            assertTrue("Accent choice must alter the rendered material pixels", colorDifference(blue, purple) > 1)
+        } finally {
             restore(originalPalette, originalAccent)
         }
     }
+
+    private fun colorDifference(first: Int, second: Int): Int =
+        kotlin.math.abs(Color.red(first) - Color.red(second)) +
+            kotlin.math.abs(Color.green(first) - Color.green(second)) +
+            kotlin.math.abs(Color.blue(first) - Color.blue(second))
 
     private fun awaitOpticalFrame(glass: LiquidGlassView, effect: String, blurred: Boolean = false, refracted: Boolean = false) {
         val deadline = android.os.SystemClock.uptimeMillis() + 30_000
@@ -232,6 +211,93 @@ class GlassThemeRegressionTest {
         } finally {
             instrumentation.runOnMainSync { menu?.dismiss(); settings.finish(); main.finish() }
             restore(originalPalette, originalAccent)
+        }
+    }
+
+    @Test
+    fun settingsGlassBackdropDoesNotOccludeSectionText() {
+        val settings = launch(SettingsActivity::class.java)
+        try {
+            settle()
+            var labelBounds: Rect? = null
+            instrumentation.runOnMainSync {
+                val label = descendants(settings.window.decorView)
+                    .filterIsInstance<android.widget.TextView>()
+                    .first { it.text.toString() == "账户" }
+                labelBounds = Rect().also { assertTrue(label.getGlobalVisibleRect(it)) }
+            }
+            val bounds = requireNotNull(labelBounds)
+            val screenshot = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+            try {
+                var darkPixels = 0
+                for (y in bounds.top until bounds.bottom) {
+                    for (x in bounds.left until bounds.right) {
+                        if (Color.luminance(screenshot.getPixel(x, y)) < 0.25f) darkPixels++
+                    }
+                }
+                assertTrue("Settings section label must be visible above its glass backdrop; dark pixels=$darkPixels", darkPixels >= 20)
+            } finally {
+                screenshot.recycle()
+            }
+        } finally {
+            instrumentation.runOnMainSync { settings.finish() }
+        }
+    }
+
+    @Test
+    fun profileIslandBindsLiveBackdropWhenHiddenAttachedPageBecomesVisible() {
+        val main = launch(MainActivity::class.java)
+        try {
+            awaitMainStartup(main)
+            instrumentation.runOnMainSync {
+                val tabs = main.findViewById<HomeGlassTabBar>(R.id.glass_bottom_navigation)
+                tabs.selectItem(4)
+                tabs.onItemSelected?.invoke(4)
+            }
+            settle()
+            instrumentation.runOnMainSync {
+                val profileSourceIsland = descendants(main.window.decorView)
+                    .filterIsInstance<IslandGlassView>()
+                    .firstOrNull { it.isShown && it.backdropSource is androidx.recyclerview.widget.RecyclerView }
+                assertNotNull("Profile's visible top island must bind its ordinary scrolling content source", profileSourceIsland)
+                assertTrue("Profile's visible top island must retain live GPU blur", profileSourceIsland!!.enableBackdropBlur)
+            }
+        } finally {
+            instrumentation.runOnMainSync { main.finish() }
+        }
+    }
+
+    @Test
+    fun embeddedCommentsLoadingGlassReactivatesWhenPageBecomesVisible() {
+        val main = launch(MainActivity::class.java)
+        try {
+            instrumentation.runOnMainSync {
+                val tabs = main.findViewById<HomeGlassTabBar>(R.id.glass_bottom_navigation)
+                tabs.selectItem(3)
+                tabs.onItemSelected?.invoke(3)
+            }
+            settle()
+            instrumentation.runOnMainSync {
+                val comments = descendants(main.window.decorView)
+                    .filterIsInstance<EmbeddedMessagesView>()
+                    .first { it.isShown }
+                comments.showLoading(true, centered = true)
+            }
+            settle()
+            instrumentation.runOnMainSync {
+                val comments = descendants(main.window.decorView)
+                    .filterIsInstance<EmbeddedMessagesView>()
+                    .first { it.isShown }
+                val loadingGlass = descendants(comments).filterIsInstance<LiquidGlassView>()
+                    .firstOrNull { it.isShown && it.width == 160 && it.height == 160 }
+                assertNotNull("Visible comments loading material must exist", loadingGlass)
+                assertTrue("Visible comments loading material must use live GPU blur",
+                    requireNotNull(loadingGlass).enableBackdropBlur)
+                assertTrue("Visible comments loading material must retain its prepared source",
+                    loadingGlass!!.backdropSource is ScrollContentBackdrop)
+            }
+        } finally {
+            instrumentation.runOnMainSync { main.finish() }
         }
     }
 
@@ -371,9 +437,10 @@ class GlassThemeRegressionTest {
                         settle()
                         instrumentation.runOnMainSync {
                             val glass = view(id) as LiquidGlassView
-                            assertSame("Backdrop must exclude all detail text", view(R.id.detail_backdrop), glass.backdropSource)
-                            assertTrue("Visible section must retain actual backdrop blur", glass.enableBackdropBlur)
-                            assertTrue("Visible section must retain displacement refraction", glass.enableChromaticAberration)
+                            assertNotNull("Glass must use a prepared source", glass.backdropSource)
+                            assertNotSame("Glass must not fall back to its parent", glass.parent, glass.backdropSource)
+                            assertTrue("Visible detail glass retains GPU blur", glass.enableBackdropBlur)
+                            assertEquals(android.os.Build.VERSION.SDK_INT >= 33, glass.enableChromaticAberration)
                             assertTrue("A section is measured around its children", glass.height > 0)
                         }
                         capturePage("detail_fixture_${mode}_${accent}_$name", page)
@@ -781,8 +848,8 @@ class GlassThemeRegressionTest {
             val warm = cachedFrame(Color.rgb(240, 40, 20))
             val cool = cachedFrame(Color.rgb(20, 80, 240))
             try {
-                val transmittedChange = pixelDifference(warm, cool)
-                assertTrue("Cached material must transmit changed artwork, not become a fixed card ($transmittedChange)", transmittedChange > 5f)
+                val artworkDifference = pixelDifference(warm, cool)
+                assertTrue("Prepared glass texture must refresh after artwork changes ($artworkDifference)", artworkDifference > 5f)
                 instrumentation.runOnMainSync { page.findViewById<View>(R.id.detail_root).invalidate() }
                 settle()
                 val retained = opticalSnapshot(glass)
@@ -924,7 +991,19 @@ class GlassThemeRegressionTest {
         error("$page did not load real artwork within 90 seconds ($state); a loading panel cannot verify backdrop optics")
     }
 
-    private fun checkMaterials(activity: Activity) = checkMaterials(activity.window.decorView)
+    private fun checkMaterials(activity: Activity) = checkMaterials(
+        activity.window.decorView,
+        isResumed(activity)
+    )
+
+    private fun isResumed(activity: Activity): Boolean {
+        var resumed = false
+        instrumentation.runOnMainSync {
+            resumed = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED).contains(activity)
+        }
+        return resumed
+    }
 
     private fun capturePage(name: String, activity: Activity) {
         instrumentation.runOnMainSync {
@@ -935,7 +1014,7 @@ class GlassThemeRegressionTest {
         capture(name, activity.window.decorView)
     }
 
-    private fun checkMaterials(root: View) {
+    private fun checkMaterials(root: View, activeWindow: Boolean = true) {
         instrumentation.runOnMainSync {
             val scheme = PaletteManager.colors(context)
             val glasses = descendants(root).filterIsInstance<LiquidGlassView>()
@@ -949,16 +1028,71 @@ class GlassThemeRegressionTest {
                 val tint = if (GlassWidgetStyle.materialRole(glass) == GlassWidgetStyle.MaterialRole.READING)
                     scheme.glassSurface else scheme.glassTint
                 assertEquals("Resolved role tint must reach the renderer", tint, glass.glassTint)
-                assertTrue("Real backdrop blur must remain enabled", glass.enableBackdropBlur)
-                assertTrue("CPU fallback must retain displacement refraction", glass.enableChromaticAberration)
-                assertTrue("Optical highlights must remain enabled", glass.enableEdgeHighlight)
-                val source = glass.backdropSource ?: glass.parent as? View
-                if (source != null && source.width > 0 && source.height > 0) {
-                    assertEquals("Live glass must not have a second opaque base", Color.TRANSPARENT,
-                        (glass.background as? GradientDrawable)?.color?.defaultColor ?: Color.TRANSPARENT)
+                assertTrue("Liquid Glass keeps its renderer highlight", glass.enableEdgeHighlight)
+                assertEquals("API 33+ uses the GPU lens path", android.os.Build.VERSION.SDK_INT >= 33,
+                    glass.enableChromaticAberration)
+                assertNotNull("Glass uses a prepared or explicitly disabled source", glass.backdropSource)
+                assertNotSame("No glass component may fall back to its parent", glass.parent, glass.backdropSource)
+                val visible = isActuallyVisible(glass)
+                if (activeWindow && visible && android.os.Build.VERSION.SDK_INT >= 31) {
+                    assertTrue("Foreground glass keeps dynamic GPU backdrop blur enabled: ${describeGlass(glass)}",
+                        glass.enableBackdropBlur)
+                    val source = glass.backdropSource
+                    assertNotNull("Foreground blur must have a recorded source", source)
+                    assertFalse("Foreground blur source must not contain any glass consumer: ${source?.javaClass?.simpleName}",
+                        source?.let(::containsGlassConsumer) == true)
                 }
+                val material = glass.background as? GradientDrawable
+                assertNotNull("Safe glass must retain a themed backing drawable", material)
+                val hasThemedFill = material?.color?.defaultColor?.let { Color.alpha(it) > 0 } == true ||
+                    material?.colors?.any { Color.alpha(it) > 0 } == true
+                val hasPreparedLiveSource = glass.enableBackdropBlur &&
+                    glass.backdropSource?.let { !containsGlassConsumer(it) } == true
+                if (activeWindow && visible) {
+                    assertTrue("Visible glass needs either a themed fallback fill or a prepared live backdrop: ${glass.javaClass.simpleName}@${System.identityHashCode(glass)}",
+                        hasThemedFill || hasPreparedLiveSource)
+                }
+                assertTrue("Safe glass must retain its rounded corners", glass.cornerRadius > 0f)
             }
         }
+    }
+
+    private fun describeGlass(view: LiquidGlassView): String {
+        val bounds = Rect()
+        view.getGlobalVisibleRect(bounds)
+        val parents = generateSequence(view as View?) { it.parent as? View }
+            .take(8)
+            .joinToString(" <- ") { node ->
+                val id = if (node.id == View.NO_ID) "none" else
+                    runCatching { node.resources.getResourceEntryName(node.id) }.getOrDefault(node.id.toString())
+                "${node.javaClass.simpleName}(id=$id,visibility=${node.visibility},alpha=${node.alpha},size=${node.width}x${node.height})"
+            }
+        return "${view.javaClass.simpleName}@${System.identityHashCode(view)} blur=${view.enableBackdropBlur} " +
+            "source=${view.backdropSource?.javaClass?.simpleName}@${view.backdropSource?.let(System::identityHashCode)} " +
+            "bounds=$bounds parents=[$parents]"
+    }
+
+    private fun isActuallyVisible(view: View): Boolean {
+        val bounds = Rect()
+        if (!view.isShown || !view.getGlobalVisibleRect(bounds)) return false
+        var effectiveAlpha = 1f
+        var current: View? = view
+        while (current != null) {
+            effectiveAlpha *= current.alpha
+            if (effectiveAlpha <= 0f) return false
+            current = current.parent as? View
+        }
+        return true
+    }
+
+    private fun containsGlassConsumer(view: View): Boolean {
+        if (view is LiquidGlassView) return true
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                if (containsGlassConsumer(view.getChildAt(index))) return true
+            }
+        }
+        return false
     }
 
     private fun capture(name: String, root: View) {

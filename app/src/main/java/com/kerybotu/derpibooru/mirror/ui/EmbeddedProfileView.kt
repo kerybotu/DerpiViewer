@@ -49,6 +49,7 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
     private var viewedUserId: Long? = null
     private var ownUserId: Long? = null
     private var loaded = false
+    private var active = false
 
     init { buildLayout() }
 
@@ -184,6 +185,17 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
         return island
     }
 
+    fun setActive(value: Boolean) {
+        active = value
+        updateTopIslandBackdrop()
+    }
+
+    private fun updateTopIslandBackdrop() {
+        if (!::topIsland.isInitialized) return
+        val shouldRender = active && isAttachedToWindow && isShown && topIsland.isShown
+        topIsland.setRenderingActive(shouldRender, if (shouldRender) contentList else null)
+    }
+
     fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         setBackgroundColor(colors.surface)
         state.setTextColor(colors.muted)
@@ -253,12 +265,12 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        post { if (topIsland.isShown) topIsland.setRenderingActive(true, contentList) }
+        post { updateTopIslandBackdrop() }
         if (!loaded) loadProfile()
     }
 
     override fun onDetachedFromWindow() {
-        if (::topIsland.isInitialized) topIsland.setRenderingActive(false, null)
+        updateTopIslandBackdrop()
         super.onDetachedFromWindow()
     }
 

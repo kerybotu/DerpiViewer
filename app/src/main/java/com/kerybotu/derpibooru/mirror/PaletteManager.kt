@@ -28,6 +28,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 object PaletteManager {
     private val activities = java.util.WeakHashMap<Activity, PaletteDefinitions.Scheme>()
+    private val activityRefs = CopyOnWriteArrayList<WeakReference<Activity>>()
     private val observers = CopyOnWriteArrayList<WeakReference<(PaletteDefinitions.Scheme) -> Unit>>()
 
     fun observe(owner: android.content.Context, callback: (PaletteDefinitions.Scheme) -> Unit): () -> Unit {
@@ -39,7 +40,11 @@ object PaletteManager {
 
     fun notifyChanged(context: android.content.Context) {
         val current = colors(context)
-        activities.keys.toList().filterNot { it.isDestroyed || it.isFinishing }.forEach(::apply)
+        activityRefs.toList().forEach { reference ->
+            val activity = reference.get()
+            if (activity == null) activityRefs.remove(reference)
+            else if (!activity.isDestroyed && !activity.isFinishing) apply(activity)
+        }
         observers.removeAll { ref ->
             val callback = ref.get()
             if (callback == null) true else { callback(current); false }
@@ -79,7 +84,10 @@ object PaletteManager {
         activity.window.statusBarColor = c.primary
         activity.window.navigationBarColor = c.surface
         val root = activity.findViewById<View>(android.R.id.content)
-        activities.put(activity, c)?.takeIf { it != c }?.let { refreshSurfaces(root, it, c) }
+        if (activityRefs.none { it.get() === activity }) activityRefs += WeakReference(activity)
+        synchronized(activities) {
+            activities.put(activity, c)?.takeIf { it != c }?.let { refreshSurfaces(root, it, c) }
+        }
         styleTree(root, c)
         applyGlassTree(root, c)
     }

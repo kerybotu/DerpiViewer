@@ -1,6 +1,5 @@
 [versions]
-agp = "9.0.0-alpha06"
-kotlin = "2.2.10"
+agp = "9.0.1"
 coreKtx = "1.18.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
@@ -20,4 +19,3 @@ liquid-glass = { module = "com.github.QWEA0:liquidglass", version.ref = "liquidG
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

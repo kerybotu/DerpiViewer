@@ -19,7 +19,9 @@ import com.bumptech.glide.request.target.Target
 import com.bumptech.glide.load.engine.GlideException
 import android.graphics.drawable.Drawable
 import com.kerybotu.derpibooru.mirror.PaletteManager
+import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.databinding.ItemVideoFeedBinding
+import com.kerybotu.derpibooru.mirror.favorites.LocalFavoritesStore
 
 data class VideoPost(
     val id: Int,
@@ -240,10 +242,18 @@ class VideoFeedAdapter(
                 it.imageTintList = ColorStateList.valueOf(colors.glassText)
                 Ui2DesignSystem.applyPressFeedback(it)
             }
+            renderFavoriteState()
             videoPlayProgress.progressTintList = ColorStateList.valueOf(colors.primary)
             videoPlayProgress.thumbTintList = ColorStateList.valueOf(colors.onSurface)
             videoBufferProgress.progressTintList = ColorStateList.valueOf(uiColors.glassHighlight)
             videoBufferProgress.backgroundTintList = ColorStateList.valueOf(uiColors.glassBorder)
+        }
+
+        fun renderFavoriteState() {
+            val isFavorite = boundId?.let { LocalFavoritesStore(binding.root.context).isFavoriteInDefaultFolder(it) } == true
+            val colors = PaletteManager.colors(binding.root.context)
+            binding.videoFavorite.setImageResource(if (isFavorite) R.drawable.baseline_favorite else R.drawable.ic_favorite)
+            binding.videoFavorite.imageTintList = ColorStateList.valueOf(if (isFavorite) colors.primary else colors.glassText)
         }
 
         fun applyNavigationInsets(bottomInset: Int, endInset: Int, landscape: Boolean) {

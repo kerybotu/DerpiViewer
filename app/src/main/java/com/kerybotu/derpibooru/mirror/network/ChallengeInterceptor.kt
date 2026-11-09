@@ -28,6 +28,15 @@ class ChallengeInterceptor(private val appContext: Context) : Interceptor {
         val assessment = assessResponse(response)
         if (response.header("Content-Type").orEmpty().contains("text/html", ignoreCase = true)) {
             Log.d("AnubisCoordinator", "response_inspected source=$source status=${response.code} final=${response.request.url.host}${response.request.url.encodedPath} contentType=${response.header("Content-Type").orEmpty()} category=${assessment.category} challenge=${assessment.challengeType ?: "none"} title=${assessment.title}")
+            val evidence = runCatching {
+                ChallengePageDetector.inspect(
+                    response.peekBody(64L * 1024L).string(),
+                    response.request.url.toString()
+                )
+            }.getOrNull()
+            if (evidence != null) {
+                Log.d("AnubisCoordinator", "response_structure source=$source bytes=${evidence.htmlLength} scriptPaths=${evidence.scriptPaths} inlineScripts=${evidence.inlineScriptCount} scriptIds=${evidence.scriptIds} elementIds=${evidence.elementIds} classes=${evidence.classNames} metaNames=${evidence.metaNames} formPaths=${evidence.formPaths} resourcePaths=${evidence.resourcePaths} frames=${evidence.frameCount} challengeScriptMarkers=${evidence.challengeScriptMarkers} markers=${evidence.markers}")
+            }
         }
         val challengeType = assessment.challengeType
         if (challengeType != null) {

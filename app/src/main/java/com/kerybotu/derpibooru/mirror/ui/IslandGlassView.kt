@@ -13,6 +13,7 @@ open class IslandGlassView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LiquidGlassView(context, attrs, defStyleAttr) {
     private var renderingActive = false
+    private var renderingSourceMode = BackdropSourceMode.AUTO_PARENT
 
     init {
         isClickable = false
@@ -25,13 +26,16 @@ open class IslandGlassView @JvmOverloads constructor(
         GlassWidgetStyle.apply(this, cornerRadius / resources.displayMetrics.density, colors)
     }
 
-    open fun setRenderingActive(active: Boolean, source: View?) {
-        val backdrop = if (active) source else null
-        if (renderingActive == active && backdropSource === backdrop) return
+    open fun setRenderingActive(
+        active: Boolean,
+        source: View?,
+        sourceMode: BackdropSourceMode = if (source == null) BackdropSourceMode.DISABLED else BackdropSourceMode.EXPLICIT_SOURCE
+    ) {
+        val backdrop = if (active || sourceMode == BackdropSourceMode.EXPLICIT_SOURCE) source else null
+        if (renderingActive == active && renderingSourceMode == sourceMode && backdropSource === backdrop) return
         renderingActive = active
-        backdropSource = backdrop
-        enableDynamicBackground = active
-        enableSensorHighlight = active
+        renderingSourceMode = sourceMode
+        GlassWidgetStyle.setRenderingActive(this, active, backdrop, sourceMode)
         if (active) refreshAccessibilityState()
     }
 }

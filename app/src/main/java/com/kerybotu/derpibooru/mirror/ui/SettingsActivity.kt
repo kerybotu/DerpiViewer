@@ -3,6 +3,7 @@ package com.kerybotu.derpibooru.mirror.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
@@ -40,6 +41,7 @@ import com.kerybotu.derpibooru.mirror.network.DeepOptimizeActivity
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import com.kerybotu.derpibooru.mirror.IpOptimizer
 import com.kerybotu.derpibooru.mirror.CacheManager
+import com.kerybotu.derpibooru.mirror.CrashDiagnostics
 import com.kerybotu.derpibooru.mirror.theme.AccentColor
 import com.kerybotu.derpibooru.mirror.theme.ThemeGenerator
 import com.kerybotu.derpibooru.mirror.theme.ThemeMode
@@ -48,6 +50,7 @@ import com.kerybotu.derpibooru.mirror.update.UpdateFrequency
 import com.kerybotu.derpibooru.mirror.update.UpdateUi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -62,8 +65,8 @@ import kotlinx.coroutines.withContext
  */
 class SettingsActivity : AppCompatActivity() {
     private lateinit var root: FrameLayout
-    private lateinit var pageBackdrop: View
-    private lateinit var scrollBackdrop: ScrollContentBackdrop
+    private lateinit var pageBackdrop: ScrollContentBackdrop
+    private val visibleBounds = Rect()
     private lateinit var scroll: ScrollView
     private lateinit var contentColumn: LinearLayout
     private lateinit var topIsland: IslandGlassView
@@ -115,9 +118,28 @@ class SettingsActivity : AppCompatActivity() {
     private var systemRightInset = 0
     private var paletteUpdating = false
     private var glassRenderingActive = false
+    private var resumeBackdropEnabled = true
+    private val renderExperiment by lazy { RenderCrashExperiment.from(this) }
+    private val resumeBackdropRunnable = Runnable {
+        if (!isFinishing && !isDestroyed && renderExperiment == RenderCrashExperiment.D_DEFER_RESUME) {
+            resumeBackdropEnabled = true
+            CrashDiagnostics.recordEvent("SettingsActivity", "deferred_backdrop_enabled experiment=${renderExperiment.id}")
+            updateGlassRendering()
+        }
+    }
+    private val resumePreDrawListener = object : android.view.ViewTreeObserver.OnPreDrawListener {
+        override fun onPreDraw(): Boolean {
+            if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnPreDrawListener(this)
+            CrashDiagnostics.recordEvent("SettingsActivity", "resume_first_predraw experiment=${renderExperiment.id}")
+            root.postOnAnimation(resumeBackdropRunnable)
+            return true
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashDiagnostics.recordEvent("SettingsActivity", "initialization_started")
+        CrashDiagnostics.recordEvent("SettingsActivity", "window_setup_started")
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
@@ -126,14 +148,22 @@ class SettingsActivity : AppCompatActivity() {
             clipChildren = false
         }
         setContentView(root)
+        CrashDiagnostics.recordEvent("SettingsActivity", "content_attached")
+        CrashDiagnostics.recordEvent("SettingsActivity", "build_screen_started")
         buildScreen()
+        CrashDiagnostics.recordEvent("SettingsActivity", "screen_built")
+        CrashDiagnostics.recordEvent("SettingsActivity", "palette_apply_started")
         PaletteManager.apply(this)
         applyPalette()
+        CrashDiagnostics.recordEvent("SettingsActivity", "palette_applied")
+        CrashDiagnostics.recordEvent("SettingsActivity", "bind_values_started")
         bindValues()
+        CrashDiagnostics.recordEvent("SettingsActivity", "settings_bound")
         bindActions()
         bindUpdateSettings()
         updateAccountStatus()
         refreshNetworkStatus()
+        CrashDiagnostics.recordEvent("SettingsActivity", "initialization_complete")
     }
 
     private fun buildScreen() {
@@ -149,19 +179,13 @@ class SettingsActivity : AppCompatActivity() {
             clipChildren = false
         }
         scroll.addView(contentColumn, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        pageBackdrop = View(this).apply { setBackgroundColor(PaletteManager.colors(this@SettingsActivity).surface) }
-        scrollBackdrop = ScrollContentBackdrop(this, scroll).apply {
+        pageBackdrop = ScrollContentBackdrop(this, scroll).apply {
             setBackgroundColor(PaletteManager.colors(this@SettingsActivity).surface)
         }
         root.addView(pageBackdrop, FrameLayout.LayoutParams(-1, -1))
-        root.addView(scrollBackdrop, FrameLayout.LayoutParams(-1, -1))
         root.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         scroll.setOnScrollChangeListener { _, _, _, _, _ ->
-            scrollBackdrop.invalidate()
-            updateGlassRendering()
-        }
-        contentColumn.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            scrollBackdrop.invalidate()
+            PreparedBackdropSource.invalidateSource(pageBackdrop)
             updateGlassRendering()
         }
 
@@ -352,28 +376,34 @@ class SettingsActivity : AppCompatActivity() {
         addSection(section)
     }
 
-    private fun section(title: String): LiquidGlassView {
-        val surface = LiquidGlassView(this).apply {
+    private fun section(title: String): FrameLayout {
+        val surface = LiquidGlassView(this)
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
-            elevation = dp(Ui2DesignSystem.Elevation.cardDp).toFloat()
         }
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         column.addView(TextView(this).apply {
             text = title
             textSize = 18f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }, LinearLayout.LayoutParams(-1, -2))
-        surface.addView(column, ViewGroup.LayoutParams(-1, -2))
-        surface.tag = column
+        val container = FrameLayout(this).apply {
+            clipChildren = false
+            elevation = dp(Ui2DesignSystem.Elevation.cardDp).toFloat()
+            tag = column
+            addView(surface, FrameLayout.LayoutParams(-1, -1))
+            addView(column, FrameLayout.LayoutParams(-1, -2))
+        }
+        pageBackdrop.excludeRoot(surface, container)
         glassSurfaces += surface
-        return surface
+        return container
     }
 
-    private fun addSection(surface: LiquidGlassView) {
+    private fun addSection(surface: FrameLayout) {
         contentColumn.addView(surface, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
     }
 
-    private fun sectionContent(surface: LiquidGlassView): LinearLayout = surface.tag as LinearLayout
+    private fun sectionContent(surface: FrameLayout): LinearLayout = surface.tag as LinearLayout
 
     private fun bodyText(text: String = "", size: Float = 14f) = TextView(this).apply {
         this.text = text
@@ -422,16 +452,34 @@ class SettingsActivity : AppCompatActivity() {
         textSize = 14f
     }
 
-    private fun inputSurface(input: EditText): LiquidGlassView = LiquidGlassView(this).apply {
-        setPadding(dp(12), 0, dp(12), 0)
-        addView(input, FrameLayout.LayoutParams(-1, -1))
-        glassSurfaces += this
+    private fun inputSurface(input: EditText): FrameLayout {
+        val surface = LiquidGlassView(this)
+        val container = FrameLayout(this).apply {
+            addView(surface, FrameLayout.LayoutParams(-1, -1))
+            addView(input, FrameLayout.LayoutParams(-1, -1).apply {
+                leftMargin = dp(12)
+                rightMargin = dp(12)
+            })
+        }
+        pageBackdrop.excludeRoot(surface, container)
+        glassSurfaces += surface
+        return container
     }
 
-    private fun infoSurface(text: TextView): LiquidGlassView = LiquidGlassView(this).apply {
-        setPadding(dp(12), dp(10), dp(12), dp(10))
-        addView(text, FrameLayout.LayoutParams(-1, -2))
-        glassSurfaces += this
+    private fun infoSurface(text: TextView): FrameLayout {
+        val surface = LiquidGlassView(this)
+        val container = FrameLayout(this).apply {
+            addView(surface, FrameLayout.LayoutParams(-1, -1))
+            addView(text, FrameLayout.LayoutParams(-1, -2).apply {
+                leftMargin = dp(12)
+                rightMargin = dp(12)
+                topMargin = dp(10)
+                bottomMargin = dp(10)
+            })
+        }
+        pageBackdrop.excludeRoot(surface, container)
+        glassSurfaces += surface
+        return container
     }
 
     private fun applyResponsiveLayout() {
@@ -629,7 +677,7 @@ class SettingsActivity : AppCompatActivity() {
                 .setPositiveButton("开始") { _, _ -> startActivityForResult(android.content.Intent(this, DeepOptimizeActivity::class.java), 9042) }
                 .show()
         }
-        clearCache.setOnClickListener { clearCache() }
+        clearCache.setOnClickListener { clearCacheNow() }
         copyNetworkDiagnostics.setOnClickListener {
             val entries = NetworkManager.recentDiagnostics().takeLast(20)
             val text = if (entries.isEmpty()) "暂无 API 失败诊断记录" else entries.joinToString("\n") { it.summary() }
@@ -667,20 +715,18 @@ class SettingsActivity : AppCompatActivity() {
         val colors = PaletteManager.colors(this)
         root.setBackgroundColor(colors.surface)
         pageBackdrop.setBackgroundColor(colors.surface)
-        scrollBackdrop.setBackgroundColor(colors.surface)
+        PreparedBackdropSource.invalidateSource(pageBackdrop)
         glassSurfaces.forEach { surface ->
             GlassWidgetStyle.apply(surface, if (surface === topIsland) Ui2DesignSystem.Shape.topIsland else Ui2DesignSystem.Shape.large, colors)
-            surface.backdropSource = pageBackdrop
-            GlassWidgetStyle.setRenderingActive(surface, false, null)
+            GlassWidgetStyle.setRenderingActive(surface, false, pageBackdrop, BackdropSourceMode.EXPLICIT_SOURCE)
         }
         if (::topIsland.isInitialized) {
             topIsland.setPalette(colors)
-            topIsland.setRenderingActive(true, scrollBackdrop)
+            topIsland.setRenderingActive(true, pageBackdrop, BackdropSourceMode.EXPLICIT_SOURCE)
         }
         glassButtons.forEach { button ->
             GlassWidgetStyle.apply(button, Ui2DesignSystem.Shape.medium, colors)
-            button.backdropSource = pageBackdrop
-            GlassWidgetStyle.setRenderingActive(button, false, null)
+            GlassWidgetStyle.setRenderingActive(button, false, pageBackdrop, BackdropSourceMode.EXPLICIT_SOURCE)
         }
         glassSwitches.forEach { it.applyPalette(colors) }
         segmentedControls.forEach { it.applyPalette(colors) }
@@ -698,15 +744,24 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun updateGlassRendering() {
         if (!::root.isInitialized) return
-        val active = glassRenderingActive && root.isAttachedToWindow && root.isShown
-        if (::topIsland.isInitialized) topIsland.setRenderingActive(active, if (active) scrollBackdrop else null)
-        // Section surfaces share a static page backdrop. Only the header samples the
-        // scrolling content, avoiding a full scroll-tree capture for every visible row.
+        val active = glassRenderingActive && resumeBackdropEnabled && root.isAttachedToWindow && root.isShown
+        if (::topIsland.isInitialized) {
+            val dynamicBackdrop = active && renderExperiment.shouldUpdateSettingsBackdrop()
+            topIsland.setRenderingActive(
+                dynamicBackdrop,
+                if (dynamicBackdrop) pageBackdrop else null,
+                if (dynamicBackdrop) BackdropSourceMode.EXPLICIT_SOURCE else BackdropSourceMode.DISABLED
+            )
+        }
         glassSurfaces.forEach {
-            GlassWidgetStyle.setRenderingActive(it, false, null)
+            val render = active && renderExperiment.shouldUpdateSettingsBackdrop() &&
+                it.isShown && it.getGlobalVisibleRect(visibleBounds)
+            GlassWidgetStyle.setRenderingActive(it, render, pageBackdrop, BackdropSourceMode.EXPLICIT_SOURCE)
         }
         glassButtons.forEach {
-            GlassWidgetStyle.setRenderingActive(it, false, null)
+            val render = active && renderExperiment.shouldUpdateSettingsBackdrop() &&
+                it.isShown && it.getGlobalVisibleRect(visibleBounds)
+            GlassWidgetStyle.setRenderingActive(it, render, pageBackdrop, BackdropSourceMode.EXPLICIT_SOURCE)
         }
     }
 
@@ -785,32 +840,57 @@ class SettingsActivity : AppCompatActivity() {
     private fun optimize() {
         networkStatus.text = "正在测速优选节点…"
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                NetworkManager.reinitialize(this@SettingsActivity, forceRefresh = true)
-                IpOptimizer.getBestIpSmart(this@SettingsActivity)
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    NetworkManager.reinitialize(this@SettingsActivity, forceRefresh = true)
+                    IpOptimizer.getBestIpSmart(this@SettingsActivity)
+                }
+                if (!isFinishing && !isDestroyed) networkStatus.text = "当前优选节点：${result.ip}"
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                CrashDiagnostics.recordFailure("SettingsActivity", "network_optimization", error)
+                if (!isFinishing && !isDestroyed) networkStatus.text = "网络测速失败，请检查连接后重试"
             }
-            networkStatus.text = "当前优选节点：${result.ip}"
         }
     }
 
-    private fun clearCache() {
+    private fun clearCacheNow() {
         clearCache.isEnabled = false
         scope.launch {
-            val webView = WebView(this@SettingsActivity)
-            val cleared = CacheManager.clearCache(this@SettingsActivity, webView)
-            webView.destroy()
-            clearCache.isEnabled = true
-            Toast.makeText(this@SettingsActivity, "已清除 ${CacheManager.formatSize(cleared)}", Toast.LENGTH_SHORT).show()
-            refreshNetworkStatus()
+            var webView: WebView? = null
+            try {
+                webView = WebView(this@SettingsActivity)
+                val cleared = CacheManager.clearCache(this@SettingsActivity, webView)
+                if (!isFinishing && !isDestroyed) {
+                    Toast.makeText(this@SettingsActivity, "已清除 ${CacheManager.formatSize(cleared)}", Toast.LENGTH_SHORT).show()
+                    refreshNetworkStatus()
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                CrashDiagnostics.recordFailure("SettingsActivity", "clear_cache", error)
+                if (!isFinishing && !isDestroyed) networkStatus.text = "清理缓存失败，设置和账户数据未更改"
+            } finally {
+                webView?.destroy()
+                clearCache.isEnabled = true
+            }
         }
     }
 
     private fun refreshNetworkStatus() {
         scope.launch {
-            val size = withContext(Dispatchers.IO) { CacheManager.calculateCacheSize(this@SettingsActivity) }
-            val routes = NetworkManager.currentPreferredIps()
-            val routeText = if (routes.isEmpty()) "直连（未使用优选节点）" else routes.entries.joinToString("\n") { "${it.key}: ${it.value}" }
-            networkStatus.text = "当前节点 IP:\n$routeText\n缓存大小：${CacheManager.formatSize(size)}"
+            try {
+                val size = withContext(Dispatchers.IO) { CacheManager.calculateCacheSize(this@SettingsActivity) }
+                val routes = NetworkManager.currentPreferredIps()
+                val routeText = if (routes.isEmpty()) "直连（未使用优选节点）" else routes.entries.joinToString("\n") { "${it.key}: ${it.value}" }
+                if (!isFinishing && !isDestroyed) networkStatus.text = "当前节点 IP:\n$routeText\n缓存大小：${CacheManager.formatSize(size)}"
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                CrashDiagnostics.recordFailure("SettingsActivity", "refresh_network_status", error)
+                if (!isFinishing && !isDestroyed) networkStatus.text = "网络或缓存状态暂时不可用"
+            }
         }
     }
 
@@ -831,7 +911,11 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        resumeBackdropEnabled = !renderExperiment.shouldDeferBackdropAfterResume()
+        root.removeCallbacks(resumeBackdropRunnable)
         glassRenderingActive = true
+        CrashDiagnostics.recordEvent("SettingsActivity", "resumed experiment=${renderExperiment.id} scroll_mirror=${renderExperiment.shouldMirrorScrollContent()}")
+        if (!resumeBackdropEnabled) root.viewTreeObserver.addOnPreDrawListener(resumePreDrawListener)
         PaletteManager.apply(this)
         applyPalette()
         updateAccountStatus()
@@ -840,7 +924,15 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onPause() {
         glassRenderingActive = false
-        if (::topIsland.isInitialized) topIsland.setRenderingActive(false, null)
+        resumeBackdropEnabled = false
+        if (::root.isInitialized) {
+            root.removeCallbacks(resumeBackdropRunnable)
+            if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnPreDrawListener(resumePreDrawListener)
+        }
+        CrashDiagnostics.recordEvent("SettingsActivity", "paused experiment=${renderExperiment.id}")
+        if (::topIsland.isInitialized) {
+            topIsland.setRenderingActive(false, null, BackdropSourceMode.DISABLED)
+        }
         super.onPause()
     }
 
@@ -848,6 +940,9 @@ class SettingsActivity : AppCompatActivity() {
     private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        CrashDiagnostics.recordEvent("SettingsActivity", "destroyed")
+        if (::root.isInitialized && root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnPreDrawListener(resumePreDrawListener)
+        if (::pageBackdrop.isInitialized) PreparedBackdropSource.release(pageBackdrop)
         scope.cancel()
         super.onDestroy()
     }

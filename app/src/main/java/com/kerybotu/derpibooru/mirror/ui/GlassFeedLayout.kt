@@ -19,8 +19,9 @@ import com.kerybotu.derpibooru.mirror.R
 
 /** A shared glass header, scrolling surface, loading state and pull-to-refresh for feeds. */
 open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)? = null) : FrameLayout(context) {
-    val pageBackdrop = View(context)
     val refresh = IosPullRefreshLayout(context)
+    private val preparedPageBackdrop = ScrollContentBackdrop(context, refresh)
+    val pageBackdrop: View get() = preparedPageBackdrop
     val results = RecyclerView(context)
     private val attachedGlass = mutableMapOf<LiquidGlassView, Float>()
     private val visibleRect = Rect()
@@ -74,8 +75,8 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         refresh.scrollTarget = results
         addView(refresh, LayoutParams(-1, -1))
         addView(header, LayoutParams(-1, dp(60), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        trackGlass(loadingPanel, refresh, 24f)
-        trackGlass(statusPanel, pageBackdrop, 24f)
+        trackGlass(loadingPanel, preparedPageBackdrop, 24f)
+        trackGlass(statusPanel, preparedPageBackdrop, 24f)
         addView(loadingPanel, LayoutParams(dp(80), dp(80), Gravity.CENTER))
         addView(statusPanel, LayoutParams(-1, -2, Gravity.CENTER))
         results.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -109,7 +110,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
     /** Optional fixed library tabs; list content and pull indicator both clear this row. */
     fun setTabs(titles: List<String>, onSelected: (Int) -> Unit): HomeGlassTabBar {
         tabs?.let { old ->
-            old.setRenderingActive(false, refresh)
+            old.setRenderingActive(false, preparedPageBackdrop)
             removeView(old)
         }
         val tabBar = HomeGlassTabBar(context).apply {
@@ -196,9 +197,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
 
     fun <T : LiquidGlassView> trackGlass(view: T, source: View = pageBackdrop, radius: Float = 16f): T {
         GlassWidgetStyle.apply(view, radius)
-        view.backdropSource = source
-        view.enableDynamicBackground = false
-        view.enableSensorHighlight = false
+        GlassWidgetStyle.setRenderingActive(view, false, sourceFor(source))
         view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
                 attachedGlass[view] = radius
@@ -207,27 +206,27 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
             }
             override fun onViewDetachedFromWindow(v: View) {
                 attachedGlass.remove(view)
-                view.enableDynamicBackground = false
-                view.enableSensorHighlight = false
+                GlassWidgetStyle.setRenderingActive(view, false, null)
             }
         })
         return view
     }
 
+    private fun sourceFor(source: View): View = if (source === refresh) preparedPageBackdrop else source
+
     fun updateGlassRendering(forceInactive: Boolean = false) {
         val visible = !forceInactive && isActive && isAttachedToWindow && isShown
-        headerGlass.setRenderingActive(visible, refresh)
-        tabs?.setRenderingActive(visible, refresh)
+        headerGlass.setRenderingActive(visible, preparedPageBackdrop)
+        tabs?.setRenderingActive(visible, preparedPageBackdrop)
         attachedGlass.keys.toList().forEach { glass ->
             val render = visible && glass.isShown && glass.getGlobalVisibleRect(visibleRect)
-            glass.enableDynamicBackground = render
-            glass.enableSensorHighlight = render
+            GlassWidgetStyle.setRenderingActive(glass, render, preparedPageBackdrop)
         }
     }
 
     fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         setBackgroundColor(colors.surface)
-        pageBackdrop.setBackgroundColor(colors.surface)
+        preparedPageBackdrop.setBackgroundColor(colors.surface)
         refresh.setBackgroundColor(colors.surface)
         headerGlass.setPalette(colors)
         toolbar.setBackgroundColor(Color.TRANSPARENT)
@@ -255,8 +254,14 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         post { updateGlassRendering() }
     }
 
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (changedView === this) post { updateGlassRendering() }
+    }
+
     override fun onDetachedFromWindow() {
         updateGlassRendering(forceInactive = true)
+        PreparedBackdropSource.release(preparedPageBackdrop)
         super.onDetachedFromWindow()
     }
 

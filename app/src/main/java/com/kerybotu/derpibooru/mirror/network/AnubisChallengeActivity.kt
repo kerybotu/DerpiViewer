@@ -17,6 +17,7 @@ import com.kerybotu.derpibooru.mirror.PaletteManager
 class AnubisChallengeActivity : ChallengeWebViewActivity() {
     private companion object {
         const val STATE_POLL_INTERVAL_MS = 400L
+        const val CHALLENGE_TIMEOUT_MS = 90_000L
         const val TAG = "AnubisChallenge"
     }
 
@@ -24,9 +25,16 @@ class AnubisChallengeActivity : ChallengeWebViewActivity() {
     private var targetUrl: String? = null
     private var challengeObserved = false
     private var redirectedAfterChallenge = false
+    private var lastLoggedState: String? = null
     private val statePoll = object : Runnable {
         override fun run() {
             if (!isFinishing && !isDestroyed) checkAnubisState(webView)
+        }
+    }
+    private val challengeTimeout = Runnable {
+        if (!isFinishing && !isDestroyed) {
+            Log.w(TAG, "Anubis verification timed out lastState=${lastLoggedState.orEmpty()}")
+            finishChallenge(false)
         }
     }
 
@@ -92,6 +100,7 @@ class AnubisChallengeActivity : ChallengeWebViewActivity() {
         val target = intent.getStringExtra(ChallengeActivity.EXTRA_URL)
         targetUrl = target
         if (target.isNullOrBlank()) return finishChallenge(false)
+        stateHandler.postDelayed(challengeTimeout, CHALLENGE_TIMEOUT_MS.toLong())
         loadThroughOptimizedProxy(target) { webView.loadUrl(target) }
     }
 
@@ -102,17 +111,53 @@ class AnubisChallengeActivity : ChallengeWebViewActivity() {
             (function(){
                 var html=(document.documentElement&&document.documentElement.innerHTML||'').toLowerCase();
                 var body=((document.body&&document.body.innerText)||(document.body&&document.body.textContent)||'').trim();
-                var challenge=html.indexOf('anubis_challenge')>=0 || html.indexOf('/x/cmd/anubis/')>=0 ||
+                var challengeObject=html.indexOf('anubis_challenge')>=0;
+                var anubisRuntime=Array.prototype.some.call(document.scripts,function(s){
+                    return (s.src||'').toLowerCase().indexOf('/x/cmd/anubis/')>=0;
+                });
+                var challenge=challengeObject || anubisRuntime ||
                     location.pathname.indexOf('/.within.website/')>=0;
+                var reject=!!document.querySelector('img[src*="/x/cmd/anubis/static/img/reject.webp"]') &&
+                    !!document.querySelector('.message, .centered-div');
+                var difficulty='';
+                try {
+                    var challengeData=JSON.parse((document.getElementById('anubis_challenge')||{}).textContent||'{}');
+                    if (challengeData.rules && Number.isFinite(Number(challengeData.rules.difficulty)))
+                        difficulty=String(Number(challengeData.rules.difficulty));
+                } catch(e) {}
                 var json=false;
                 try { var value=JSON.parse(body); json=value!==null && typeof value==='object'; } catch(e) {}
-                return (challenge?'1':'0')+','+(json?'1':'0');
+                var scripts=Array.prototype.map.call(document.scripts,function(s){
+                    try { var u=new URL(s.src,location.href); return u.pathname; } catch(e) { return ''; }
+                }).filter(function(p){ return p.toLowerCase().indexOf('anubis')>=0; }).slice(0,8).join(';');
+                var progress=Array.prototype.map.call(
+                    document.querySelectorAll('[role="progressbar"], progress'),function(el){
+                        var width=el.getBoundingClientRect().width;
+                        var max=Number(el.getAttribute('aria-valuemax')||el.max||0);
+                        var value=Number(el.getAttribute('aria-valuenow')||el.value||0);
+                        return [Math.round(width),max?Math.round(value*100/max):'',
+                            (el.getAttribute('aria-label')||'').slice(0,40)].join(':');
+                    }).slice(0,4).join(';');
+                return [challenge?'1':'0',reject?'1':'0',json?'1':'0',
+                    challengeObject?'1':'0',anubisRuntime?'1':'0',location.pathname,scripts,progress,difficulty].join('|');
             })()
             """.trimIndent()
         ) { result ->
-            val state = result.trim().trim('"').split(',')
+            val state = result.trim().trim('"').split('|')
             val challengePresent = state.getOrNull(0) == "1"
-            val jsonVisible = state.getOrNull(1) == "1"
+            val rejectPage = state.getOrNull(1) == "1"
+            val jsonVisible = state.getOrNull(2) == "1"
+            val challengeObject = state.getOrNull(3) == "1"
+            val anubisRuntime = state.getOrNull(4) == "1"
+            val pagePath = state.getOrNull(5).orEmpty().take(160)
+            val scriptPaths = state.getOrNull(6).orEmpty().take(500)
+            val progress = state.getOrNull(7).orEmpty().take(160)
+            val difficulty = state.getOrNull(8)?.toIntOrNull()
+            if (rejectPage && !challengePresent) {
+                Log.w(TAG, "page_state=anubis_reject path=$pagePath challengeObject=$challengeObject anubisRuntime=$anubisRuntime")
+                finishChallenge(false)
+                return@evaluateJavascript
+            }
             if (challengePresent) {
                 challengeObserved = true
                 redirectedAfterChallenge = false
@@ -122,6 +167,13 @@ class AnubisChallengeActivity : ChallengeWebViewActivity() {
 
             val url = targetUrl
             val hasAuthCookie = !url.isNullOrBlank() && SharedCookieJar.hasAnubisCookie(url)
+            val cookieNames = if (url.isNullOrBlank()) "none" else
+                SharedCookieJar.cookieNames(url).joinToString(",").ifBlank { "none" }
+            val stateSummary = "path=$pagePath challenge=$challengePresent difficulty=${difficulty ?: "unknown"} challengeObject=$challengeObject anubisRuntime=$anubisRuntime reject=$rejectPage json=$jsonVisible authCookie=$hasAuthCookie cookieNames=$cookieNames scripts=$scriptPaths progress=$progress"
+            if (stateSummary != lastLoggedState) {
+                Log.i(TAG, "page_state $stateSummary")
+                lastLoggedState = stateSummary
+            }
             if (challengeObserved && redirectedAfterChallenge && !challengePresent &&
                 (jsonVisible || hasAuthCookie)
             ) {
@@ -139,6 +191,7 @@ class AnubisChallengeActivity : ChallengeWebViewActivity() {
 
     override fun onDestroy() {
         stateHandler.removeCallbacks(statePoll)
+        stateHandler.removeCallbacks(challengeTimeout)
         super.onDestroy()
     }
 }

@@ -219,15 +219,11 @@ class AboutDeveloperActivity : AppCompatActivity() {
         scrollBackdrop.setBackgroundColor(colors.surface)
         surfaces.forEach {
             GlassWidgetStyle.apply(it, Ui2DesignSystem.Shape.large, colors)
-            it.backdropSource = pageBackdrop
-            it.enableDynamicBackground = false
-            it.enableSensorHighlight = false
+            GlassWidgetStyle.setRenderingActive(it, false, null)
         }
         buttons.forEach {
             GlassWidgetStyle.apply(it, Ui2DesignSystem.Shape.medium, colors)
-            it.backdropSource = pageBackdrop
-            it.enableDynamicBackground = false
-            it.enableSensorHighlight = false
+            GlassWidgetStyle.setRenderingActive(it, false, null)
         }
         topIsland.setPalette(colors)
         back.imageTintList = android.content.res.ColorStateList.valueOf(colors.glassText)

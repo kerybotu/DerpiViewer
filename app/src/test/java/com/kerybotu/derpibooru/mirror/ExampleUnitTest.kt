@@ -11,6 +11,12 @@ import org.junit.Assert.*
  */
 class ExampleUnitTest {
     @Test
+    fun glassFallbackDefaultsOnlyBelowAndroidNine() {
+        assertTrue(AppSettings.defaultGlassPerformanceFallbackForSdk(27))
+        assertFalse(AppSettings.defaultGlassPerformanceFallbackForSdk(28))
+    }
+
+    @Test
     fun addition_isCorrect() {
         assertEquals(4, 2 + 2)
     }

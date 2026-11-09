@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
@@ -62,7 +63,15 @@ private val SORT_FIELDS = listOf(
 )
 
 class SearchActivity : AppCompatActivity() {
-    companion object { const val EXTRA_INITIAL_QUERY = "initial_query" }
+    companion object {
+        private const val PAGE_SIZE = 50
+        const val EXTRA_INITIAL_QUERY = "initial_query"
+        const val EXTRA_GALLERY_IMAGE_IDS = "gallery_image_ids"
+        const val EXTRA_GALLERY_QUERY = "gallery_query"
+        const val EXTRA_GALLERY_SORT_FIELD = "gallery_sort_field"
+        const val EXTRA_GALLERY_SORT_DIRECTION = "gallery_sort_direction"
+        const val EXTRA_GALLERY_PAGE = "gallery_page"
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var queryInput: MultiAutoCompleteTextView
     private lateinit var results: RecyclerView
@@ -81,8 +90,16 @@ class SearchActivity : AppCompatActivity() {
     private var directionIndex = 0
     private var suggestionJob: Job? = null
     private var searchJob: Job? = null
+    private var pageJob: Job? = null
     private var resumed = false
     private var searchLoading = false
+    private var loadedQuery = ""
+    private var loadedSortField = SORT_FIELDS.first().first
+    private var loadedSortDirection = "desc"
+    private var loadedPage = 1
+    private var loadedFilterParam = ""
+    private var pageLoading = false
+    private var hasMorePages = false
     private val attachedGlass = mutableMapOf<LiquidGlassView, Float>()
     private val visibleRect = Rect()
     private var headerContentHeight = 0
@@ -203,13 +220,13 @@ class SearchActivity : AppCompatActivity() {
         results.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
             if (right - left != oldRight - oldLeft) updateResultInsets()
         }
-        adapter = ImageAdapter(emptyList(), {
-            startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image", it))
+        adapter = ImageAdapter(emptyList(), { image ->
+            openResultDetail(image)
         }, { count ->
             selectionActions.visibility = if (count > 0) View.VISIBLE else View.GONE
             downloadButton.text = "下载 $count 张"
-        }, this, glassBackdrop = pageBackdrop, onGlassCreated = { glass ->
-            trackGlass(glass, glass.backdropSource ?: pageBackdrop, 16f)
+        }, this, glassBackdrop = pageBackdrop, onGlassCreated = { glass, source ->
+            trackGlass(glass, source, 16f)
         })
         results.adapter = adapter
         resultsSurface.addView(results, FrameLayout.LayoutParams(-1, -1))
@@ -255,7 +272,6 @@ class SearchActivity : AppCompatActivity() {
         headerExtras = column()
         val chips = LiquidGlassChipGroup(this).apply {
             isSingleLine = true
-            backdropSource = resultsSurface
         }
         fun addChip(label: String, value: String) {
             chips.addView(trackGlass(LiquidGlassChip(this)).apply {
@@ -317,6 +333,10 @@ class SearchActivity : AppCompatActivity() {
         })
         results.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                val layout = results.layoutManager as? GridLayoutManager
+                if (dy > 0 && !pageLoading && hasMorePages && layout != null &&
+                    layout.findLastVisibleItemPosition() >= adapter.itemCount - 5
+                ) loadNextPage()
                 if (dy == 0 || headerContentHeight <= 0 || resultsSurface.isPulling) return
                 headerSnapAnimator?.cancel()
                 setHeaderProgress(headerHiddenPixels + dy)
@@ -381,7 +401,6 @@ class SearchActivity : AppCompatActivity() {
     private fun showChoices(title: String, labels: List<String>, selected: Int, onSelected: (Int) -> Unit) {
         val group = LiquidGlassListGroup(this).apply {
             style = LiquidGlassListGroup.Style.SEPARATED
-            backdropSource = resultsSurface
         }
         lateinit var dialog: AlertDialog
         labels.forEachIndexed { index, label ->
@@ -457,6 +476,9 @@ class SearchActivity : AppCompatActivity() {
         if (query.isBlank()) { resultsSurface.isRefreshing = false; return }
         suggestionJob?.cancel(); queryInput.dismissDropDown()
         searchJob?.cancel()
+        pageJob?.cancel()
+        pageLoading = false
+        hasMorePages = false
         if (!fromPull) {
             resultsSurface.isRefreshing = false
             adapter.updateData(emptyList())
@@ -469,14 +491,14 @@ class SearchActivity : AppCompatActivity() {
         historyPrefs.edit().putStringSet("items", history).apply()
         val sf = SORT_FIELDS[sortIndex].first
         val sd = if (directionIndex == 0) "desc" else "asc"
+        val filter = NetworkManager.currentFilterParam(this)
         searchJob = scope.launch {
             try {
-                val filter = NetworkManager.currentFilterParam(this@SearchActivity)
                 val encoded = NetworkManager.encodeSearchQuery(this@SearchActivity, query)
                 val request = withContext(Dispatchers.IO) {
                     NetworkManager.getApiWithDiagnostics(
                         this@SearchActivity,
-                        "search/images?q=$encoded&sf=$sf&sd=$sd&per_page=50$filter"
+                        "search/images?q=$encoded&sf=$sf&sd=$sd&per_page=$PAGE_SIZE&page=1$filter"
                     )
                 }
                 val json = request.body ?: throw ApiSearchFailure(
@@ -514,6 +536,12 @@ class SearchActivity : AppCompatActivity() {
                     throw ApiSearchFailure(diagnostic)
                 }
                 adapter.updateData(images)
+                loadedQuery = query
+                loadedSortField = sf
+                loadedSortDirection = sd
+                loadedPage = 1
+                loadedFilterParam = filter
+                hasMorePages = images.size == PAGE_SIZE
                 if (adapter.itemCount == 0) {
                     statusPanel.headline = "没有找到图片"; statusPanel.supportingText = "试试其他标签或筛选条件"
                     statusPanel.setOnClickListener(null); statusPanel.visibility = View.VISIBLE
@@ -547,6 +575,73 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private class ApiSearchFailure(val diagnostic: ApiRequestDiagnostic) : RuntimeException()
+
+    private fun loadNextPage() {
+        if (pageLoading || !hasMorePages || loadedQuery.isBlank()) return
+        pageLoading = true
+        val requestedPage = loadedPage + 1
+        pageJob = scope.launch {
+            try {
+                val encoded = NetworkManager.encodeSearchQuery(this@SearchActivity, loadedQuery)
+                val request = withContext(Dispatchers.IO) {
+                    NetworkManager.getApiWithDiagnostics(
+                        this@SearchActivity,
+                        "search/images?q=$encoded&sf=$loadedSortField&sd=$loadedSortDirection&per_page=$PAGE_SIZE&page=$requestedPage$loadedFilterParam"
+                    )
+                }
+                val json = request.body ?: throw ApiSearchFailure(
+                    request.failure ?: unknownSearchDiagnostic("empty_page_response")
+                )
+                val page = try {
+                    parseImages(json)
+                } catch (error: Exception) {
+                    val diagnostic = request.failure?.copy(phase = "parse", kind = ApiFailureKind.INVALID_JSON)
+                        ?: unknownSearchDiagnostic(error.javaClass.simpleName)
+                    NetworkManager.recordClientDiagnostic(diagnostic)
+                    throw ApiSearchFailure(diagnostic)
+                }
+                adapter.appendData(page)
+                loadedPage = requestedPage
+                hasMorePages = page.size == PAGE_SIZE
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (failure: ApiSearchFailure) {
+                showSearchFailure(failure.diagnostic)
+            } catch (error: Exception) {
+                showSearchFailure(unknownSearchDiagnostic(error.javaClass.simpleName))
+            } finally {
+                pageLoading = false
+                if (currentCoroutineContext().isActive) updateGlassRendering()
+            }
+        }
+    }
+
+    private fun unknownSearchDiagnostic(cause: String) = ApiRequestDiagnostic(
+        requestId = "unknown",
+        operation = "search/images",
+        host = "unknown",
+        phase = "client",
+        kind = ApiFailureKind.UNKNOWN,
+        elapsedMs = 0L,
+        attempt = 1,
+        maxAttempts = 1,
+        networkConfigurationVersion = NetworkManager.configurationVersion.value,
+        retryable = true,
+        rootCause = cause
+    )
+
+    private fun openResultDetail(image: Image) {
+        val displayed = adapter.displayedItems()
+        val ids = displayed.map { it.id }.toIntArray()
+        startActivity(Intent(this, ImageDetailActivity::class.java).apply {
+            putExtra("image", image)
+            putExtra(EXTRA_GALLERY_IMAGE_IDS, ids)
+            putExtra(EXTRA_GALLERY_QUERY, loadedQuery)
+            putExtra(EXTRA_GALLERY_SORT_FIELD, loadedSortField)
+            putExtra(EXTRA_GALLERY_SORT_DIRECTION, loadedSortDirection)
+            putExtra(EXTRA_GALLERY_PAGE, loadedPage)
+        })
+    }
 
     private fun showSearchFailure(diagnostic: ApiRequestDiagnostic) {
         val networkFailure = diagnostic.kind in setOf(
@@ -614,7 +709,7 @@ class SearchActivity : AppCompatActivity() {
 
     private fun <T : LiquidGlassView> trackGlass(view: T, source: View = resultsSurface, radius: Float = 24f): T {
         GlassWidgetStyle.apply(view, radius)
-        view.backdropSource = source
+        GlassWidgetStyle.setRenderingActive(view, false, source)
         view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
                 attachedGlass[view] = radius
@@ -622,7 +717,7 @@ class SearchActivity : AppCompatActivity() {
                 view.post { updateGlassRendering() }
             }
             override fun onViewDetachedFromWindow(v: View) {
-                attachedGlass.remove(view); view.enableDynamicBackground = false; view.enableSensorHighlight = false
+                attachedGlass.remove(view); GlassWidgetStyle.setRenderingActive(view, false, null)
             }
         })
         return view
@@ -631,8 +726,7 @@ class SearchActivity : AppCompatActivity() {
     private fun updateGlassRendering() {
         attachedGlass.keys.toList().forEach { glass ->
             val active = resumed && glass.isShown && glass.getGlobalVisibleRect(visibleRect)
-            glass.enableDynamicBackground = active
-            glass.enableSensorHighlight = active
+            GlassWidgetStyle.setRenderingActive(glass, active, resultsSurface)
         }
     }
 

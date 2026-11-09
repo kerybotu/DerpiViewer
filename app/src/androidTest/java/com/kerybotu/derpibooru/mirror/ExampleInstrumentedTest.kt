@@ -19,6 +19,9 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.kerybotu.derpibooru.mirror", appContext.packageName)
+        assertTrue(
+            appContext.packageName == "com.kerybotu.derpiviewer" ||
+                appContext.packageName == "com.kerybotu.derpiviewer.renderdiag"
+        )
     }
 }

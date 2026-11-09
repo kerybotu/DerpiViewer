@@ -314,7 +314,9 @@ class FavoritesActivity : AppCompatActivity() {
         }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             val holder = when (viewType) {
-                0 -> ActionHolder(dialogs.button("") {}.apply { backdropSource = feed.pageBackdrop })
+                0 -> ActionHolder(dialogs.button("") {}.apply {
+                    GlassWidgetStyle.setRenderingActive(this, false, feed.pageBackdrop)
+                })
                 1 -> FolderHolder(feed.trackGlass(GlassActionListItem(parent.context)).apply {
                     headlineTextView.maxLines = 2
                     headlineTextView.gravity = Gravity.CENTER

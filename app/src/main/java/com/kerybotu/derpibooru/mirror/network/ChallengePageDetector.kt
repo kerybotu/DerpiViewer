@@ -11,6 +11,7 @@ enum class ChallengePageType {
 enum class ChallengeResponseCategory {
     NON_HTML,
     ANUBIS_CHALLENGE,
+    ANUBIS_REJECT_PAGE,
     DERPI_CHALLENGE,
     CLOUDFLARE_CHALLENGE,
     ACCESS_DENIED,
@@ -27,6 +28,22 @@ data class ChallengeResponseAssessment(
     val title: String = ""
 )
 
+data class ChallengePageEvidence(
+    val title: String,
+    val htmlLength: Int,
+    val scriptPaths: List<String>,
+    val inlineScriptCount: Int,
+    val scriptIds: List<String>,
+    val elementIds: List<String>,
+    val classNames: List<String>,
+    val metaNames: List<String>,
+    val formPaths: List<String>,
+    val resourcePaths: List<String>,
+    val frameCount: Int,
+    val challengeScriptMarkers: List<String>,
+    val markers: List<String>
+)
+
 /** Identifies supported verification pages without matching generic HTML errors. */
 object ChallengePageDetector {
     private const val DERPI_FORM_SIGNATURE =
@@ -34,6 +51,50 @@ object ChallengePageDetector {
 
     fun detect(contentType: String, html: String): ChallengePageType? {
         return assess(statusCode = 200, finalUrl = "", contentType = contentType, html = html).challengeType
+    }
+
+    fun inspect(html: String, finalUrl: String): ChallengePageEvidence {
+        val document = Jsoup.parse(html, finalUrl)
+        val bodyText = document.body()?.text().orEmpty().lowercase()
+        val scriptPaths = document.select("script[src]")
+            .map { safeResourcePath(it.attr("src"), finalUrl) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(12)
+        val inlineScripts = document.select("script:not([src])")
+        val challengeScriptMarkers = listOf("anubis_challenge", "anubis_version", "/x/cmd/anubis/", "within.website")
+            .filter { marker -> inlineScripts.any { it.outerHtml().contains(marker, ignoreCase = true) } }
+        val resourcePaths = document.select("img[src], link[href], iframe[src]")
+            .map { element ->
+                val attribute = if (element.normalName() == "link") "href" else "src"
+                safeResourcePath(element.attr(attribute), finalUrl)
+            }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(16)
+        val scriptIds = document.select("script[id]").eachAttr("id").map(::safeName).filter { it.isNotBlank() }.distinct().take(12)
+        val elementIds = document.select("[id]").eachAttr("id").map(::safeName).filter { it.isNotBlank() }.distinct().take(20)
+        val classNames = document.select("[class]").flatMap { it.classNames() }.map(::safeName).filter { it.isNotBlank() }.distinct().take(20)
+        val metaNames = document.select("meta[name]").eachAttr("name").map(::safeName).filter { it.isNotBlank() }.distinct().take(12)
+        val formPaths = document.select("form[action]").map { safeResourcePath(it.attr("action"), finalUrl) }
+            .filter { it.isNotBlank() }.distinct().take(8)
+        val markers = listOf("anubis", "challenge", "verification", "captcha", "robot", "blocked", "denied", "oh noes")
+            .filter { bodyText.contains(it) || document.title().contains(it, ignoreCase = true) }
+        return ChallengePageEvidence(
+            title = document.title().replace(Regex("\\s+"), " ").trim().take(120),
+            htmlLength = html.length,
+            scriptPaths = scriptPaths,
+            inlineScriptCount = inlineScripts.size,
+            scriptIds = scriptIds,
+            elementIds = elementIds,
+            classNames = classNames,
+            metaNames = metaNames,
+            formPaths = formPaths,
+            resourcePaths = resourcePaths,
+            frameCount = document.select("iframe, frame").size,
+            challengeScriptMarkers = challengeScriptMarkers,
+            markers = markers
+        )
     }
 
     fun assess(statusCode: Int, finalUrl: String, contentType: String, html: String): ChallengeResponseAssessment {
@@ -46,7 +107,11 @@ object ChallengePageDetector {
         val challengeType = detectHtml(document, html, finalUrl)
         if (challengeType != null) {
             val category = when (challengeType) {
-                ChallengePageType.ANUBIS -> ChallengeResponseCategory.ANUBIS_CHALLENGE
+                ChallengePageType.ANUBIS -> if (isAnubisRejectPage(document, finalUrl)) {
+                    ChallengeResponseCategory.ANUBIS_REJECT_PAGE
+                } else {
+                    ChallengeResponseCategory.ANUBIS_CHALLENGE
+                }
                 ChallengePageType.DERPI_FORM -> ChallengeResponseCategory.DERPI_CHALLENGE
                 ChallengePageType.CLOUDFLARE_TURNSTILE -> ChallengeResponseCategory.CLOUDFLARE_CHALLENGE
             }
@@ -99,7 +164,8 @@ object ChallengePageDetector {
             document.title().contains("making sure you're not a bot", ignoreCase = true) ||
                 bodyText.contains("protected by", ignoreCase = true) &&
                 bodyText.contains("anubis", ignoreCase = true)
-        if (hasAnubisChallenge && (hasAnubisRuntime || hasAnubisBranding)) {
+        val hasAnubisRejectPage = isAnubisRejectPage(document, finalUrl)
+        if ((hasAnubisChallenge && (hasAnubisRuntime || hasAnubisBranding)) || hasAnubisRejectPage) {
             return ChallengePageType.ANUBIS
         }
 
@@ -118,4 +184,21 @@ object ChallengePageDetector {
             null
         }
     }
+
+    private fun safeName(value: String): String = value.filter { it.isLetterOrDigit() || it in "_-:." }.take(80)
+
+    private fun isAnubisRejectPage(document: org.jsoup.nodes.Document, finalUrl: String): Boolean {
+        val resources = document.select("link[href], img[src]")
+            .map { element -> if (element.normalName() == "link") element.attr("href") else element.attr("src") }
+            .map { safeResourcePath(it, finalUrl).lowercase() }
+        return resources.any { it.contains("/.within.website/x/cmd/anubis/static/css/") } &&
+            resources.any { it.endsWith("/reject.webp") } &&
+            document.select(".message, .centered-div").isNotEmpty()
+    }
+
+    private fun safeResourcePath(value: String, baseUrl: String): String = runCatching {
+        val uri = java.net.URI(value)
+        val path = if (uri.isAbsolute) uri.path else java.net.URI(baseUrl).resolve(uri).path
+        path.orEmpty().take(200)
+    }.getOrDefault("")
 }

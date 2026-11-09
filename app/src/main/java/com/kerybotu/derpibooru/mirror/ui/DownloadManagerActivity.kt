@@ -215,7 +215,7 @@ class DownloadManagerActivity : AppCompatActivity() {
         override fun getItemCount(): Int = if (label == null) 0 else 1
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BulkHolder =
             BulkHolder(dialogs.button("") { runBulkAction() }.apply {
-                backdropSource = feed.pageBackdrop
+                GlassWidgetStyle.setRenderingActive(this, false, feed.pageBackdrop)
                 layoutParams = RecyclerView.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(10) }
             })
         override fun onBindViewHolder(holder: BulkHolder, position: Int) {

@@ -1,7 +1,9 @@
 package com.kerybotu.derpibooru.mirror.network
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChallengePageDetectorTest {
@@ -85,6 +87,41 @@ class ChallengePageDetectorTest {
             ChallengeResponseCategory.ACCESS_DENIED,
             ChallengePageDetector.assess(200, "https://derpibooru.org/filters", "text/html", html).category
         )
+    }
+
+    @Test
+    fun reportsOnlySafeOhNoesPageStructureForRuntimeDiagnosis() {
+        val html = """
+            <html><head><title>Derpibooru - Oh noes!</title>
+            <script id="anubis_challenge" type="application/json">{"token":"secret"}</script>
+            <script src="/.within.website/x/cmd/anubis/main.mjs?token=secret"></script>
+            <meta name="anubis_version" content="secret">
+            </head><body><main id="anubis-main" class="challenge blocked">Denied</main></body></html>
+        """.trimIndent()
+        val evidence = ChallengePageDetector.inspect(html, "https://derpibooru.org/filters")
+        assertEquals("Derpibooru - Oh noes!", evidence.title)
+        assertTrue(evidence.scriptPaths.any { it.contains("/x/cmd/anubis/main.mjs") })
+        assertTrue(evidence.elementIds.containsAll(listOf("anubis_challenge", "anubis-main")))
+        assertTrue(evidence.metaNames.contains("anubis_version"))
+        assertTrue(evidence.challengeScriptMarkers.contains("anubis_challenge"))
+        assertFalse(evidence.toString().contains("secret"))
+    }
+
+    @Test
+    fun detectsDerpibooruCustomizedAnubisRejectPageWithoutTreatingItAsSuccess() {
+        val html = """
+            <html><head><title>Derpibooru - Oh noes!</title>
+            <link rel="stylesheet" href="/.within.website/x/cmd/anubis/static/css/derpibooru.css"></head>
+            <body><div class="message centered-div"><img src="/.within.website/x/cmd/anubis/static/img/reject.webp">You have been blocked</div></body></html>
+        """.trimIndent()
+        val assessment = ChallengePageDetector.assess(
+            200,
+            "https://derpibooru.org/filters?fq=creator%3A495pygly",
+            "text/html; charset=utf-8",
+            html
+        )
+        assertEquals(ChallengePageType.ANUBIS, assessment.challengeType)
+        assertEquals(ChallengeResponseCategory.ANUBIS_REJECT_PAGE, assessment.category)
     }
 
     @Test

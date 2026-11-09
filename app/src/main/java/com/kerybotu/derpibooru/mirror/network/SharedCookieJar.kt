@@ -60,7 +60,7 @@ class SharedCookieJar : CookieJar {
             return header.split(';')
                 .asSequence()
                 .map { it.trim().substringBefore('=').lowercase() }
-                .any { it == "techaro.lol-anubis" || it.endsWith("-anubis") }
+                .any(AnubisEnvironmentPolicy::isAuthCookieName)
         }
 
         fun cookieNames(url: String): Set<String> {

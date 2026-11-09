@@ -556,8 +556,7 @@ class TagSearchActivity : AppCompatActivity() {
 
     private fun <T : LiquidGlassView> trackGlass(view: T, source: View, radius: Float = 24f): T {
         GlassWidgetStyle.apply(view, radius)
-        view.backdropSource = source
-        GlassWidgetStyle.setRenderingActive(view, false, null)
+        GlassWidgetStyle.setRenderingActive(view, false, source)
         view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
                 attachedGlass[view] = radius

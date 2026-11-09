@@ -2,6 +2,7 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Build
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -24,8 +25,11 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.chip.Chip
 import com.kerybotu.derpibooru.mirror.AppSettings
+import com.kerybotu.derpibooru.mirror.CrashDiagnostics
 import com.kerybotu.derpibooru.mirror.PaletteManager
+import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.databinding.ActivityImageDetailBinding
+import com.kerybotu.derpibooru.mirror.model.ImageGalleryNavigation
 import com.kerybotu.derpibooru.mirror.model.Image
 import com.kerybotu.derpibooru.mirror.model.Comment
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
@@ -55,6 +59,12 @@ class ImageDetailActivity : AppCompatActivity() {
     private var expanded = false
     private var previewPlayer: MediaPreviewPlayer? = null
     private var adjacentLoading = false
+    private var imageLoadFailedId: Int? = null
+    private var galleryImageIds: IntArray? = null
+    private var galleryQuery: String? = null
+    private var gallerySortField: String? = null
+    private var gallerySortDirection: String? = null
+    private var galleryPage: Int = 1
     private var detailJob: Job? = null
     private var tagJob: Job? = null
     private var descriptionOriginal = ""
@@ -69,6 +79,23 @@ class ImageDetailActivity : AppCompatActivity() {
     private var maxScale = 5f
     private var matrixDrawable: Drawable? = null
     private var renderingActive = false
+    private var resumeBackdropEnabled = true
+    private val renderExperiment by lazy { RenderCrashExperiment.from(this) }
+    private val resumeBackdropRunnable = Runnable {
+        if (!isFinishing && !isDestroyed && renderExperiment.shouldDeferBackdropAfterResume()) {
+            resumeBackdropEnabled = true
+            CrashDiagnostics.recordEvent("ImageDetailActivity", "deferred_backdrop_enabled image_id=${image.id} experiment=${renderExperiment.id}")
+            updateGlassRendering()
+        }
+    }
+    private val resumePreDrawListener = object : android.view.ViewTreeObserver.OnPreDrawListener {
+        override fun onPreDraw(): Boolean {
+            if (b.root.viewTreeObserver.isAlive) b.root.viewTreeObserver.removeOnPreDrawListener(this)
+            CrashDiagnostics.recordEvent("ImageDetailActivity", "resume_first_predraw image_id=${image.id} experiment=${renderExperiment.id}")
+            b.root.postOnAnimation(resumeBackdropRunnable)
+            return true
+        }
+    }
     private var bottomInset = 0
     private var removePaletteObserver: (() -> Unit)? = null
     private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyPalette() }
@@ -94,6 +121,13 @@ class ImageDetailActivity : AppCompatActivity() {
         image = intent.getSerializableExtra("image") as? Image
             ?: intent.getIntExtra("image_id", -1).takeIf { it > 0 }?.let { Image(id = it, title = "", thumbnailUrl = null, width = 0, height = 0, score = 0, faves = 0, upvotes = 0, downvotes = 0, commentCount = 0, tags = emptyList()) }
             ?: run { finish(); return }
+        CrashDiagnostics.recordEvent("ImageDetailActivity", "opened image_id=${image.id} experiment=${renderExperiment.id}")
+        galleryImageIds = intent.getIntArrayExtra(SearchActivity.EXTRA_GALLERY_IMAGE_IDS)
+            ?.let(ImageGalleryNavigation::normalize)
+        galleryQuery = intent.getStringExtra(SearchActivity.EXTRA_GALLERY_QUERY)
+        gallerySortField = intent.getStringExtra(SearchActivity.EXTRA_GALLERY_SORT_FIELD)
+        gallerySortDirection = intent.getStringExtra(SearchActivity.EXTRA_GALLERY_SORT_DIRECTION)
+        galleryPage = intent.getIntExtra(SearchActivity.EXTRA_GALLERY_PAGE, 1).coerceAtLeast(1)
         mediaMimeType = image.mimeType
         uploaderId = image.uploaderId
         sheet = BottomSheetBehavior.from(b.bottomSheet)
@@ -108,9 +142,13 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailCommentsCount.setOnClickListener { sheet.state = BottomSheetBehavior.STATE_EXPANDED }
         b.detailFaves.setOnClickListener {
             val store = LocalFavoritesStore(this)
-            store.allFolders().firstOrNull { it.isDefault }?.let { folder ->
-                store.add(folder.id, FavoriteItem(image.id, image.thumbnailUrl, image.mimeType))
-                Toast.makeText(this, "已收藏到本地", Toast.LENGTH_SHORT).show()
+            runCatching {
+                val isFavorite = store.toggleDefaultFavorite(FavoriteItem(image.id, image.thumbnailUrl, image.mimeType))
+                renderFavoriteState(store.isFavoriteInDefaultFolder(image.id))
+                Toast.makeText(this, if (isFavorite) "已收藏到本地" else "已取消收藏", Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                renderFavoriteState(store.isFavoriteInDefaultFolder(image.id))
+                Toast.makeText(this, "收藏状态更新失败", Toast.LENGTH_SHORT).show()
             }
         }
         b.detailVideoPlayer.setOnClickListener { openLargePreview() }
@@ -138,6 +176,11 @@ class ImageDetailActivity : AppCompatActivity() {
             PaletteManager.apply(this)
             applyPalette()
             renderingActive = true
+            resumeBackdropEnabled = !renderExperiment.shouldDeferBackdropAfterResume()
+            b.root.removeCallbacks(resumeBackdropRunnable)
+            CrashDiagnostics.recordEvent("ImageDetailActivity", "resumed image_id=${image.id} experiment=${renderExperiment.id}")
+            if (!resumeBackdropEnabled) b.root.viewTreeObserver.addOnPreDrawListener(resumePreDrawListener)
+            PreparedBackdropSource.invalidateSource(b.detailBackdrop)
             removePaletteObserver?.invoke()
             removePaletteObserver = PaletteManager.observe(this, paletteObserver)
         }
@@ -145,6 +188,12 @@ class ImageDetailActivity : AppCompatActivity() {
 
     override fun onPause() {
         renderingActive = false
+        resumeBackdropEnabled = false
+        if (::b.isInitialized) {
+            b.root.removeCallbacks(resumeBackdropRunnable)
+            if (b.root.viewTreeObserver.isAlive) b.root.viewTreeObserver.removeOnPreDrawListener(resumePreDrawListener)
+        }
+        if (::image.isInitialized) CrashDiagnostics.recordEvent("ImageDetailActivity", "paused image_id=${image.id} experiment=${renderExperiment.id}")
         updateGlassRendering()
         removePaletteObserver?.invoke()
         removePaletteObserver = null
@@ -152,6 +201,7 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun updateGlassRendering() {
+        if (!::b.isInitialized || !::image.isInitialized) return
         b.detailImage.imageMatrix.getValues(artworkMatrixValues)
         var signature = artworkMatrixValues.contentHashCode()
         signature = 31 * signature + System.identityHashCode(b.detailImage.drawable)
@@ -166,31 +216,32 @@ class ImageDetailActivity : AppCompatActivity() {
         lastArtworkSignature = signature
         val animated = (b.detailImage.drawable as? android.graphics.drawable.Animatable)?.isRunning == true ||
             b.detailVideoPlayer.isVisible
+        if (artworkChanged || animated) PreparedBackdropSource.invalidateSource(b.detailBackdrop)
         fun update(island: LiquidGlassView) {
             if (island === b.detailTopIsland && !renderingActive) {
-                // setRenderingActive has detached this source. Reattaching it
-                // here would invalidate it on every paused-window pre-draw.
                 lastGlassBounds.remove(island)
+                b.detailTopIsland.setRenderingActive(
+                    false,
+                    b.detailBackdrop,
+                    BackdropSourceMode.EXPLICIT_SOURCE
+                )
                 return
             }
             // Capture only artwork, never the transparent sheet or its text.
-            island.backdropSource = b.detailBackdrop
-            val active = renderingActive && island.isShown && island.getGlobalVisibleRect(visibleBounds)
+            val active = renderingActive && resumeBackdropEnabled &&
+                renderExperiment.shouldUpdateDetailBackdrop() &&
+                island.isShown && island.getGlobalVisibleRect(visibleBounds)
             val previous = lastGlassBounds[island]
             val moved = active && previous != visibleBounds
             if (active) {
                 if (previous == null) lastGlassBounds[island] = Rect(visibleBounds)
                 else previous.set(visibleBounds)
             } else lastGlassBounds.remove(island)
-            // Retain the actual blurred/refracted texture while artwork is
-            // still. The CPU renderer otherwise re-blurs it on every frame.
-            // Gestures, sheet movement, GIF/video and theme backgrounds refresh
-            // the optical result; no material or optical effect is disabled.
-            val dynamic = active && (animated || artworkChanged || moved)
-            if (island.enableDynamicBackground != dynamic) island.enableDynamicBackground = dynamic
+            // The source cache refreshes only when artwork, layout or scrolling changes.
+            // Keep the GPU material active between those updates without repeating capture.
+            GlassWidgetStyle.setRenderingActive(island, active, b.detailBackdrop, BackdropSourceMode.EXPLICIT_SOURCE)
             island.enableSensorHighlight = false
         }
-        b.detailTopIsland.setRenderingActive(renderingActive, b.detailBackdrop)
         readingIslands.forEach(::update)
         update(b.detailTopIsland)
     }
@@ -198,6 +249,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun bindInitial() {
         spoilerRevealed = false
         b.detailFaves.text = image.faves.toString(); b.detailUpvotes.text = image.upvotes.toString()
+        renderFavoriteState(LocalFavoritesStore(this).isFavoriteInDefaultFolder(image.id))
         b.detailCommentsCount.text = image.commentCount.toString()
         b.detailUploader.text = image.uploader ?: "未知上传者"; b.detailCreatedAt.text = image.createdAt?.take(10) ?: ""
         b.detailTitle.text = image.title.ifBlank { "图片详情" }
@@ -210,6 +262,17 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailScore.visibility = View.GONE
         bindTags(image.tags)
         showPreview(image.mimeType, if (image.mimeType?.startsWith("video/") == true) image.fullUrl ?: image.thumbnailUrl else image.thumbnailUrl)
+    }
+
+    private fun renderFavoriteState(isFavorite: Boolean) {
+        val palette = PaletteManager.colors(this)
+        val drawable = androidx.appcompat.content.res.AppCompatResources.getDrawable(
+            this,
+            if (isFavorite) R.drawable.baseline_favorite else R.drawable.ic_favorite
+        )?.mutate()
+        drawable?.setTint(if (isFavorite) palette.primary else palette.onSurface)
+        b.detailFaves.setCompoundDrawablesRelativeWithIntrinsicBounds(drawable, null, null, null)
+        b.detailFaves.contentDescription = if (isFavorite) "取消本地收藏" else "加入本地收藏"
     }
 
     private fun bindTags(tags: List<String>) {
@@ -257,6 +320,7 @@ class ImageDetailActivity : AppCompatActivity() {
         val palette = PaletteManager.colors(this)
         b.detailRoot.setBackgroundColor(palette.surface)
         b.detailBackdrop.setBackgroundColor(palette.surface)
+        PreparedBackdropSource.invalidateSource(b.detailBackdrop)
         b.detailVideoPlayer.setBackgroundColor(palette.mediaSurface)
         GlassWidgetStyle.apply(b.detailAuthorPanel, Ui2DesignSystem.Shape.large, palette, GlassWidgetStyle.MaterialRole.READING)
         GlassWidgetStyle.apply(b.detailInteractionPanel, Ui2DesignSystem.Shape.island, palette, GlassWidgetStyle.MaterialRole.READING)
@@ -292,6 +356,7 @@ class ImageDetailActivity : AppCompatActivity() {
             it.compoundDrawableTintList = ColorStateList.valueOf(palette.onSurface)
             it.setTextColor(palette.onSurface)
         }
+        if (::image.isInitialized) renderFavoriteState(LocalFavoritesStore(this).isFavoriteInDefaultFolder(image.id))
         listOf(b.detailDescriptionLabel, b.detailTagsLabel, b.detailSourceLabel, b.detailCreatedAt,
             b.detailDescription, b.detailCommentsStatus).forEach { it.setTextColor(palette.glassSecondaryText) }
         listOf(b.detailUploader, b.detailArtworkTitle, b.detailCommentsLabel).forEach { it.setTextColor(palette.glassText) }
@@ -307,6 +372,7 @@ class ImageDetailActivity : AppCompatActivity() {
                 it.rippleColor = ColorStateList.valueOf(palette.primary)
             }
         }
+        if (::image.isInitialized) updateGlassRendering()
     }
 
     private fun applyIslandWidths() {
@@ -440,7 +506,7 @@ class ImageDetailActivity : AppCompatActivity() {
                 if (a == null) return false
                 if (isImageZoomed()) return false
                 if (kotlin.math.abs(vx) > kotlin.math.abs(vy) && kotlin.math.abs(vx) > 500f) {
-                    loadAdjacent(if (vx < 0f) 1 else -1)
+                    loadAdjacent(ImageGalleryNavigation.directionForSwipe(vx))
                     return true
                 }
                 if (c.y - a.y > 180 && vy > 900) { finish(); return true }
@@ -499,7 +565,7 @@ class ImageDetailActivity : AppCompatActivity() {
                         val threshold = width * 0.22f
                         val commit = kotlin.math.abs(dx) > threshold || kotlin.math.abs(velocityX) > 900f
                         if (commit) {
-                            loadAdjacent(if (dx < 0f) 1 else -1, view, dx)
+                            loadAdjacent(ImageGalleryNavigation.directionForSwipe(dx), view, dx)
                         } else {
                             view.animate().translationX(0f).alpha(1f).setDuration(260L)
                                 .setInterpolator(OvershootInterpolator(1.05f)).start()
@@ -521,6 +587,26 @@ class ImageDetailActivity : AppCompatActivity() {
         }
         b.detailImage.setOnTouchListener(View.OnTouchListener { view, event -> handleTouch(view, event) })
         b.detailVideoPlayer.setOnTouchListener(View.OnTouchListener { view, event -> handleTouch(view, event) })
+        val updateGestureExclusion = View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            updateGalleryGestureExclusion(view)
+        }
+        b.detailImage.addOnLayoutChangeListener(updateGestureExclusion)
+        b.detailVideoPlayer.addOnLayoutChangeListener(updateGestureExclusion)
+        updateGalleryGestureExclusion(b.detailImage)
+        updateGalleryGestureExclusion(b.detailVideoPlayer)
+    }
+
+    /** Reserve narrow media-edge strips for gallery paging while leaving system Back elsewhere. */
+    private fun updateGalleryGestureExclusion(view: View) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || view.width <= 0 || view.height <= 0) return
+        val edge = dp(24).coerceAtMost(view.width / 2)
+        val height = dp(200).coerceAtMost(view.height)
+        val top = ((view.height - height) / 2).coerceAtLeast(0)
+        val bottom = (top + height).coerceAtMost(view.height)
+        view.systemGestureExclusionRects = listOf(
+            Rect(0, top, edge, bottom),
+            Rect(view.width - edge, top, view.width, bottom)
+        )
     }
 
     private fun currentImageScale(): Float {
@@ -561,36 +647,47 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailLoadStatus.isVisible = true
         b.detailLoadStatus.isEnabled = false
         detailJob = scope.launch {
-        val json = withContext(Dispatchers.IO) {
-            val filter = NetworkManager.currentFilterParam(this@ImageDetailActivity, "?")
-            NetworkManager.getApi(this@ImageDetailActivity, "images/${image.id}$filter")
-        }
-        if (json == null) {
-            showDetailLoadFailure()
-            return@launch
-        }
-        runCatching {
-            val item = JSONObject(json).getJSONObject("image")
-            val mime = item.optString("mime_type", image.mimeType)
-            mediaMimeType = mime
-            image = image.copy(spoilered = item.optBoolean("spoilered", image.spoilered))
-            fullUrl = item.optJSONObject("representations")?.optString("full", null)
-            showPreview(mime, if (mime?.startsWith("video/") == true) fullUrl ?: image.fullUrl ?: image.thumbnailUrl else fullUrl ?: image.fullUrl ?: image.thumbnailUrl)
-            b.detailUploader.text = item.optString("uploader", "未知上传者"); b.detailCreatedAt.text = item.optString("created_at", "").take(10)
-            uploaderId = item.optLong("uploader_id", -1L).takeIf { it > 0L }
-            bindUploaderClick()
-            bindDescription(item.optString("description", ""))
-            b.detailFaves.text = item.optInt("faves").toString()
-            b.detailUpvotes.text = item.optInt("upvotes").toString()
-            b.detailScore.visibility = View.GONE
-            b.detailCommentsCount.text = item.optInt("comment_count").toString()
-            bindTags(item.optJSONArray("tags")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty())
-            bindSources(item.optJSONArray("source_urls")?.let { urls ->
-                (0 until urls.length()).map { urls.optString(it) }
-            }.orEmpty())
-            loadComments()
-        }.onSuccess { b.detailLoadStatus.isVisible = false }
-            .onFailure { showDetailLoadFailure() }
+            val requestedId = image.id
+            CrashDiagnostics.recordEvent("ImageDetailActivity", "details_load_started image_id=$requestedId")
+            try {
+                val json = withContext(Dispatchers.IO) {
+                    val filter = NetworkManager.currentFilterParam(this@ImageDetailActivity, "?")
+                    NetworkManager.getApi(this@ImageDetailActivity, "images/$requestedId$filter")
+                }
+                if (image.id != requestedId) return@launch
+                if (json == null) {
+                    showDetailLoadFailure()
+                    CrashDiagnostics.recordEvent("ImageDetailActivity", "details_load_empty image_id=$requestedId")
+                    return@launch
+                }
+                val item = JSONObject(json).getJSONObject("image")
+                val mime = item.optString("mime_type", image.mimeType)
+                mediaMimeType = mime
+                image = image.copy(spoilered = item.optBoolean("spoilered", image.spoilered))
+                fullUrl = item.optJSONObject("representations")?.optString("full", null)
+                imageLoadFailedId = null
+                showPreview(mime, if (mime?.startsWith("video/") == true) fullUrl ?: image.fullUrl ?: image.thumbnailUrl else fullUrl ?: image.fullUrl ?: image.thumbnailUrl)
+                b.detailUploader.text = item.optString("uploader", "未知上传者"); b.detailCreatedAt.text = item.optString("created_at", "").take(10)
+                uploaderId = item.optLong("uploader_id", -1L).takeIf { it > 0L }
+                bindUploaderClick()
+                bindDescription(item.optString("description", ""))
+                b.detailFaves.text = item.optInt("faves").toString()
+                b.detailUpvotes.text = item.optInt("upvotes").toString()
+                b.detailScore.visibility = View.GONE
+                b.detailCommentsCount.text = item.optInt("comment_count").toString()
+                bindTags(item.optJSONArray("tags")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty())
+                bindSources(item.optJSONArray("source_urls")?.let { urls ->
+                    (0 until urls.length()).map { urls.optString(it) }
+                }.orEmpty())
+                loadComments()
+                CrashDiagnostics.recordEvent("ImageDetailActivity", "details_load_succeeded image_id=$requestedId")
+                if (imageLoadFailedId != requestedId) b.detailLoadStatus.isVisible = false
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                CrashDiagnostics.recordFailure("ImageDetailActivity", "details_load image_id=${image.id}", error)
+                if (!isFinishing && !isDestroyed && image.id == requestedId) showDetailLoadFailure()
+            }
         }
     }
 
@@ -606,28 +703,54 @@ class ImageDetailActivity : AppCompatActivity() {
         adjacentLoading = true
         val media = outgoing ?: if (b.detailVideoPlayer.visibility == View.VISIBLE) b.detailVideoPlayer else b.detailImage
         val width = (media.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)).toFloat()
-        val exitX = if (direction > 0) -width else width
+        val exitX = ImageGalleryNavigation.exitTranslationSign(direction) * width
         // Continue from the finger position immediately while the adjacent item loads.
         if (outgoing != null) {
             media.animate().translationX(exitX).alpha(0f).setDuration(150L)
                 .setInterpolator(DecelerateInterpolator(1.6f)).start()
         }
         scope.launch {
-            val comparator = if (direction > 0) "gt" else "lt"
-            val sortDirection = if (direction > 0) "asc" else "desc"
-            val query = NetworkManager.encodeSearchQuery(this@ImageDetailActivity, "id.$comparator:${image.id}")
-            val filter = NetworkManager.currentFilterParam(this@ImageDetailActivity)
-            val raw = withContext(Dispatchers.IO) {
-                NetworkManager.getApi(this@ImageDetailActivity, "search/images?q=$query&sf=id&sd=$sortDirection&per_page=1$filter")
-            }
-            val next = runCatching { JSONObject(raw.orEmpty()).optJSONArray("images")?.optJSONObject(0)?.let(::parseImage) }.getOrNull()
-            if (next != null) {
-                animateToAdjacent(next, direction, media, exitX)
-            } else {
-                media.animate().translationX(0f).alpha(1f).setDuration(300L)
-                    .setInterpolator(OvershootInterpolator(1.05f)).start()
-                Toast.makeText(this@ImageDetailActivity, if (direction > 0) "已经是最后一张" else "已经是第一张", Toast.LENGTH_SHORT).show()
-                adjacentLoading = false
+            val source = if (galleryImageIds == null) "id_order" else "gallery"
+            CrashDiagnostics.recordEvent("ImageDetailActivity", "swipe direction=$direction source=$source image_id=${image.id}")
+            var transitionStarted = false
+            try {
+                val currentId = image.id
+                val next = galleryImageIds?.let { ids ->
+                    val nextId = ImageGalleryNavigation.adjacentId(ids, currentId, direction)
+                    nextId?.let { id -> Image(id, "", null, 0, 0, 0, 0, 0, 0, 0, emptyList()) }
+                } ?: if (galleryImageIds == null) {
+                    val (comparator, sortDirection) = ImageGalleryNavigation.idOrderQuery(direction) ?: return@launch
+                    val query = NetworkManager.encodeSearchQuery(this@ImageDetailActivity, "id.$comparator:$currentId")
+                    val filter = NetworkManager.currentFilterParam(this@ImageDetailActivity)
+                    val raw = withContext(Dispatchers.IO) {
+                        NetworkManager.getApi(this@ImageDetailActivity, "search/images?q=$query&sf=id&sd=$sortDirection&per_page=1$filter")
+                    }
+                    runCatching { JSONObject(raw.orEmpty()).optJSONArray("images")?.optJSONObject(0)?.let(::parseImage) }.getOrNull()
+                } else null
+                if (image.id != currentId || isFinishing || isDestroyed) return@launch
+                if (next != null) {
+                    CrashDiagnostics.recordEvent("ImageDetailActivity", "swipe_target image_id=${next.id}")
+                    transitionStarted = true
+                    animateToAdjacent(next, direction, media, exitX)
+                } else {
+                    media.animate().translationX(0f).alpha(1f).setDuration(300L)
+                        .setInterpolator(OvershootInterpolator(1.05f)).start()
+                    val ids = galleryImageIds
+                    val message = if (ids != null && image.id !in ids) {
+                        "当前图片不在搜索结果列表中，无法按该列表浏览"
+                    } else if (direction > 0) "已经是最后一张" else "已经是第一张"
+                    Toast.makeText(this@ImageDetailActivity, message, Toast.LENGTH_SHORT).show()
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                CrashDiagnostics.recordFailure("ImageDetailActivity", "adjacent_image image_id=${image.id}", error)
+                if (!isFinishing && !isDestroyed) {
+                    media.animate().translationX(0f).alpha(1f).setDuration(300L).start()
+                    Toast.makeText(this@ImageDetailActivity, "图片切换失败，请重试", Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                if (!transitionStarted) adjacentLoading = false
             }
         }
     }
@@ -636,14 +759,16 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun animateToAdjacent(next: Image, direction: Int, outgoing: View? = null, exitXOverride: Float? = null) {
         val outgoing = outgoing ?: if (b.detailVideoPlayer.visibility == View.VISIBLE) b.detailVideoPlayer else b.detailImage
         val distance = (outgoing.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)).toFloat()
-        val exitX = exitXOverride ?: if (direction > 0) -distance else distance
+        val exitX = exitXOverride ?: (ImageGalleryNavigation.exitTranslationSign(direction) * distance)
         val enterX = -exitX
         outgoing.animate()
             .translationX(exitX)
             .alpha(0f)
             .setDuration(180L)
             .withEndAction {
+                val previousId = image.id
                 image = next
+                CrashDiagnostics.recordEvent("ImageDetailActivity", "image_changed from=$previousId to=${next.id} experiment=${renderExperiment.id}")
                 uploaderId = next.uploaderId
                 fullUrl = next.fullUrl ?: next.thumbnailUrl
                 mediaMimeType = next.mimeType
@@ -683,24 +808,36 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun loadComments() = scope.launch {
-        val query = java.net.URLEncoder.encode("image_id:${image.id}", "UTF-8")
-        val raw = withContext(Dispatchers.IO) {
-            NetworkManager.getApi(this@ImageDetailActivity, "search/comments?q=$query&per_page=50")
-        }
-        val comments = runCatching { JSONObject(raw.orEmpty()).optJSONArray("comments") }.getOrNull()
-        if (comments == null || comments.length() == 0) {
+        val requestedId = image.id
+        try {
+            val query = java.net.URLEncoder.encode("image_id:$requestedId", "UTF-8")
+            val raw = withContext(Dispatchers.IO) {
+                NetworkManager.getApi(this@ImageDetailActivity, "search/comments?q=$query&per_page=50")
+            }
+            if (image.id != requestedId || isFinishing || isDestroyed) return@launch
+            val comments = runCatching { JSONObject(raw.orEmpty()).optJSONArray("comments") }.getOrNull()
+            if (comments == null || comments.length() == 0) {
+                b.detailCommentsPreview.removeAllViews()
+                b.detailCommentsStatus.text = if (raw == null) "评论暂时无法加载" else "暂无评论"
+                b.detailCommentsStatus.visibility = View.VISIBLE
+                return@launch
+            }
+            b.detailCommentsStatus.visibility = View.GONE
             b.detailCommentsPreview.removeAllViews()
-            b.detailCommentsStatus.text = if (raw == null) "评论暂时无法加载" else "暂无评论"
-            b.detailCommentsStatus.visibility = View.VISIBLE
-            return@launch
-        }
-        b.detailCommentsStatus.visibility = View.GONE
-        b.detailCommentsPreview.removeAllViews()
-        for (index in 0 until comments.length()) {
-            val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
-            val card = GlassCommentCard(this@ImageDetailActivity)
-            card.bind(comment, null, { }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
-            b.detailCommentsPreview.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+            for (index in 0 until comments.length()) {
+                val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
+                val card = GlassCommentCard(this@ImageDetailActivity)
+                card.bind(comment, null, { }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
+                b.detailCommentsPreview.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+            }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            CrashDiagnostics.recordFailure("ImageDetailActivity", "comments image_id=$requestedId", error)
+            if (!isFinishing && !isDestroyed && image.id == requestedId) {
+                b.detailCommentsStatus.text = "评论暂时无法加载"
+                b.detailCommentsStatus.visibility = View.VISIBLE
+            }
         }
     }
 
@@ -760,7 +897,24 @@ class ImageDetailActivity : AppCompatActivity() {
             b.detailImage.visibility = View.VISIBLE
             matrixDrawable = null
             imageMatrix.reset()
-            url?.let { CdnImageGate.load(b.detailImage, it, image.thumbnailUrl, AppSettings.getCdnThreads(this)) }
+            url?.let { imageUrl ->
+                val requestedId = image.id
+                CrashDiagnostics.recordEvent("ImageDetailActivity", "image_load_started image_id=$requestedId")
+                CdnImageGate.load(
+                    b.detailImage,
+                    imageUrl,
+                    image.thumbnailUrl,
+                    AppSettings.getCdnThreads(this)
+                ) { error ->
+                    if (!isFinishing && !isDestroyed && image.id == requestedId) {
+                        imageLoadFailedId = requestedId
+                        CrashDiagnostics.recordFailure("ImageDetailActivity", "image_load image_id=$requestedId", error)
+                        b.detailLoadStatus.text = "图片暂时无法加载，点击重试"
+                        b.detailLoadStatus.isVisible = true
+                        b.detailLoadStatus.isEnabled = true
+                    }
+                }
+            }
             SpoilerCover.bind(b.detailSpoilerCover, b.detailImage, image.spoilered, spoilerRevealed) {
                 spoilerRevealed = true
             }
@@ -798,6 +952,12 @@ class ImageDetailActivity : AppCompatActivity() {
         Toast.makeText(this, "链接已复制", Toast.LENGTH_SHORT).show()
     }
     override fun onDestroy() {
+        if (::image.isInitialized) CrashDiagnostics.recordEvent("ImageDetailActivity", "destroyed image_id=${image.id}")
+        if (::b.isInitialized) {
+            b.root.removeCallbacks(resumeBackdropRunnable)
+            if (b.root.viewTreeObserver.isAlive) b.root.viewTreeObserver.removeOnPreDrawListener(resumePreDrawListener)
+            PreparedBackdropSource.release(b.detailBackdrop)
+        }
         removePaletteObserver?.invoke()
         if (b.root.viewTreeObserver.isAlive) b.root.viewTreeObserver.removeOnPreDrawListener(glassVisibilityListener)
         lastGlassBounds.clear()
