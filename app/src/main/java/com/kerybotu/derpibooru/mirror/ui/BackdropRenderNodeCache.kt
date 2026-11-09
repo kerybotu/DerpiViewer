@@ -30,6 +30,9 @@ internal object BackdropRenderNodeCache {
                 node.discardDisplayList()
                 consumerNodes.values.forEach(RenderNode::discardDisplayList)
                 dirty = true
+                consumers.keys.toList().forEach { consumer ->
+                    GlassWidgetStyle.onBackdropFrameAvailabilityChanged(consumer, view)
+                }
             }
         }
         val scrollListener = android.view.ViewTreeObserver.OnScrollChangedListener {
@@ -58,6 +61,7 @@ internal object BackdropRenderNodeCache {
             return false
         }
         entry.rejected = false
+        val alreadyBound = entry.consumers.containsKey(consumer)
         entry.consumers[consumer] = Unit
         if (source is PreparedBackdropContentSource) {
             entry.consumerNodes.getOrPut(consumer) {
@@ -79,7 +83,7 @@ internal object BackdropRenderNodeCache {
             entry.consumerListeners[consumer] = WeakReference(listener)
             consumer.addOnAttachStateChangeListener(listener)
         }
-        request(source)
+        if (!alreadyBound || entry.dirty) request(source)
         return true
     }
 
@@ -128,6 +132,13 @@ internal object BackdropRenderNodeCache {
         if (node.hasDisplayList()) canvas.drawRenderNode(node)
     }
 
+    fun hasPreparedFrame(source: View, consumer: LiquidGlassView): Boolean {
+        val entry = entries[source] ?: return false
+        if (entry.rejected) return false
+        val node = consumer.let(entry.consumerNodes::get) ?: entry.node
+        return node.hasDisplayList()
+    }
+
     fun prepareForTest(source: View, consumer: LiquidGlassView? = null): Boolean {
         checkMainThread()
         val entry = entries[source] ?: SourceEntry(source).also { entries[source] = it }
@@ -171,6 +182,7 @@ internal object BackdropRenderNodeCache {
         val height = source.height
         if (width <= 0 || height <= 0) return false
         val contentSource = source as? PreparedBackdropContentSource
+        val consumersWaitingForFrame = entry.consumers.keys.filterNot { hasPreparedFrame(source, it) }
         if (contentSource != null && entry.consumers.isNotEmpty()) {
             entry.consumers.keys.toList().forEach { consumer ->
                 val node = entry.consumerNodes.getOrPut(consumer) {
@@ -187,7 +199,12 @@ internal object BackdropRenderNodeCache {
         entry.dirty = false
         entry.rejected = false
         recordings++
-        entry.consumers.keys.toList().forEach(View::invalidate)
+        entry.consumers.keys.toList().forEach { consumer ->
+            if (consumer in consumersWaitingForFrame) {
+                GlassWidgetStyle.onBackdropFrameAvailabilityChanged(consumer, source)
+            }
+            consumer.invalidate()
+        }
         return true
     }
 
@@ -223,6 +240,9 @@ internal object BackdropRenderNodeCache {
         entry.dirty = false
         entry.node.discardDisplayList()
         entry.consumerNodes.values.forEach(RenderNode::discardDisplayList)
+        entry.consumers.keys.toList().forEach { consumer ->
+            GlassWidgetStyle.onBackdropSourceRejected(consumer, entry.source.get())
+        }
         cacheRejects++
         CrashDiagnostics.recordEvent(
             "BackdropRenderNode",

@@ -37,4 +37,33 @@ class ImageGalleryNavigationTest {
         assertEquals(-1, ImageGalleryNavigation.exitTranslationSign(ImageGalleryNavigation.NEXT))
         assertEquals(1, ImageGalleryNavigation.exitTranslationSign(ImageGalleryNavigation.PREVIOUS))
     }
+
+    @Test
+    fun releaseUsesOneDistanceOrVelocityDecisionAndCancelNeverCommits() {
+        assertEquals(null, ImageGalleryNavigation.releaseDirection(-30f, -700f, 400f))
+        assertEquals(ImageGalleryNavigation.NEXT, ImageGalleryNavigation.releaseDirection(-90f, 0f, 400f))
+        assertEquals(ImageGalleryNavigation.NEXT, ImageGalleryNavigation.releaseDirection(-30f, -950f, 400f))
+        assertEquals(ImageGalleryNavigation.PREVIOUS, ImageGalleryNavigation.releaseDirection(30f, 950f, 400f))
+        assertEquals(null, ImageGalleryNavigation.releaseDirection(-200f, -1500f, 400f, cancelled = true))
+    }
+
+    @Test
+    fun galleryPreviewKeepsAdjacentThumbnailReadyForTheTransition() {
+        val images = listOf(
+            Image(9, "", "thumb-9", 0, 0, 0, 0, 0, 0, 0, emptyList()),
+            Image(10, "", "thumb-10", 0, 0, 0, 0, 0, 0, 0, emptyList(), mimeType = "image/png"),
+            Image(11, "", "thumb-11", 0, 0, 0, 0, 0, 0, 0, emptyList(), mimeType = "image/jpeg", spoilered = true),
+            Image(12, "", "thumb-12", 0, 0, 0, 0, 0, 0, 0, emptyList())
+        )
+
+        val previews = GalleryImagePreview.nearby(images, currentId = 10, radius = 1)
+        val adjacentId = ImageGalleryNavigation.adjacentId(intArrayOf(10, 11, 12), 10, ImageGalleryNavigation.NEXT)
+        val next = previews.first { it.id == adjacentId }.toImage()
+
+        assertEquals(11, next.id)
+        assertEquals("thumb-11", next.thumbnailUrl)
+        assertEquals("image/jpeg", next.mimeType)
+        assertEquals(true, next.spoilered)
+        assertEquals(listOf(9, 10, 11), previews.map { it.id })
+    }
 }

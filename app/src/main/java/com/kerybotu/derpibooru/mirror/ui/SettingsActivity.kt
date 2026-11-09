@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
@@ -140,12 +141,14 @@ class SettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         CrashDiagnostics.recordEvent("SettingsActivity", "initialization_started")
         CrashDiagnostics.recordEvent("SettingsActivity", "window_setup_started")
+        window.setBackgroundDrawable(ColorDrawable(PaletteManager.colors(this).surface))
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
         root = FrameLayout(this).apply {
             id = R.id.settings_root
             clipChildren = false
+            setBackgroundColor(PaletteManager.colors(this@SettingsActivity).surface)
         }
         setContentView(root)
         CrashDiagnostics.recordEvent("SettingsActivity", "content_attached")
@@ -923,17 +926,19 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        CrashDiagnostics.recordEvent("SettingsActivity", "paused experiment=${renderExperiment.id}")
+        super.onPause()
+    }
+
+    override fun onStop() {
         glassRenderingActive = false
         resumeBackdropEnabled = false
         if (::root.isInitialized) {
             root.removeCallbacks(resumeBackdropRunnable)
             if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnPreDrawListener(resumePreDrawListener)
+            updateGlassRendering()
         }
-        CrashDiagnostics.recordEvent("SettingsActivity", "paused experiment=${renderExperiment.id}")
-        if (::topIsland.isInitialized) {
-            topIsland.setRenderingActive(false, null, BackdropSourceMode.DISABLED)
-        }
-        super.onPause()
+        super.onStop()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

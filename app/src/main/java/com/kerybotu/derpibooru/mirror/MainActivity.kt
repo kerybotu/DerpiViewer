@@ -188,6 +188,10 @@ class MainActivity : AppCompatActivity() {
                 com.kerybotu.derpibooru.mirror.ui.SearchActivity.EXTRA_GALLERY_IMAGE_IDS,
                 adapter.displayedItems().map { it.id }.toIntArray()
             )
+            intent.putExtra(
+                com.kerybotu.derpibooru.mirror.ui.SearchActivity.EXTRA_GALLERY_IMAGE_PREVIEWS,
+                com.kerybotu.derpibooru.mirror.model.GalleryImagePreview.nearby(adapter.displayedItems(), image.id)
+            )
             startActivity(intent)
         }, { count -> updateSelectionUi(count) }, this, onBackdropChanged = {
             if (::homeBackdrop.isInitialized) PreparedBackdropSource.invalidateSource(homeBackdrop)
@@ -829,9 +833,13 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         embeddedVideo?.setActive(false)
         embeddedProfile?.setActive(false)
+        super.onPause()
+    }
+
+    override fun onStop() {
         shellGlassResumed = false
         updateShellGlass()
-        super.onPause()
+        super.onStop()
     }
 
     private fun updateShellGlass() {

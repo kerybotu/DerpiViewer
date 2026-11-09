@@ -28,6 +28,24 @@ object ImageGalleryNavigation {
         else -> 0
     }
 
+    fun releaseDirection(
+        deltaX: Float,
+        velocityX: Float,
+        width: Float,
+        distanceFraction: Float = 0.22f,
+        velocityThreshold: Float = 900f,
+        cancelled: Boolean = false
+    ): Int? {
+        if (cancelled) return null
+        if (kotlin.math.abs(deltaX) >= width * distanceFraction) {
+            return if (deltaX < 0f) NEXT else PREVIOUS
+        }
+        if (kotlin.math.abs(velocityX) >= velocityThreshold) {
+            return if (velocityX < 0f) NEXT else PREVIOUS
+        }
+        return null
+    }
+
     fun adjacentId(ids: IntArray, currentId: Int, direction: Int): Int? {
         if (direction != PREVIOUS && direction != NEXT) return null
         val normalized = normalize(ids)

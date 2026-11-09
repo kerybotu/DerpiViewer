@@ -67,6 +67,7 @@ class SearchActivity : AppCompatActivity() {
         private const val PAGE_SIZE = 50
         const val EXTRA_INITIAL_QUERY = "initial_query"
         const val EXTRA_GALLERY_IMAGE_IDS = "gallery_image_ids"
+        const val EXTRA_GALLERY_IMAGE_PREVIEWS = "gallery_image_previews"
         const val EXTRA_GALLERY_QUERY = "gallery_query"
         const val EXTRA_GALLERY_SORT_FIELD = "gallery_sort_field"
         const val EXTRA_GALLERY_SORT_DIRECTION = "gallery_sort_direction"
@@ -636,6 +637,7 @@ class SearchActivity : AppCompatActivity() {
         startActivity(Intent(this, ImageDetailActivity::class.java).apply {
             putExtra("image", image)
             putExtra(EXTRA_GALLERY_IMAGE_IDS, ids)
+            putExtra(EXTRA_GALLERY_IMAGE_PREVIEWS, com.kerybotu.derpibooru.mirror.model.GalleryImagePreview.nearby(displayed, image.id))
             putExtra(EXTRA_GALLERY_QUERY, loadedQuery)
             putExtra(EXTRA_GALLERY_SORT_FIELD, loadedSortField)
             putExtra(EXTRA_GALLERY_SORT_DIRECTION, loadedSortDirection)

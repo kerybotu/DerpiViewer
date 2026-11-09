@@ -9,7 +9,6 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.VelocityTracker
 import android.view.ViewConfiguration
-import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.graphics.Matrix
 import android.graphics.Rect
@@ -31,6 +30,7 @@ import com.kerybotu.derpibooru.mirror.R
 import com.kerybotu.derpibooru.mirror.databinding.ActivityImageDetailBinding
 import com.kerybotu.derpibooru.mirror.model.ImageGalleryNavigation
 import com.kerybotu.derpibooru.mirror.model.Image
+import com.kerybotu.derpibooru.mirror.model.GalleryImagePreview
 import com.kerybotu.derpibooru.mirror.model.Comment
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import com.kerybotu.derpibooru.mirror.dict.TagDictionary
@@ -61,6 +61,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private var adjacentLoading = false
     private var imageLoadFailedId: Int? = null
     private var galleryImageIds: IntArray? = null
+    private var galleryImagePreviews: ArrayList<GalleryImagePreview>? = null
     private var galleryQuery: String? = null
     private var gallerySortField: String? = null
     private var gallerySortDirection: String? = null
@@ -72,6 +73,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private var dragStartX = 0f
     private var dragStartY = 0f
     private var draggingMedia = false
+    private var ignoreTransitionGesture = false
     private var velocityTracker: VelocityTracker? = null
     private var spoilerRevealed = false
     private val imageMatrix = Matrix()
@@ -124,6 +126,9 @@ class ImageDetailActivity : AppCompatActivity() {
         CrashDiagnostics.recordEvent("ImageDetailActivity", "opened image_id=${image.id} experiment=${renderExperiment.id}")
         galleryImageIds = intent.getIntArrayExtra(SearchActivity.EXTRA_GALLERY_IMAGE_IDS)
             ?.let(ImageGalleryNavigation::normalize)
+        @Suppress("DEPRECATION")
+        galleryImagePreviews = intent.getSerializableExtra(SearchActivity.EXTRA_GALLERY_IMAGE_PREVIEWS)
+            as? ArrayList<GalleryImagePreview>
         galleryQuery = intent.getStringExtra(SearchActivity.EXTRA_GALLERY_QUERY)
         gallerySortField = intent.getStringExtra(SearchActivity.EXTRA_GALLERY_SORT_FIELD)
         gallerySortDirection = intent.getStringExtra(SearchActivity.EXTRA_GALLERY_SORT_DIRECTION)
@@ -503,18 +508,25 @@ class ImageDetailActivity : AppCompatActivity() {
             }
 
             override fun onFling(a: MotionEvent?, c: MotionEvent, vx: Float, vy: Float): Boolean {
-                if (a == null) return false
-                if (isImageZoomed()) return false
-                if (kotlin.math.abs(vx) > kotlin.math.abs(vy) && kotlin.math.abs(vx) > 500f) {
-                    loadAdjacent(ImageGalleryNavigation.directionForSwipe(vx))
-                    return true
-                }
+                // Media translation and page selection are owned by handleTouch.
+                // Starting a second transition here caused a rebound for flings
+                // below the touch handler's velocity threshold.
+                if (a == null || isImageZoomed()) return false
                 if (c.y - a.y > 180 && vy > 900) { finish(); return true }
                 return false
             }
         })
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         val handleTouch: (View, MotionEvent) -> Boolean = { view, event ->
+            if (ignoreTransitionGesture) {
+                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                    ignoreTransitionGesture = false
+                }
+                true
+            } else if (adjacentLoading) {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) ignoreTransitionGesture = true
+                true
+            } else {
             if (view === b.detailImage) scaleGesture.onTouchEvent(event)
             if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
                 // A pinch owns this stream before ScaleGestureDetector reaches
@@ -560,16 +572,20 @@ class ImageDetailActivity : AppCompatActivity() {
                     val dx = event.rawX - dragStartX
                     val width = view.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)
                     if (draggingMedia && !isImageZoomed()) {
-                        view.parent?.requestDisallowInterceptTouchEvent(false)
                         val velocityX = velocityTracker?.xVelocity ?: 0f
-                        val threshold = width * 0.22f
-                        val commit = kotlin.math.abs(dx) > threshold || kotlin.math.abs(velocityX) > 900f
-                        if (commit) {
-                            loadAdjacent(ImageGalleryNavigation.directionForSwipe(dx), view, dx)
+                        val direction = ImageGalleryNavigation.releaseDirection(
+                            deltaX = dx,
+                            velocityX = velocityX,
+                            width = width.toFloat(),
+                            cancelled = event.actionMasked == MotionEvent.ACTION_CANCEL
+                        )
+                        if (direction != null) {
+                            loadAdjacent(direction, view)
                         } else {
                             view.animate().translationX(0f).alpha(1f).setDuration(260L)
                                 .setInterpolator(OvershootInterpolator(1.05f)).start()
                         }
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
                         draggingMedia = false
                         velocityTracker?.recycle()
                         velocityTracker = null
@@ -584,6 +600,7 @@ class ImageDetailActivity : AppCompatActivity() {
             // Keep tap and long-press behavior while horizontal movement is handled above.
             if (view !== b.detailImage || (!scaleGesture.isInProgress && event.pointerCount <= 1)) gesture.onTouchEvent(event)
             true
+            }
         }
         b.detailImage.setOnTouchListener(View.OnTouchListener { view, event -> handleTouch(view, event) })
         b.detailVideoPlayer.setOnTouchListener(View.OnTouchListener { view, event -> handleTouch(view, event) })
@@ -698,17 +715,16 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     /** Loads the nearest image in the current gallery/search space for a horizontal swipe. */
-    private fun loadAdjacent(direction: Int, outgoing: View? = null, dragOffset: Float = 0f) {
+    private fun loadAdjacent(direction: Int, outgoing: View? = null) {
         if (adjacentLoading) return
         adjacentLoading = true
         val media = outgoing ?: if (b.detailVideoPlayer.visibility == View.VISIBLE) b.detailVideoPlayer else b.detailImage
         val width = (media.width.takeIf { it > 0 } ?: b.root.width.coerceAtLeast(1)).toFloat()
         val exitX = ImageGalleryNavigation.exitTranslationSign(direction) * width
-        // Continue from the finger position immediately while the adjacent item loads.
-        if (outgoing != null) {
-            media.animate().translationX(exitX).alpha(0f).setDuration(150L)
-                .setInterpolator(DecelerateInterpolator(1.6f)).start()
-        }
+        // Keep the finger position until the target is ready, then perform one
+        // completion animation. A pre-flight exit here followed by
+        // animateToAdjacent() used to produce a rebound and a second delayed
+        // transition.
         scope.launch {
             val source = if (galleryImageIds == null) "id_order" else "gallery"
             CrashDiagnostics.recordEvent("ImageDetailActivity", "swipe direction=$direction source=$source image_id=${image.id}")
@@ -717,7 +733,10 @@ class ImageDetailActivity : AppCompatActivity() {
                 val currentId = image.id
                 val next = galleryImageIds?.let { ids ->
                     val nextId = ImageGalleryNavigation.adjacentId(ids, currentId, direction)
-                    nextId?.let { id -> Image(id, "", null, 0, 0, 0, 0, 0, 0, 0, emptyList()) }
+                    nextId?.let { id ->
+                        galleryImagePreviews?.firstOrNull { it.id == id }?.toImage()
+                            ?: Image(id, "", null, 0, 0, 0, 0, 0, 0, 0, emptyList())
+                    }
                 } ?: if (galleryImageIds == null) {
                     val (comparator, sortDirection) = ImageGalleryNavigation.idOrderQuery(direction) ?: return@launch
                     val query = NetworkManager.encodeSearchQuery(this@ImageDetailActivity, "id.$comparator:$currentId")
