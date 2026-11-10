@@ -27,8 +27,12 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.net.URLEncoder
 
-/** First-level "My profile" screen. Other users continue to use ProfileActivity. */
-class EmbeddedProfileView(context: Context) : FrameLayout(context) {
+/** Shared UI 2.0 profile, embedded for My or hosted with an explicit public user. */
+class EmbeddedProfileView(
+    context: Context,
+    internal val requestedUserId: Long? = null,
+    private val onBack: (() -> Unit)? = null
+) : FrameLayout(context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val state = TextView(context)
     private val name = TextView(context)
@@ -45,9 +49,11 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
     private lateinit var topControls: LinearLayout
     private lateinit var profileContent: LinearLayout
     private lateinit var contentList: RecyclerView
+    private lateinit var profileBackdrop: ScrollContentBackdrop
     private lateinit var artworkAdapter: ImageAdapter
-    private var viewedUserId: Long? = null
-    private var ownUserId: Long? = null
+    private var viewedUserId: Long? = requestedUserId
+    private var ownUserId: Long? = ApiKeyStore.getUserId(context)
+    private var profileJob: Job? = null
     private var loaded = false
     private var active = false
 
@@ -97,6 +103,9 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
         val grid = GridLayoutManager(context, AdaptiveLayoutPolicy.artworkColumnCount(context))
         val headerAdapter = ProfileHeaderAdapter(profileContent)
         val list = RecyclerView(context).apply {
+            // The prepared source must include the same opaque page surface;
+            // otherwise empty areas in its display list sample transparent black.
+            setBackgroundColor(colors.surface)
             layoutManager = grid
             clipToPadding = false
             adapter = ConcatAdapter(headerAdapter, artworkAdapter)
@@ -118,20 +127,30 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
         // NestedScrollView + fixed-height child grid stopped after 560dp.
         contentList = list
         addView(list, LayoutParams(-1, -1))
+        profileBackdrop = ScrollContentBackdrop(context, list).apply { setBackgroundColor(colors.surface) }
+        addView(profileBackdrop, 0, LayoutParams(-1, -1))
 
         topIsland = buildTopIsland(colors)
         addView(topIsland, LayoutParams(-2, dp(64), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        topIsland.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, oldBottom ->
+            // My is initially GONE: its posted initialization runs before its
+            // first layout. Derive the content offset from actual island bounds.
+            if (bottom != oldBottom) updateInitialContentOffset()
+        }
+        updateInitialContentOffset()
         ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
             val params = topIsland.layoutParams as LayoutParams
             params.topMargin = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top + dp(12)
             topIsland.layoutParams = params
             updateInitialContentOffset()
+            if (onBack != null) setBottomInset(insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom)
             insets
         }
         ViewCompat.requestApplyInsets(this)
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 updateProfileMotion(recyclerView.computeVerticalScrollOffset())
+                PreparedBackdropSource.invalidateSource(profileBackdrop)
             }
         })
         topIsland.alpha = 0f; topIsland.scaleX = 0.96f; topIsland.scaleY = 0.96f
@@ -153,13 +172,16 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
             setBackgroundColor(Color.TRANSPARENT)
         }
         val menu = ImageButton(context).apply {
-            setImageResource(R.drawable.ic_menu)
+            setImageResource(if (onBack == null) R.drawable.ic_menu else R.drawable.ic_arrow_back)
             imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
             background = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-            contentDescription = "打开菜单"
-            setOnClickListener { (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu() }
+            contentDescription = if (onBack == null) "打开菜单" else "返回"
+            setOnClickListener {
+                if (onBack != null) onBack.invoke()
+                else (context as? com.kerybotu.derpibooru.mirror.MainActivity)?.showUnifiedGlassMenu()
+            }
         }
-        val title = TextView(context).apply { text = "我的"; gravity = Gravity.CENTER; setTextColor(colors.onSurface); textSize = 16f; setTypeface(typeface, Typeface.BOLD) }
+        val title = TextView(context).apply { text = if (requestedUserId == null) "我的" else "用户资料"; gravity = Gravity.CENTER; setTextColor(colors.onSurface); textSize = 16f; setTypeface(typeface, Typeface.BOLD) }
         val more = ImageButton(context).apply {
             setImageResource(R.drawable.ic_more)
             imageTintList = android.content.res.ColorStateList.valueOf(colors.onSurface)
@@ -188,16 +210,29 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
     fun setActive(value: Boolean) {
         active = value
         updateTopIslandBackdrop()
+        if (value) {
+            artworkAdapter.refreshDisplayMode()
+            val currentOwnId = ApiKeyStore.getUserId(context)
+            if (ownUserId != currentOwnId) {
+                ownUserId = currentOwnId
+                viewedUserId = requestedUserId
+                loaded = false
+            }
+            if (isAttachedToWindow && !loaded) loadProfile()
+        }
     }
 
     private fun updateTopIslandBackdrop() {
         if (!::topIsland.isInitialized) return
         val shouldRender = active && isAttachedToWindow && isShown && topIsland.isShown
-        topIsland.setRenderingActive(shouldRender, if (shouldRender) contentList else null)
+        topIsland.setRenderingActive(shouldRender, if (shouldRender) profileBackdrop else null)
     }
 
     fun applyPalette(colors: com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme = PaletteManager.colors(context)) {
         setBackgroundColor(colors.surface)
+        contentList.setBackgroundColor(colors.surface)
+        profileBackdrop.setBackgroundColor(colors.surface)
+        PreparedBackdropSource.invalidateSource(profileBackdrop)
         state.setTextColor(colors.muted)
         name.setTextColor(colors.glassText)
         meta.setTextColor(colors.glassSecondaryText)
@@ -223,8 +258,11 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
     }
 
     private fun updateInitialContentOffset() {
-        if (!::contentList.isInitialized || !::topIsland.isInitialized || topIsland.height <= 0) return
-        val desired = topIsland.bottom + dp(16)
+        if (!::contentList.isInitialized || !::topIsland.isInitialized) return
+        val params = topIsland.layoutParams as LayoutParams
+        // Establish padding before RecyclerView chooses its first scroll anchor,
+        // including when this tab is created GONE and has never been measured.
+        val desired = params.topMargin + params.height.coerceAtLeast(topIsland.measuredHeight) + dp(16)
         if (contentList.paddingTop != desired) {
             contentList.setPadding(contentList.paddingLeft, desired, contentList.paddingRight, contentList.paddingBottom)
         }
@@ -270,18 +308,22 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
     }
 
     override fun onDetachedFromWindow() {
-        updateTopIslandBackdrop()
+        topIsland.setRenderingActive(false, null)
+        PreparedBackdropSource.release(profileBackdrop)
         super.onDetachedFromWindow()
     }
 
-    private fun loadProfile() = scope.launch {
-        progress.visibility = VISIBLE
-        val id = viewedUserId ?: resolveOwnId()
-        if (id == null) { progress.visibility = GONE; showError("请先登录以查看我的资料"); return@launch }
-        viewedUserId = id
-        val user = withContext(Dispatchers.IO) { NetworkManager.getApi(context, "profiles/$id")?.let { JSONObject(it).optJSONObject("user") } }
-        if (user == null) { progress.visibility = GONE; showError("用户资料加载失败，点击重试"); return@launch }
-        bindUser(user); loaded = true; progress.visibility = GONE
+    private fun loadProfile() {
+        if (profileJob?.isActive == true) return
+        profileJob = scope.launch {
+            progress.visibility = VISIBLE
+            val id = viewedUserId ?: resolveOwnId()
+            if (id == null) { progress.visibility = GONE; showError("请先登录以查看我的资料"); return@launch }
+            viewedUserId = id
+            val user = withContext(Dispatchers.IO) { NetworkManager.getApi(context, "profiles/$id")?.let { JSONObject(it).optJSONObject("user") } }
+            if (user == null) { progress.visibility = GONE; showError("用户资料加载失败，点击重试"); return@launch }
+            bindUser(user); loaded = true; progress.visibility = GONE
+        }
     }
 
     private suspend fun resolveOwnId(): Long? {
@@ -324,7 +366,7 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
         tabs.removeAllViews()
         tab("上传") { loadImages("uploader_id:$viewedUserId") }
         tab("评论") { loadComments() }
-        if (viewedUserId == ownUserId) { tab("收藏") { loadImages("my:faves") }; tab("关注") { loadImages("my:watched") } }
+        if (viewedUserId == ownUserId && ApiKeyStore.isLoggedIn(context)) { tab("收藏") { loadImages("my:faves") }; tab("关注") { loadImages("my:watched") } }
         loadImages("uploader_id:$viewedUserId")
     }
 
@@ -390,7 +432,10 @@ class EmbeddedProfileView(context: Context) : FrameLayout(context) {
 
     private fun showError(message: String) {
         state.visibility = VISIBLE; state.text = message
-        state.setOnClickListener { if (!ApiKeyStore.isLoggedIn(context)) context.startActivity(Intent(context, LoginActivity::class.java)) else { loaded = false; loadProfile() } }
+        state.setOnClickListener {
+            if (requestedUserId == null && !ApiKeyStore.isLoggedIn(context)) context.startActivity(Intent(context, LoginActivity::class.java))
+            else { loaded = false; loadProfile() }
+        }
     }
 
     private fun toast(text: String) = Toast.makeText(context, text, Toast.LENGTH_SHORT).show()

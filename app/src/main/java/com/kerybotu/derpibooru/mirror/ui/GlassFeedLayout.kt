@@ -52,6 +52,7 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         addView(progress, LayoutParams(dp(32), dp(32), Gravity.CENTER))
     }
     private val statusPanel = LiquidGlassListItem(context).apply { visibility = View.GONE }
+    private val stateHost = FrameLayout(context)
     var isActive = false
         private set
     var onBecameActive: (() -> Unit)? = null
@@ -77,8 +78,9 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         addView(header, LayoutParams(-1, dp(60), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         trackGlass(loadingPanel, preparedPageBackdrop, 24f)
         trackGlass(statusPanel, preparedPageBackdrop, 24f)
-        addView(loadingPanel, LayoutParams(dp(80), dp(80), Gravity.CENTER))
-        addView(statusPanel, LayoutParams(-1, -2, Gravity.CENTER))
+        stateHost.addView(loadingPanel, LayoutParams(dp(80), dp(80), Gravity.CENTER))
+        stateHost.addView(statusPanel, LayoutParams(-1, -2, Gravity.CENTER))
+        addView(stateHost, LayoutParams(-1, -1))
         results.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) { updateGlassRendering() }
         })
@@ -178,20 +180,26 @@ open class GlassFeedLayout(context: Context, title: String, onBack: (() -> Unit)
         val bottom = maxOf(systemBottom, navigationBottom) + dp(16)
         results.setPadding(systemLeft + gutter, contentTop, right + gutter, bottom)
         refresh.contentTopInset = contentTop
+        // Center states inside the usable content viewport. Center gravity on
+        // the full window adds topMargin in full and used to push them down.
+        stateHost.layoutParams = (stateHost.layoutParams as LayoutParams).apply {
+            topMargin = contentTop
+            bottomMargin = bottom
+        }
         loadingPanel.layoutParams = (loadingPanel.layoutParams as LayoutParams).apply {
             gravity = (if (centeredLoading) Gravity.CENTER_VERTICAL else Gravity.BOTTOM) or Gravity.LEFT
             leftMargin = systemLeft + (safeWidth - width) / 2
             rightMargin = 0
-            topMargin = if (centeredLoading) contentTop else 0
-            bottomMargin = bottom
+            topMargin = 0
+            bottomMargin = 0
         }
         statusPanel.layoutParams = (statusPanel.layoutParams as LayoutParams).apply {
             width = contentWidth
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             leftMargin = systemLeft + gutter
             rightMargin = 0
-            topMargin = contentTop
-            bottomMargin = bottom
+            topMargin = 0
+            bottomMargin = 0
         }
     }
 

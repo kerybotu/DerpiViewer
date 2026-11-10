@@ -42,11 +42,13 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
         setPadding(inset, inset, inset, inset)
         val row = getChildAt(0) as ViewGroup
         row.layoutParams = (row.layoutParams as LayoutParams).apply {
-            gravity = if (hasIconTabs) Gravity.CENTER_VERTICAL else Gravity.TOP
+            gravity = Gravity.CENTER_VERTICAL
+            if (!hasIconTabs) height = LayoutParams.MATCH_PARENT
         }
         items.forEachIndexed { index, item ->
             row.getChildAt(index).apply {
                 if (hasIconTabs) configureNavigationItem(this as LinearLayout)
+                else configureTextItem(this as LinearLayout)
                 contentDescription = item.title
                 isFocusable = true
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -61,6 +63,28 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
             }
         }
         applyPalette()
+    }
+
+    private fun configureTextItem(tab: LinearLayout) {
+        // The AAR uses a wrap-content row and a start-aligned label. Make the
+        // hit target, selection droplet and text share the same measured cell.
+        tab.layoutParams = (tab.layoutParams as LinearLayout.LayoutParams).apply {
+            height = LayoutParams.MATCH_PARENT
+        }
+        tab.gravity = Gravity.CENTER
+        tab.minimumHeight = dp(48)
+        tab.setPadding(dp(8), dp(4), dp(8), dp(4))
+        for (index in 0 until tab.childCount) {
+            (tab.getChildAt(index) as? TextView)?.apply {
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                layoutParams = (layoutParams as LinearLayout.LayoutParams).apply {
+                    width = LayoutParams.MATCH_PARENT
+                }
+            }
+        }
     }
 
     private fun configureNavigationItem(tab: LinearLayout) {
