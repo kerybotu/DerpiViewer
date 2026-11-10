@@ -22,10 +22,30 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BackdropRenderingSafetyTest {
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private var hadFallback = false
+    private var savedFallback = false
+
+    @Before
+    fun selectNormalRendering() {
+        val prefs = context.getSharedPreferences("app_settings_prefs", 0)
+        hadFallback = prefs.contains("glass_performance_fallback")
+        savedFallback = AppSettings.isGlassPerformanceFallbackEnabled(context)
+        AppSettings.setGlassPerformanceFallbackEnabled(context, false)
+    }
+
+    @After
+    fun restoreRenderingPreference() {
+        if (hadFallback) AppSettings.setGlassPerformanceFallbackEnabled(context, savedFallback)
+        else context.getSharedPreferences("app_settings_prefs", 0).edit().remove("glass_performance_fallback").commit()
+    }
+
     @Test
     fun rejectedSourceKeepsThemedFallbackMaterialVisible() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -56,6 +76,9 @@ class BackdropRenderingSafetyTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val source = FrameLayout(context).apply { addView(View(context)) }
             val glass = LiquidGlassView(context)
+            source.layout(0, 0, 100, 100)
+            assertTrue("The source must have a prepared frame before enabling optics",
+                BackdropRenderNodeCache.prepareForTest(source))
             GlassWidgetStyle.apply(glass)
             GlassWidgetStyle.setRenderingActive(glass, true, source, BackdropSourceMode.EXPLICIT_SOURCE)
 
@@ -65,6 +88,7 @@ class BackdropRenderingSafetyTest {
             assertTrue(glass.enableEdgeHighlight)
             assertTrue(glass.dispersionStrength > 0f)
             assertNull(LiquidGlassView::class.java.getDeclaredField("customBackdropCapture").apply { isAccessible = true }.get(glass))
+            BackdropRenderNodeCache.releaseForTest(source)
         }
     }
 
@@ -145,14 +169,17 @@ class BackdropRenderingSafetyTest {
     fun themeReapplicationRetainsTheSelectedSourceMode() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            val source = View(context)
+            val source = View(context).apply { layout(0, 0, 100, 100) }
             val glass = LiquidGlassView(context)
+            assertTrue("The source must have a prepared frame before rebinding",
+                BackdropRenderNodeCache.prepareForTest(source))
             GlassWidgetStyle.apply(glass)
             GlassWidgetStyle.setRenderingActive(glass, true, source, BackdropSourceMode.EXPLICIT_SOURCE)
             GlassWidgetStyle.apply(glass, colors = PaletteManager.colors(context))
 
             assertSame(source, glass.backdropSource)
             assertEquals(Build.VERSION.SDK_INT >= 31, glass.enableBackdropBlur)
+            BackdropRenderNodeCache.releaseForTest(source)
         }
     }
 }

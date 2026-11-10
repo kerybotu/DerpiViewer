@@ -121,6 +121,70 @@ class GlassThemeRegressionTest {
             kotlin.math.abs(Color.green(first) - Color.green(second)) +
             kotlin.math.abs(Color.blue(first) - Color.blue(second))
 
+    /** Exercise the actual AAR View on hardware, not just its background drawable. */
+    @Test
+    fun fallbackViewTransmitsChangingBackgroundInBothThemes() {
+        val prefs = context.getSharedPreferences("app_settings_prefs", 0)
+        val hadFallback = prefs.contains("glass_performance_fallback")
+        val savedFallback = AppSettings.isGlassPerformanceFallbackEnabled(context)
+        val originalPalette = AppSettings.getPalette(context)
+        val originalAccent = AppSettings.getAccentColor(context)
+        val page = launch(SettingsActivity::class.java)
+        val root = page.findViewById<ViewGroup>(android.R.id.content)
+        var host: FrameLayout? = null
+        try {
+            for (mode in listOf(AppSettings.Palette.LIGHT, AppSettings.Palette.DARK)) {
+                lateinit var glass: IslandGlassView
+                instrumentation.runOnMainSync {
+                    AppSettings.setPalette(context, mode)
+                    AppSettings.setGlassPerformanceFallbackEnabled(context, true)
+                    AppSettings.setAccentColor(context, AccentColor.PURPLE)
+                    PaletteManager.notifyChanged(context)
+                    assertSame("Repeated glass bindings must reuse the immutable palette",
+                        PaletteManager.colors(context), PaletteManager.colors(context))
+                    host = FrameLayout(page).apply {
+                        setBackgroundColor(Color.RED)
+                        elevation = 100f
+                    }
+                    glass = IslandGlassView(page)
+                    host!!.addView(glass, FrameLayout.LayoutParams(400, 180).apply {
+                        gravity = android.view.Gravity.CENTER
+                    })
+                    root.addView(host, FrameLayout.LayoutParams(480, 240).apply {
+                        gravity = android.view.Gravity.CENTER
+                    })
+                    glass.setPalette(PaletteManager.colors(context))
+                    glass.setRenderingActive(true, host)
+                    assertFalse(glass.enableBackdropBlur)
+                    assertFalse(glass.enableChromaticAberration)
+                    assertNotSame("Fallback must not capture its host", host, glass.backdropSource)
+                }
+                settle()
+                val red = opticalSnapshot(glass)
+                instrumentation.runOnMainSync { host!!.setBackgroundColor(Color.BLUE) }
+                settle()
+                val blue = opticalSnapshot(glass)
+                try {
+                    val centerRed = red.getPixel(red.width / 2, red.height / 2)
+                    val centerBlue = blue.getPixel(blue.width / 2, blue.height / 2)
+                    assertTrue("$mode must transmit the changing background through the real AAR View",
+                        Color.red(centerRed) - Color.red(centerBlue) > 20 &&
+                            Color.blue(centerBlue) - Color.blue(centerRed) > 20)
+                    assertTrue("$mode must still apply material, rather than become fully transparent",
+                        colorDifference(centerRed, Color.RED) > 30 &&
+                            colorDifference(centerBlue, Color.BLUE) > 30)
+                    capturePage("fallback_actual_view_${mode.name.lowercase()}", page)
+                } finally { red.recycle(); blue.recycle() }
+                instrumentation.runOnMainSync { root.removeView(host); host = null }
+            }
+        } finally {
+            instrumentation.runOnMainSync { host?.let(root::removeView); page.finish() }
+            if (hadFallback) AppSettings.setGlassPerformanceFallbackEnabled(context, savedFallback)
+            else prefs.edit().remove("glass_performance_fallback").commit()
+            restore(originalPalette, originalAccent)
+        }
+    }
+
     private fun awaitOpticalFrame(glass: LiquidGlassView, effect: String, blurred: Boolean = false, refracted: Boolean = false) {
         val deadline = android.os.SystemClock.uptimeMillis() + 30_000
         while (android.os.SystemClock.uptimeMillis() < deadline) {

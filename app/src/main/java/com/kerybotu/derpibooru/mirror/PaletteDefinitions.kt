@@ -7,6 +7,14 @@ import android.content.res.Configuration
 
 /** Central semantic colors for every selectable app palette. */
 object PaletteDefinitions {
+    private data class SchemeKey(
+        val palette: AppSettings.Palette,
+        val accent: com.kerybotu.derpibooru.mirror.theme.AccentColor,
+        val systemDark: Boolean
+    )
+
+    private val schemes = HashMap<SchemeKey, Scheme>()
+
     data class Scheme(
         val surface: Int, val surfaceVariant: Int, val primary: Int, val onSurface: Int,
         val onPrimary: Int, val mediaSurface: Int, val scrim: Int, val divider: Int, val muted: Int,
@@ -25,14 +33,17 @@ object PaletteDefinitions {
         val glassActionText: Int get() = blend(glassText, primary, 0.25f)
     }
 
+    @Synchronized
     fun forPalette(context: android.content.Context, palette: AppSettings.Palette): Scheme {
         val systemDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val accent = AppSettings.getAccentColor(context)
+        val key = SchemeKey(palette, accent, systemDark)
+        schemes[key]?.let { return it }
         val mode = when (palette) {
             AppSettings.Palette.DARK -> ThemeMode.DARK
             AppSettings.Palette.SYSTEM -> if (systemDark) ThemeMode.DARK else ThemeMode.LIGHT
             else -> ThemeMode.LIGHT
         }
-        val accent = AppSettings.getAccentColor(context)
         val generated = ThemeGenerator.generate(accent, mode)
         val surface = if (mode == ThemeMode.DARK) 0xFF121212.toInt() else generated.surface
         val surfaceVariant = if (mode == ThemeMode.DARK) 0xFF242424.toInt() else generated.surfaceVariant
@@ -51,7 +62,7 @@ object PaletteDefinitions {
             generated.onPrimary, surface, alpha(0xFF000000.toInt(), 153), outline, onSurfaceVariant,
             mode == ThemeMode.DARK, glassSurface, glassSurfaceElevated, glassTint, glassBorder,
             glassShadow, alpha(0xFF000000.toInt(), if (mode == ThemeMode.DARK) 150 else 72),
-            onSurface, onSurfaceVariant)
+            onSurface, onSurfaceVariant).also { schemes[key] = it }
     }
 
     private fun alpha(color: Int, value: Int) = (color and 0x00FFFFFF) or (value.coerceIn(0, 255) shl 24)

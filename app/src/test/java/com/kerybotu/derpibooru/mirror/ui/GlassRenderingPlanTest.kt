@@ -22,7 +22,7 @@ class GlassRenderingPlanTest {
         assertFalse(fallback.backdropBlur)
         assertFalse(fallback.refraction)
         assertEquals(GlassMaterial.CLEAR, fallback.material)
-        assertEquals(GlassAccessibilityMode.FORCE_OPAQUE, fallback.accessibilityMode)
+        assertEquals(GlassAccessibilityMode.FORCE_FULL, fallback.accessibilityMode)
     }
 
     @Test
@@ -45,7 +45,7 @@ class GlassRenderingPlanTest {
         assertFalse(waiting.backdropBlur)
         assertFalse(waiting.refraction)
         assertEquals(GlassMaterial.CLEAR, waiting.material)
-        assertEquals(GlassAccessibilityMode.FORCE_OPAQUE, waiting.accessibilityMode)
+        assertEquals(GlassAccessibilityMode.FORCE_FULL, waiting.accessibilityMode)
 
         val ready = GlassRenderingPlan.resolve(
             fallbackEnabled = false,
@@ -71,7 +71,7 @@ class GlassRenderingPlanTest {
         assertFalse(inactive.backdropBlur)
         assertFalse(inactive.refraction)
         assertEquals(GlassMaterial.CLEAR, inactive.material)
-        assertEquals(GlassAccessibilityMode.FORCE_OPAQUE, inactive.accessibilityMode)
+        assertEquals(GlassAccessibilityMode.FORCE_FULL, inactive.accessibilityMode)
     }
 
     @Test
@@ -86,11 +86,11 @@ class GlassRenderingPlanTest {
         assertFalse(legacy.backdropBlur)
         assertFalse(legacy.refraction)
         assertEquals(GlassMaterial.CLEAR, legacy.material)
-        assertEquals(GlassAccessibilityMode.FORCE_OPAQUE, legacy.accessibilityMode)
+        assertEquals(GlassAccessibilityMode.FORCE_FULL, legacy.accessibilityMode)
     }
 
     @Test
-    fun safeFallbackMaterialUsesOpaqueThemeAwareColors() {
+    fun safeFallbackMaterialUsesTranslucentThemeAwareColors() {
         val light = GlassFallbackMaterial.colors(
             surface = 0xFFF5FAFD.toInt(),
             glassSurface = 0xC2E8F3F8.toInt(),
@@ -102,8 +102,8 @@ class GlassRenderingPlanTest {
             primary = 0xFF80CBC4.toInt()
         )
 
-        assertTrue(light.all { (it ushr 24) == 0xFF })
-        assertTrue(dark.all { (it ushr 24) == 0xFF })
+        assertTrue(light.all { (it ushr 24) in 0xA0..0xE0 })
+        assertTrue(dark.all { (it ushr 24) in 0xA0..0xE0 })
         assertTrue(light[0] != light[1])
         assertTrue(light[2] != light[1])
         assertTrue(light[1] != dark[1])

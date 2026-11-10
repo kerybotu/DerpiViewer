@@ -40,20 +40,24 @@ internal data class GlassRenderingPlan(
                 backdropBlur = requestedActive && sourceReady && !fallbackEnabled && preparedBackdropSupported,
                 refraction = requestedActive && sourceReady && !fallbackEnabled && preparedBackdropSupported,
                 material = if (useSafeMaterial) GlassMaterial.CLEAR else GlassMaterial.REGULAR,
-                accessibilityMode = if (useSafeMaterial) GlassAccessibilityMode.FORCE_OPAQUE else GlassAccessibilityMode.AUTO
+                // AUTO can select the library's opaque fallback when Android enables
+                // reduced transparency. Safe app materials already disable costly effects.
+                accessibilityMode = if (useSafeMaterial) GlassAccessibilityMode.FORCE_FULL
+                    else GlassAccessibilityMode.AUTO
             )
         }
     }
 }
 
-/** Opaque theme colors for the renderer-free material used by performance fallback. */
+/** Theme-aware translucent colors for the renderer-free material used by safe modes. */
 internal object GlassFallbackMaterial {
     fun colors(surface: Int, glassSurface: Int, primary: Int): IntArray {
         val base = baseColor(surface, glassSurface)
+        val baseAlpha = (glassSurface ushr 24).coerceIn(0xA0, 0xE0)
         return intArrayOf(
-            blendOpaque(base, android.graphics.Color.WHITE, 0.24f),
-            base,
-            blendOpaque(base, primary, 0.16f)
+            withAlpha(blend(base, android.graphics.Color.WHITE, 0.24f), (baseAlpha + 24).coerceAtMost(0xE8)),
+            withAlpha(base, baseAlpha),
+            withAlpha(blend(base, primary, 0.16f), (baseAlpha - 8).coerceAtLeast(0x98))
         )
     }
 
@@ -68,12 +72,14 @@ internal object GlassFallbackMaterial {
         return (0xFF shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
     }
 
-    private fun blendOpaque(base: Int, overlay: Int, fraction: Float): Int {
+    private fun blend(base: Int, overlay: Int, fraction: Float): Int {
         val f = fraction.coerceIn(0f, 1f)
         fun channel(shift: Int) =
             ((((base shr shift) and 0xFF) * (1f - f) + ((overlay shr shift) and 0xFF) * f) + 0.5f).toInt()
-        return (0xFF shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
+        return (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
     }
+
+    private fun withAlpha(color: Int, alpha: Int) = (color and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
 }
 
 /** App theme and bounded rendering shared by the library's ready-made widgets. */
@@ -169,7 +175,7 @@ object GlassWidgetStyle {
         view.backdropSource = safeSource
         val palette = PaletteManager.colors(view.context)
         val fallbackColors = GlassFallbackMaterial.colors(palette.surface, palette.glassSurface, palette.primary)
-        view.overLight = useFallbackMaterial && !palette.isDark
+        view.overLight = false
         // The AAR paints its tint after the View background. Give that pass
         // the resolved theme surface so an empty capture cannot turn black.
         view.glassTint = if (useFallbackMaterial) {
@@ -201,7 +207,7 @@ object GlassWidgetStyle {
         }
         CrashDiagnostics.recordEvent(
             "LiquidGlassView",
-            "edge owner=${view.javaClass.simpleName}@${System.identityHashCode(view)} requested=$requestedActive mode=$sourceMode fallback=$fallbackEnabled capture=${effectivePlan.captureBackdrop} refraction=${effectivePlan.refraction}"
+            "glass ${view.javaClass.simpleName} fb=$fallbackEnabled m=${view.material} a=${view.accessibilityMode} t=${Integer.toHexString(view.glassTint)} dark=${palette.isDark} bg=${fallbackColors.joinToString("_") { Integer.toHexString(it) }}"
         )
     }
 
