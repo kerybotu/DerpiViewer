@@ -12,6 +12,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
@@ -39,6 +46,31 @@ import org.junit.runner.RunWith
 class GlassThemeRegressionTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
+
+    @Test
+    fun mainMenuUsesUi2WhileHomeIsStillLoading() {
+        val main = launch(MainActivity::class.java)
+        try {
+            instrumentation.runOnMainSync {
+                MainActivity::class.java.getDeclaredField("homeHasLoaded").apply {
+                    isAccessible = true
+                    setBoolean(main, false)
+                }
+                MainActivity::class.java.getDeclaredMethod("updateNavigationMenuMode").apply {
+                    isAccessible = true
+                    invoke(main)
+                }
+            }
+            onView(withContentDescription(main.getString(R.string.navigation_drawer_open))).perform(click())
+            onView(withText("标签")).inRoot(isDialog()).check(matches(isDisplayed()))
+            instrumentation.runOnMainSync {
+                assertFalse("Opening UI 2.0 must not open the legacy drawer", main.findViewById<androidx.drawerlayout.widget.DrawerLayout>(R.id.drawer_layout).isDrawerOpen(androidx.core.view.GravityCompat.START))
+            }
+            capturePage("startup_ui2_menu_before_home_loaded", main)
+        } finally {
+            instrumentation.runOnMainSync { main.finish() }
+        }
+    }
 
     @Test
     fun menuUsesIndependentLiveBackdropSourceWhenActivityContainsGlass() {

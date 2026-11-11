@@ -89,7 +89,6 @@ class MainActivity : AppCompatActivity() {
     private var embeddedScreenId: Int = R.id.tab_home
     private var currentStatusBarHeight = 0
     private var homeTopIslandController: HomeTopIslandController? = null
-    private var glassMenuEnabled = false
 
     private val activityJob = Job()
     private val activityScope = CoroutineScope(Dispatchers.Main + activityJob)
@@ -1019,16 +1018,10 @@ class MainActivity : AppCompatActivity() {
         fab.translationX = tabCenterX - anchoredFabCenterX
     }
 
-    /** Keep the legacy drawer available during startup, then switch the same
-     * toolbar affordance to the shared GlassMenu once the home content exists. */
+    /** Route the toolbar affordance to the shared UI 2.0 menu throughout startup. */
     private fun updateNavigationMenuMode() {
         if (!::binding.isInitialized || !::drawerLayout.isInitialized) return
-        val shouldUseGlassMenu = homeHasLoaded
-        glassMenuEnabled = shouldUseGlassMenu
-        binding.toolbar.setNavigationOnClickListener {
-            if (glassMenuEnabled) showGlassMenu()
-            else drawerLayout.openDrawer(GravityCompat.START)
-        }
+        binding.toolbar.setNavigationOnClickListener { showGlassMenu() }
         updateShellGlass()
     }
 
