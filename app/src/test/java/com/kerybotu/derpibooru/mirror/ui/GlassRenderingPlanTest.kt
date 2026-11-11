@@ -90,22 +90,19 @@ class GlassRenderingPlanTest {
     }
 
     @Test
-    fun safeFallbackMaterialUsesTranslucentThemeAwareColors() {
-        val light = GlassFallbackMaterial.colors(
-            surface = 0xFFF5FAFD.toInt(),
-            glassSurface = 0xC2E8F3F8.toInt(),
-            primary = 0xFF127287.toInt()
-        )
-        val dark = GlassFallbackMaterial.colors(
-            surface = 0xFF121212.toInt(),
-            glassSurface = 0xB8121212.toInt(),
-            primary = 0xFF80CBC4.toInt()
-        )
+    fun fallbackMaterialUsesSpecifiedFlatThemeAwareAlphaColors() {
+        val light = GlassFallbackMaterial.resolve(isDark = false)
+        val dark = GlassFallbackMaterial.resolve(isDark = true)
 
-        assertTrue(light.all { (it ushr 24) in 0xA0..0xE0 })
-        assertTrue(dark.all { (it ushr 24) in 0xA0..0xE0 })
-        assertTrue(light[0] != light[1])
-        assertTrue(light[2] != light[1])
-        assertTrue(light[1] != dark[1])
+        assertEquals(0xC7F4F7FA.toInt(), light.fillColor)
+        assertEquals(0xC7171A20.toInt(), dark.fillColor)
+        assertEquals(0x8CFFFFFF.toInt(), light.borderColor)
+        assertEquals(0x38FFFFFF.toInt(), dark.borderColor)
+        assertEquals(0x59FFFFFF.toInt(), light.highlightColor)
+        assertEquals(0x1FFFFFFF.toInt(), dark.highlightColor)
+        assertEquals(0.78f, light.fillAlpha, 0.001f)
+        assertEquals(0.78f, dark.fillAlpha, 0.001f)
+        assertTrue((light.fillColor ushr 24) < 255)
+        assertTrue((dark.fillColor ushr 24) < 255)
     }
 }

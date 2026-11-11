@@ -1,6 +1,7 @@
 package com.kerybotu.derpibooru.mirror
 
 import android.app.Activity
+import android.app.Instrumentation
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -10,11 +11,13 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.drawable.Drawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
@@ -168,6 +171,112 @@ class Ui2LegacyRegressionTest {
     }
 
     @Test
+    fun performanceFallbackUsesOneTranslucentMaterialAcrossHomeIslands() {
+        val main = launch(MainActivity::class.java) as MainActivity
+        await { requests.any { it.contains("search/images") } }
+        val backdropPattern = instrumentation.runOnMainSyncAndReturn { addBackdropPixelFixture(main) }
+        AppSettings.setPalette(context, AppSettings.Palette.COLORFUL)
+        AppSettings.setGlassPerformanceFallbackEnabled(context, false)
+        instrumentation.runOnMainSync { PaletteManager.notifyChanged(main) }
+        shot("glass-normal", main)
+
+        AppSettings.setGlassPerformanceFallbackEnabled(context, true)
+        instrumentation.runOnMainSync { PaletteManager.notifyChanged(main) }
+        awaitFallbackSurfaces(main)
+        shot("glass-fallback", main)
+
+        AppSettings.setPalette(context, AppSettings.Palette.LIGHT)
+        instrumentation.runOnMainSync { PaletteManager.notifyChanged(main) }
+        awaitFallbackSurfaces(main)
+        verifyImageTransmitsThroughIsland(main, backdropPattern)
+        shot("glass-fallback-light", main)
+        AppSettings.setPalette(context, AppSettings.Palette.DARK)
+        instrumentation.runOnMainSync { PaletteManager.notifyChanged(main) }
+        awaitFallbackSurfaces(main)
+        verifyImageTransmitsThroughIsland(main, backdropPattern)
+        shot("glass-fallback-dark", main)
+
+        val spec = GlassFallbackMaterial.resolve(isDark = false)
+        val backdrop = Color.rgb(35, 140, 225)
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(backdrop)
+        val drawable: Drawable = GlassFallbackMaterial.drawable(spec, 0f, 1f).apply { setBounds(0, 0, 64, 64) }
+        drawable.draw(Canvas(bitmap))
+        val actual = bitmap.getPixel(32, 32)
+        val expected = androidx.core.graphics.ColorUtils.compositeColors(spec.fillColor, backdrop)
+        assertTrue("Fallback fill must alpha-composite over backdrop pixels",
+            abs(Color.red(expected) - Color.red(actual)) <= 2 &&
+                abs(Color.green(expected) - Color.green(actual)) <= 2 &&
+                abs(Color.blue(expected) - Color.blue(actual)) <= 2)
+        assertNotEquals("Fallback must not render as an opaque card", Color.rgb(244, 247, 250), actual)
+        bitmap.recycle()
+    }
+
+    private fun addBackdropPixelFixture(activity: MainActivity): View {
+        val sourceField = MainActivity::class.java.getDeclaredField("homeBackdrop").apply { isAccessible = true }
+        val source = sourceField.get(activity) as? ScrollContentBackdrop ?: error("Home prepared backdrop is unavailable")
+        val field = ScrollContentBackdrop::class.java.getDeclaredField("contentRoot").apply { isAccessible = true }
+        val contentRoot = field.get(source) as? ViewGroup ?: error("Prepared content root is unavailable")
+        val origin = IntArray(2); contentRoot.getLocationOnScreen(origin)
+        val island = homeHeader(activity)
+        val islandBounds = Rect(); island.getGlobalVisibleRect(islandBounds)
+        val fixture = object : View(context) {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            override fun onDraw(canvas: Canvas) {
+                canvas.drawColor(Color.rgb(35, 140, 225))
+                paint.color = Color.rgb(235, 120, 45)
+                canvas.drawRect(width / 2f, 0f, width.toFloat(), height.toFloat(), paint)
+            }
+        }
+        contentRoot.addView(fixture, FrameLayout.LayoutParams(dp(320), dp(120)).apply {
+            leftMargin = islandBounds.centerX() - origin[0] - dp(160)
+            topMargin = islandBounds.top - origin[1]
+        })
+        PreparedBackdropSource.invalidateSource(source)
+        return fixture
+    }
+
+    private fun verifyImageTransmitsThroughIsland(activity: MainActivity, fixture: View) {
+        val island = homeHeader(activity)
+        settle()
+        val frame = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+        try {
+            val fixtureBounds = Rect(); fixture.getGlobalVisibleRect(fixtureBounds)
+            val islandBounds = Rect(); island.getGlobalVisibleRect(islandBounds)
+            val x = (fixtureBounds.left + dp(50)).coerceIn(0, fixtureBounds.right - 1)
+            val y = islandBounds.centerY()
+            val raw = Color.rgb(35, 140, 225)
+            val expected = androidx.core.graphics.ColorUtils.compositeColors(
+                GlassFallbackMaterial.resolve(PaletteManager.colors(context).isDark).fillColor, raw
+            )
+            val covered = frame.getPixel(x, y)
+            assertTrue("Fixture image must overlap the glass island", fixtureBounds.contains(x, y) && islandBounds.contains(x, y))
+            assertTrue("Glass must alpha-blend the image beneath it: dark=${PaletteManager.colors(context).isDark} expected=${Integer.toHexString(expected)} actual=${Integer.toHexString(covered)} at=($x,$y)",
+                abs(Color.red(expected) - Color.red(covered)) <= 8 &&
+                    abs(Color.green(expected) - Color.green(covered)) <= 8 &&
+                    abs(Color.blue(expected) - Color.blue(covered)) <= 8)
+            val uncovered = frame.getPixel(x, (fixtureBounds.bottom - dp(8)).coerceIn(0, frame.height - 1))
+            assertTrue("Uncovered fixture pixels retain vivid image color", Color.blue(uncovered) > Color.red(uncovered) + 80)
+        } finally { frame.recycle() }
+    }
+
+    private fun awaitFallbackSurfaces(activity: Activity) {
+        await {
+            val surfaces = descendants(activity.window.decorView).filterIsInstance<LiquidGlassView>()
+            surfaces.isNotEmpty() && surfaces.all {
+                it.background?.javaClass?.name?.contains("TranslucentGlassDrawable") == true &&
+                    it.glassTint == Color.TRANSPARENT && !it.enableBackdropBlur && !it.enableDynamicBackground
+            }
+        }
+    }
+
+    private fun homeHeader(activity: MainActivity): com.kerybotu.derpibooru.mirror.ui.IslandGlassView {
+        val binding = MainActivity::class.java.getDeclaredField("binding").apply { isAccessible = true }.get(activity)
+        return binding.javaClass.getDeclaredField("headerGlass").apply { isAccessible = true }
+            .get(binding) as com.kerybotu.derpibooru.mirror.ui.IslandGlassView
+    }
+
+    @Test
     fun folderActionsServerFavoritesAndDownloadRowsKeepTheirLayout() {
         val store = LocalFavoritesStore(context)
         repeat(8) { store.createFolder("布局测试收藏夹 $it") }
@@ -297,6 +406,12 @@ class Ui2LegacyRegressionTest {
             Thread.sleep(100)
         }
         error("UI state was not ready within 15 seconds")
+    }
+    private fun <T> Instrumentation.runOnMainSyncAndReturn(block: () -> T): T {
+        var result: T? = null
+        runOnMainSync { result = block() }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
     private fun settle() { Thread.sleep(800); instrumentation.runOnMainSync {} }
     private fun shot(name: String, page: Activity) {

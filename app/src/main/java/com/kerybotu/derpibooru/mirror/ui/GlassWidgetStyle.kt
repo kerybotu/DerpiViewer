@@ -18,6 +18,12 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import java.lang.ref.WeakReference
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
 
 internal data class GlassRenderingPlan(
     val captureBackdrop: Boolean,
@@ -49,37 +55,68 @@ internal data class GlassRenderingPlan(
     }
 }
 
-/** Theme-aware translucent colors for the renderer-free material used by safe modes. */
+/** One renderer-free translucent material shared by every glass widget in safe modes. */
 internal object GlassFallbackMaterial {
-    fun colors(surface: Int, glassSurface: Int, primary: Int): IntArray {
-        val base = baseColor(surface, glassSurface)
-        val baseAlpha = (glassSurface ushr 24).coerceIn(0xA0, 0xE0)
-        return intArrayOf(
-            withAlpha(blend(base, android.graphics.Color.WHITE, 0.24f), (baseAlpha + 24).coerceAtMost(0xE8)),
-            withAlpha(base, baseAlpha),
-            withAlpha(blend(base, primary, 0.16f), (baseAlpha - 8).coerceAtLeast(0x98))
-        )
+    data class Spec(val fillColor: Int, val borderColor: Int, val highlightColor: Int) {
+        val fillAlpha: Float get() = ((fillColor ushr 24) and 0xFF) / 255f
     }
 
-    fun baseColor(surface: Int, glassSurface: Int): Int = compositeOverSurface(glassSurface, surface)
-
-    private fun compositeOverSurface(foreground: Int, surface: Int): Int {
-        val foregroundAlpha = foreground ushr 24
-        val inverseAlpha = 255 - foregroundAlpha
-        fun channel(shift: Int) =
-            (((foreground shr shift) and 0xFF) * foregroundAlpha +
-                ((surface shr shift) and 0xFF) * inverseAlpha + 127) / 255
-        return (0xFF shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
+    fun resolve(isDark: Boolean): Spec = if (isDark) {
+        Spec(0xC7171A20.toInt(), 0x38FFFFFF, 0x1FFFFFFF)
+    } else {
+        Spec(0xC7F4F7FA.toInt(), 0x8CFFFFFF.toInt(), 0x59FFFFFF)
     }
 
-    private fun blend(base: Int, overlay: Int, fraction: Float): Int {
-        val f = fraction.coerceIn(0f, 1f)
-        fun channel(shift: Int) =
-            ((((base shr shift) and 0xFF) * (1f - f) + ((overlay shr shift) and 0xFF) * f) + 0.5f).toInt()
-        return (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
-    }
+    fun drawable(spec: Spec, cornerRadius: Float, strokeWidth: Float): Drawable =
+        TranslucentGlassDrawable(spec, cornerRadius, strokeWidth)
 
-    private fun withAlpha(color: Int, alpha: Int) = (color and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
+    private class TranslucentGlassDrawable(
+        private val spec: Spec,
+        private val radius: Float,
+        private val strokeWidth: Float
+    ) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val rect = RectF()
+        private val path = Path()
+        private var drawableAlpha = 255
+
+        override fun draw(canvas: Canvas) {
+            val bounds = bounds
+            if (bounds.isEmpty) return
+            rect.set(bounds)
+            val halfStroke = strokeWidth / 2f
+            paint.style = Paint.Style.FILL
+            paint.color = withDrawableAlpha(spec.fillColor)
+            canvas.drawRoundRect(rect, radius, radius, paint)
+
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = strokeWidth
+            paint.color = withDrawableAlpha(spec.borderColor)
+            rect.inset(halfStroke, halfStroke)
+            canvas.drawRoundRect(rect, (radius - halfStroke).coerceAtLeast(0f),
+                (radius - halfStroke).coerceAtLeast(0f), paint)
+
+            val inset = (strokeWidth * 1.5f).coerceAtLeast(1f)
+            path.reset()
+            path.moveTo(rect.left + radius * 0.55f, rect.top + inset)
+            path.quadTo(rect.left + inset, rect.top + inset, rect.left + inset, rect.top + radius * 0.55f)
+            path.moveTo(rect.left + radius * 0.55f, rect.top + inset)
+            path.lineTo(rect.right - radius * 0.55f, rect.top + inset)
+            path.quadTo(rect.right - inset, rect.top + inset, rect.right - inset, rect.top + radius * 0.55f)
+            paint.strokeWidth = strokeWidth.coerceAtLeast(1f)
+            paint.color = withDrawableAlpha(spec.highlightColor)
+            canvas.drawPath(path, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { drawableAlpha = alpha.coerceIn(0, 255); invalidateSelf() }
+        override fun getAlpha(): Int = drawableAlpha
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter; invalidateSelf() }
+        @Deprecated("Deprecated in Android")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+        private fun withDrawableAlpha(color: Int): Int =
+            Color.argb(Color.alpha(color) * drawableAlpha / 255, Color.red(color), Color.green(color), Color.blue(color))
+    }
 }
 
 /** App theme and bounded rendering shared by the library's ready-made widgets. */
@@ -119,7 +156,7 @@ object GlassWidgetStyle {
         }
         val palette = PaletteManager.colors(view.context)
         val backdropColor = (requestedSource?.background as? ColorDrawable)?.color ?: palette.surface
-        val staticColor = GlassFallbackMaterial.baseColor(backdropColor, palette.glassSurface)
+        val staticColor = backdropColor
         val previousActive = renderingStates[view]
         val previousRequestedSource = requestedRenderingSources[view]?.get()
         val previousMode = renderingSourceModes[view]
@@ -174,12 +211,12 @@ object GlassWidgetStyle {
         renderingSources[view] = WeakReference(safeSource)
         view.backdropSource = safeSource
         val palette = PaletteManager.colors(view.context)
-        val fallbackColors = GlassFallbackMaterial.colors(palette.surface, palette.glassSurface, palette.primary)
+        val fallbackSpec = GlassFallbackMaterial.resolve(palette.isDark)
         view.overLight = false
-        // The AAR paints its tint after the View background. Give that pass
-        // the resolved theme surface so an empty capture cannot turn black.
+        // The AAR tint pass is drawn after the View background; leaving it
+        // translucent would composite the fill twice and make it opaque.
         view.glassTint = if (useFallbackMaterial) {
-            fallbackColors[1]
+            Color.TRANSPARENT
         } else if (materialRole(view) == MaterialRole.READING) {
             palette.glassSurface
         } else {
@@ -193,11 +230,11 @@ object GlassWidgetStyle {
         )
         configureRenderer(view, effectivePlan)
         view.background = if (useFallbackMaterial) {
-            GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, fallbackColors).apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = view.cornerRadius
-                setStroke(view.resources.displayMetrics.density.toInt().coerceAtLeast(1), palette.glassBorder)
-            }
+            GlassFallbackMaterial.drawable(
+                fallbackSpec,
+                view.cornerRadius,
+                view.resources.displayMetrics.density.coerceAtLeast(1f)
+            )
         } else {
             BackdropFallback(view, color).apply {
                 shape = GradientDrawable.RECTANGLE
@@ -207,7 +244,7 @@ object GlassWidgetStyle {
         }
         CrashDiagnostics.recordEvent(
             "LiquidGlassView",
-            "glass ${view.javaClass.simpleName} fb=$fallbackEnabled m=${view.material} a=${view.accessibilityMode} t=${Integer.toHexString(view.glassTint)} dark=${palette.isDark} bg=${fallbackColors.joinToString("_") { Integer.toHexString(it) }}"
+            "glass ${view.javaClass.simpleName} fb=$fallbackEnabled m=${view.material} a=${view.accessibilityMode} t=${Integer.toHexString(view.glassTint)} dark=${palette.isDark} fill=${Integer.toHexString(fallbackSpec.fillColor)}"
         )
     }
 
@@ -369,16 +406,11 @@ object GlassWidgetStyle {
         colors: PaletteDefinitions.Scheme,
         cornerRadius: Float,
         density: Float
-    ): GradientDrawable {
-        return GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            GlassFallbackMaterial.colors(colors.surface, colors.glassSurface, colors.primary)
-        ).apply {
-            shape = GradientDrawable.RECTANGLE
-            this.cornerRadius = cornerRadius
-            setStroke(density.toInt().coerceAtLeast(1), colors.glassBorder)
-        }
-    }
+    ): Drawable = GlassFallbackMaterial.drawable(
+        GlassFallbackMaterial.resolve(colors.isDark),
+        cornerRadius,
+        density.coerceAtLeast(1f)
+    )
 
     private class BackdropFallback(view: LiquidGlassView, private val fallback: Int) : GradientDrawable() {
         private val owner = WeakReference(view)
