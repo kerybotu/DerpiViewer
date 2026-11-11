@@ -1,6 +1,7 @@
 package com.kerybotu.derpibooru.mirror
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Outline
 import android.os.Bundle
 import android.util.Log
@@ -1331,6 +1332,19 @@ class MainActivity : AppCompatActivity() {
             })
         )
         com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuCard(this, items).show()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (!::binding.isInitialized) return
+        applyUi2Shell()
+        ViewCompat.requestApplyInsets(binding.root)
+        binding.root.post {
+            if (isFinishing || isDestroyed) return@post
+            updateResponsiveIslandWidths()
+            updateArtworkTopPadding()
+            homeTopIslandController?.onLayoutChanged()
+        }
     }
 
     override fun onDestroy() {

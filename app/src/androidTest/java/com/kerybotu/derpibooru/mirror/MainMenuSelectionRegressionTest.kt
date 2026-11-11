@@ -1,6 +1,8 @@
 package com.kerybotu.derpibooru.mirror
 
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,6 +17,8 @@ import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.kerybotu.derpibooru.mirror.model.Image
 import com.kerybotu.derpibooru.mirror.ui.ImageAdapter
 import org.junit.Assert.*
@@ -23,6 +27,54 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MainMenuSelectionRegressionTest {
+    @Test
+    fun rotatingHomeRetainsActivityAdapterAndLoadedImages() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val main = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ) as MainActivity
+        val originalOrientation = main.requestedOrientation
+        try {
+            instrumentation.runOnMainSync {
+                MainActivity::class.java.getDeclaredMethod("loadMockImages").apply {
+                    isAccessible = true
+                    invoke(main)
+                }
+            }
+            val adapter = MainActivity::class.java.getDeclaredField("adapter").apply {
+                isAccessible = true
+            }.get(main)
+            val imageCount = (adapter as ImageAdapter).itemCount
+            instrumentation.runOnMainSync {
+                main.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            val deadline = android.os.SystemClock.uptimeMillis() + 20_000
+            var landscapeActivity: MainActivity? = null
+            while (landscapeActivity == null && android.os.SystemClock.uptimeMillis() < deadline) {
+                instrumentation.runOnMainSync {
+                    landscapeActivity = ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<MainActivity>()
+                        .firstOrNull { it.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE }
+                }
+                if (landscapeActivity == null) Thread.sleep(100)
+            }
+            assertSame("Rotation must retain the home Activity instead of rebuilding and reloading it", main, landscapeActivity)
+            instrumentation.runOnMainSync {
+                assertSame("Rotation must retain the existing image adapter", adapter,
+                    MainActivity::class.java.getDeclaredField("adapter").apply { isAccessible = true }.get(main))
+                assertEquals(imageCount, (adapter as ImageAdapter).itemCount)
+                assertTrue(MainActivity::class.java.getDeclaredField("homeHasLoaded").apply { isAccessible = true }.getBoolean(main))
+            }
+        } finally {
+            instrumentation.runOnMainSync {
+                main.requestedOrientation = originalOrientation
+                main.finish()
+            }
+        }
+    }
+
     @Test
     fun cancellingDownloadSelectionRestoresMenuIconAndAction() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
