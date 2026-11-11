@@ -23,8 +23,28 @@ object AdaptiveLayoutPolicy {
     const val HORIZONTAL_LAYOUT_ASPECT_RATIO = 1.15f
     const val COMPACT_NAVIGATION_RAIL_DP = 72
     const val WIDE_NAVIGATION_RAIL_DP = 88
+    const val COMPACT_HEIGHT_MAX_DP = 480
+    const val MEDIUM_HEIGHT_MAX_DP = 900
+    const val DETAIL_SIDE_PANE_MIN_WIDTH_DP = 840
+    const val DETAIL_SIDE_PANE_MIN_HEIGHT_DP = 480
 
-    enum class WindowWidthClass { COMPACT, MEDIUM, EXPANDED }
+    enum class WindowWidthClass { COMPACT, MEDIUM, EXPANDED, LARGE, EXTRA_LARGE }
+    enum class WindowHeightClass { COMPACT, MEDIUM, EXPANDED }
+    enum class NavigationMode { BOTTOM_BAR, RAIL }
+
+    data class AdaptiveLayoutSpec(
+        val availableWidthDp: Int,
+        val availableHeightDp: Int,
+        val widthClass: WindowWidthClass,
+        val heightClass: WindowHeightClass,
+        val navigationMode: NavigationMode,
+        val navigationWidthDp: Int,
+        val contentMaxWidthDp: Int,
+        val horizontalPaddingDp: Int,
+        val componentSpacingDp: Int,
+        val panelWidthDp: Int,
+        val useDetailSidePane: Boolean
+    )
 
     data class ResponsiveTokens(
         val screenGutterDp: Int,
@@ -38,8 +58,65 @@ object AdaptiveLayoutPolicy {
     fun widthClass(widthDp: Int): WindowWidthClass = when {
         widthDp < 600 -> WindowWidthClass.COMPACT
         widthDp < 840 -> WindowWidthClass.MEDIUM
-        else -> WindowWidthClass.EXPANDED
+        widthDp < 1200 -> WindowWidthClass.EXPANDED
+        widthDp < 1600 -> WindowWidthClass.LARGE
+        else -> WindowWidthClass.EXTRA_LARGE
     }
+
+    fun heightClass(heightDp: Int): WindowHeightClass = when {
+        heightDp < COMPACT_HEIGHT_MAX_DP -> WindowHeightClass.COMPACT
+        heightDp < MEDIUM_HEIGHT_MAX_DP -> WindowHeightClass.MEDIUM
+        else -> WindowHeightClass.EXPANDED
+    }
+
+    fun specFor(availableWidthDp: Int, availableHeightDp: Int): AdaptiveLayoutSpec {
+        val width = availableWidthDp.coerceAtLeast(1)
+        val height = availableHeightDp.coerceAtLeast(1)
+        val widthClass = widthClass(width)
+        val heightClass = heightClass(height)
+        val useRail = widthClass.ordinal >= WindowWidthClass.EXPANDED.ordinal ||
+            (width >= 600 && isHorizontalLayout(width, height))
+        val navigationMode = if (useRail) NavigationMode.RAIL else NavigationMode.BOTTOM_BAR
+        val navigationWidth = if (useRail) navigationRailWidthDp(width) else 0
+        val tokens = tokensForWidth(width)
+        val usableContentWidth = (width - navigationWidth - tokens.screenGutterDp * 2).coerceAtLeast(1)
+        val sidePane = width >= DETAIL_SIDE_PANE_MIN_WIDTH_DP &&
+            height >= DETAIL_SIDE_PANE_MIN_HEIGHT_DP &&
+            usableContentWidth >= 760
+        val panelWidth = if (sidePane) {
+            (usableContentWidth * 0.32f).toInt().coerceIn(320, 440)
+        } else {
+            when (widthClass) {
+                WindowWidthClass.COMPACT -> 0
+                WindowWidthClass.MEDIUM -> 280
+                else -> 320
+            }
+        }
+        return AdaptiveLayoutSpec(
+            availableWidthDp = width,
+            availableHeightDp = height,
+            widthClass = widthClass,
+            heightClass = heightClass,
+            navigationMode = navigationMode,
+            navigationWidthDp = navigationWidth,
+            contentMaxWidthDp = tokens.contentMaxWidthDp,
+            horizontalPaddingDp = tokens.screenGutterDp,
+            componentSpacingDp = when (widthClass) {
+                WindowWidthClass.COMPACT -> 8
+                WindowWidthClass.MEDIUM -> 12
+                WindowWidthClass.EXPANDED -> 16
+                WindowWidthClass.LARGE -> 20
+                WindowWidthClass.EXTRA_LARGE -> 24
+            },
+            panelWidthDp = panelWidth,
+            useDetailSidePane = sidePane
+        )
+    }
+
+    fun specFor(context: Context, view: View? = null): AdaptiveLayoutSpec = specFor(
+        availableContentWidthDp(context, view),
+        availableWindowHeightDp(context, view)
+    )
 
     fun isHorizontalLayout(availableWidthDp: Int, availableHeightDp: Int): Boolean =
         availableWidthDp > availableHeightDp * HORIZONTAL_LAYOUT_ASPECT_RATIO
@@ -56,7 +133,9 @@ object AdaptiveLayoutPolicy {
     fun tokensForWidth(widthDp: Int): ResponsiveTokens = when (widthClass(widthDp)) {
         WindowWidthClass.COMPACT -> ResponsiveTokens(16, 600, TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
         WindowWidthClass.MEDIUM -> ResponsiveTokens(20, 900, MEDIUM_TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
-        WindowWidthClass.EXPANDED -> ResponsiveTokens(24, MAX_CONTENT_WIDTH_DP, EXPANDED_TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
+        WindowWidthClass.EXPANDED -> ResponsiveTokens(24, 1120, EXPANDED_TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
+        WindowWidthClass.LARGE -> ResponsiveTokens(32, MAX_CONTENT_WIDTH_DP, EXPANDED_TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
+        WindowWidthClass.EXTRA_LARGE -> ResponsiveTokens(40, MAX_CONTENT_WIDTH_DP, EXPANDED_TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
     }
 
     fun availableContentWidthDp(context: Context, view: View? = null): Int {

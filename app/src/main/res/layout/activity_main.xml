@@ -53,8 +53,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="20dp"
-                    android:text="正在优选网络节点…"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
+                    android:text="正在准备首页..."
+                    android:textAppearance="?attr/textAppearanceTitleLarge"
                     android:textColor="?attr/colorOnSurface" />
 
                 <TextView
@@ -62,7 +62,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="首次启动需要几秒钟"
+                    android:text="正在预加载最新图片"
+                    android:textSize="14sp"
                     android:textColor="?attr/colorOnSurfaceVariant" />
             </LinearLayout>
         </com.kerybotu.derpibooru.mirror.ui.IosPullRefreshLayout>

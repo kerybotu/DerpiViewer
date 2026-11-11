@@ -47,4 +47,30 @@ class AdaptiveLayoutPolicyTest {
         assertEquals(88, AdaptiveLayoutPolicy.navigationRailWidthDp(840))
         assertEquals(684, AdaptiveLayoutPolicy.contentWidthAfterNavigationDp(820, 88, 24))
     }
+
+    @Test
+    fun windowClassesCoverLargeAndExtraLargeWidthsAndAvailableHeights() {
+        assertEquals(AdaptiveLayoutPolicy.WindowWidthClass.EXPANDED, AdaptiveLayoutPolicy.widthClass(1199))
+        assertEquals(AdaptiveLayoutPolicy.WindowWidthClass.LARGE, AdaptiveLayoutPolicy.widthClass(1200))
+        assertEquals(AdaptiveLayoutPolicy.WindowWidthClass.EXTRA_LARGE, AdaptiveLayoutPolicy.widthClass(1600))
+        assertEquals(AdaptiveLayoutPolicy.WindowHeightClass.COMPACT, AdaptiveLayoutPolicy.heightClass(479))
+        assertEquals(AdaptiveLayoutPolicy.WindowHeightClass.MEDIUM, AdaptiveLayoutPolicy.heightClass(480))
+        assertEquals(AdaptiveLayoutPolicy.WindowHeightClass.EXPANDED, AdaptiveLayoutPolicy.heightClass(900))
+    }
+
+    @Test
+    fun phoneLandscapeKeepsCompactSinglePaneWhileExpandedLandscapeGetsSidePane() {
+        val phoneLandscape = AdaptiveLayoutPolicy.specFor(640, 360)
+        val tabletLandscape = AdaptiveLayoutPolicy.specFor(1280, 800)
+        val portraitPhone = AdaptiveLayoutPolicy.specFor(411, 850)
+
+        assertEquals(AdaptiveLayoutPolicy.WindowWidthClass.MEDIUM, phoneLandscape.widthClass)
+        assertEquals(AdaptiveLayoutPolicy.WindowHeightClass.COMPACT, phoneLandscape.heightClass)
+        assertEquals(AdaptiveLayoutPolicy.NavigationMode.RAIL, phoneLandscape.navigationMode)
+        assertTrue(!phoneLandscape.useDetailSidePane)
+        assertEquals(AdaptiveLayoutPolicy.NavigationMode.BOTTOM_BAR, portraitPhone.navigationMode)
+        assertTrue(tabletLandscape.useDetailSidePane)
+        assertTrue(tabletLandscape.contentMaxWidthDp <= 1280)
+        assertTrue(tabletLandscape.panelWidthDp > phoneLandscape.panelWidthDp)
+    }
 }

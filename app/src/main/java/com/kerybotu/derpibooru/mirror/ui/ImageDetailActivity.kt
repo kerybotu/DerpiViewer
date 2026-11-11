@@ -99,7 +99,7 @@ class ImageDetailActivity : AppCompatActivity() {
         }
     }
     private var bottomInset = 0
-    private var horizontalDetailLayout: Boolean? = null
+    private var sidePaneDetailLayout: Boolean? = null
     private var removePaletteObserver: (() -> Unit)? = null
     private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyPalette() }
     private val visibleBounds = Rect()
@@ -170,7 +170,7 @@ class ImageDetailActivity : AppCompatActivity() {
             }
         }
         b.detailTopIsland.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSheetBounds() }
-        b.root.post { applyIslandWidths(); updateSheetBounds() }
+        b.root.post { applyResponsiveDetailLayout(); applyIslandWidths(); updateSheetBounds() }
         b.root.viewTreeObserver.addOnPreDrawListener(glassVisibilityListener)
         b.detailInteractionPanel.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSheetBounds() }
         b.detailTagsGroup.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
@@ -385,9 +385,12 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun applyIslandWidths() {
         val available = (b.root.width - b.bottomSheet.paddingLeft - b.bottomSheet.paddingRight).takeIf { it > 0 } ?: return
-        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(this, b.root)
-        val panelWidth = if (horizontal) {
-            (available * 0.42f).toInt().coerceIn(dp(216), dp(360))
+        val widthDp = (available / resources.displayMetrics.density).toInt()
+        val heightDp = AdaptiveLayoutPolicy.availableWindowHeightDp(this, b.root)
+        val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+        val sidePane = layoutSpec.useDetailSidePane
+        val panelWidth = if (sidePane) {
+            dp(layoutSpec.panelWidthDp).coerceAtMost((available * 0.46f).toInt())
         } else available
         val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, panelWidth)
             .coerceAtMost((panelWidth - dp(24)).coerceAtLeast(dp(1)))
@@ -399,12 +402,13 @@ class ImageDetailActivity : AppCompatActivity() {
                 island.layoutParams = params
             }
         }
-        val topWidth = if (horizontal) minOf(dp(280), (available - panelWidth - dp(24)).coerceAtLeast(dp(1))) else width
+        val mediaWidth = if (sidePane) (available - panelWidth - dp(16)).coerceAtLeast(dp(1)) else available
+        val topWidth = if (sidePane) minOf(dp(280), (mediaWidth - dp(24)).coerceAtLeast(dp(1))) else width
         b.detailTopIsland.layoutParams = (b.detailTopIsland.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.apply {
             this.width = topWidth
-            gravity = if (horizontal) android.view.Gravity.TOP or android.view.Gravity.LEFT
+            gravity = if (sidePane) android.view.Gravity.TOP or android.view.Gravity.LEFT
                 else android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
-            leftMargin = if (horizontal) dp(8) else 0
+            leftMargin = if (sidePane) dp(8) else 0
         } ?: b.detailTopIsland.layoutParams.apply { this.width = topWidth }
         b.detailContent.layoutParams = b.detailContent.layoutParams.apply { this.width = width + dp(24) }
         b.detailTagsGroup.post { updateTagWidths() }
@@ -412,20 +416,24 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun applyResponsiveDetailLayout() {
         if (!::b.isInitialized || b.root.width <= 0 || b.root.height <= 0) return
-        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(this, b.root)
-        if (horizontalDetailLayout == horizontal) return
-        horizontalDetailLayout = horizontal
+        val widthDp = (b.root.width / resources.displayMetrics.density).toInt()
+        val heightDp = (b.root.height / resources.displayMetrics.density).toInt()
+        val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+        val sidePane = layoutSpec.useDetailSidePane
+        if (sidePaneDetailLayout == sidePane) return
+        sidePaneDetailLayout = sidePane
         val available = (b.root.width - b.bottomSheet.paddingLeft - b.bottomSheet.paddingRight).coerceAtLeast(1)
-        val mediaWidth = if (horizontal) (available * 0.58f).toInt() else -1
+        val panelWidth = if (sidePane) dp(layoutSpec.panelWidthDp).coerceAtMost((available * 0.46f).toInt()) else available
+        val mediaWidth = if (sidePane) (available - panelWidth - dp(16)).coerceAtLeast(dp(1)) else -1
         listOf(b.detailImage, b.detailVideoPlayer, b.detailSpoilerCover).forEach { media ->
             val params = media.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return@forEach
             params.width = mediaWidth
-            params.gravity = if (horizontal) android.view.Gravity.TOP or android.view.Gravity.LEFT else android.view.Gravity.TOP or android.view.Gravity.LEFT
+            params.gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
             media.layoutParams = params
         }
         val sheetParams = b.bottomSheet.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams ?: return
-        if (horizontal) {
-            sheetParams.width = (available * 0.42f).toInt().coerceIn(dp(216), dp(360))
+        if (sidePane) {
+            sheetParams.width = panelWidth
             sheetParams.height = -1
             sheetParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
             sheetParams.topMargin = 0
@@ -453,7 +461,7 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun updateSheetBounds() {
         if (!::sheet.isInitialized || b.root.height <= 0 || b.detailTopIsland.height <= 0) return
-        if (horizontalDetailLayout == true) {
+        if (sidePaneDetailLayout == true) {
             if (sheet.expandedOffset != 0) sheet.expandedOffset = 0
             if (b.bottomSheet.layoutParams.height != b.root.height) {
                 b.bottomSheet.layoutParams = b.bottomSheet.layoutParams.apply { height = b.root.height }

@@ -2,6 +2,7 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.Rect
 import android.os.Bundle
 import android.view.Gravity
@@ -9,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.util.Log
+import android.util.TypedValue
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -89,6 +91,7 @@ class TagSearchActivity : AppCompatActivity() {
     private var resumed = false
     private var loadingVisible = false
     private var summaryText = "正在加载标签…"
+    private var topInset = 0
     private var leftInset = 0
     private var rightInset = 0
     private var bottomInset = 0
@@ -192,8 +195,8 @@ class TagSearchActivity : AppCompatActivity() {
         })
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         controls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateContentInsets() }
-        results.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-            if (right - left != oldRight - oldLeft) updateContentInsets()
+        root.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) updateContentInsets()
         }
 
         loadingIndicator = IosActivityIndicator(this)
@@ -216,6 +219,7 @@ class TagSearchActivity : AppCompatActivity() {
         })
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            topInset = bars.top
             leftInset = bars.left
             rightInset = bars.right
             bottomInset = maxOf(bars.bottom, insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
@@ -231,7 +235,8 @@ class TagSearchActivity : AppCompatActivity() {
     private fun addModeButton(label: String, target: TagSearchMode) {
         val button = LiquidGlassButton(this).apply {
             text = label
-            setPadding(dp(14), 0, dp(14), 0)
+            setPadding(dp(6), 0, dp(6), 0)
+            minimumWidth = 0
             setOnClickListener {
                 if (mode == target) return@setOnClickListener
                 loadJob?.cancel()
@@ -286,15 +291,50 @@ class TagSearchActivity : AppCompatActivity() {
 
     private fun updateContentInsets() {
         if (!::results.isInitialized) return
-        val windowWidthPx = (resources.configuration.screenWidthDp * resources.displayMetrics.density).toInt()
-        val safeWidth = ((results.width.takeIf { it > 0 } ?: windowWidthPx) - leftInset - rightInset).coerceAtLeast(1)
-        val available = (safeWidth - dp(32)).coerceAtLeast(1)
+        val windowWidthPx = root.width.takeIf { it > 0 }
+            ?: results.width.takeIf { it > 0 }
+            ?: dp(AdaptiveLayoutPolicy.availableContentWidthDp(this))
+        val windowHeightPx = root.height.takeIf { it > 0 }
+            ?: dp(AdaptiveLayoutPolicy.availableWindowHeightDp(this))
+        val safeWidth = (windowWidthPx - leftInset - rightInset).coerceAtLeast(1)
+        val safeHeight = (windowHeightPx - topInset - bottomInset).coerceAtLeast(1)
+        val density = resources.displayMetrics.density
+        val spec = AdaptiveLayoutPolicy.specFor(
+            (safeWidth / density).toInt(),
+            (safeHeight / density).toInt()
+        )
+        val outerGutter = dp(spec.horizontalPaddingDp)
+        val available = (safeWidth - outerGutter * 2).coerceAtLeast(1)
         val headerWidth = AdaptiveLayoutPolicy.topIslandWidthPx(this, available)
         val contentWidth = AdaptiveLayoutPolicy.contentIslandWidthPx(this, available)
+        val compactHeight = spec.heightClass == AdaptiveLayoutPolicy.WindowHeightClass.COMPACT
+        val verticalInset = dp(if (compactHeight) 4 else Ui2DesignSystem.Spacing.sm)
+        val searchControlHeight = dp(if (compactHeight) 48 else 56)
         if (header.layoutParams.width != headerWidth) header.layoutParams = header.layoutParams.apply { this.width = headerWidth }
         if (searchRow.layoutParams.width != contentWidth) searchRow.layoutParams = searchRow.layoutParams.apply { this.width = contentWidth }
+        if (modeSelector.layoutParams.width != contentWidth) modeSelector.layoutParams = modeSelector.layoutParams.apply { this.width = contentWidth }
+        if (controls.paddingLeft != leftInset + outerGutter || controls.paddingRight != rightInset + outerGutter || controls.paddingTop != topInset + verticalInset) {
+            controls.setPadding(leftInset + outerGutter, topInset + verticalInset, rightInset + outerGutter, 0)
+        }
+        val searchRowParams = searchRow.layoutParams as LinearLayout.LayoutParams
+        if (searchRowParams.topMargin != verticalInset) {
+            searchRowParams.topMargin = verticalInset
+            searchRow.layoutParams = searchRowParams
+        }
+        for (index in 0 until searchRow.childCount) {
+            val child = searchRow.getChildAt(index)
+            val params = child.layoutParams
+            if (params.height != searchControlHeight) {
+                params.height = searchControlHeight
+                child.layoutParams = params
+            }
+        }
         val gutter = (safeWidth - contentWidth) / 2
-        results.setPadding(leftInset + gutter, controls.height + dp(8), rightInset + gutter, bottomInset + dp(16))
+        val nextPaddingTop = controls.height + verticalInset
+        if (results.paddingLeft != leftInset + gutter || results.paddingRight != rightInset + gutter ||
+            results.paddingTop != nextPaddingTop || results.paddingBottom != bottomInset + dp(16)) {
+            results.setPadding(leftInset + gutter, nextPaddingTop, rightInset + gutter, bottomInset + dp(16))
+        }
         resultsSurface.contentTopInset = results.paddingTop
         if (::loadingPanel.isInitialized) {
             loadingPanel.layoutParams = (loadingPanel.layoutParams as FrameLayout.LayoutParams).apply {
@@ -310,6 +350,8 @@ class TagSearchActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
                 leftMargin = leftInset + gutter
                 rightMargin = 0
+                topMargin = nextPaddingTop
+                bottomMargin = bottomInset + dp(16)
             }
         }
     }
@@ -523,11 +565,21 @@ class TagSearchActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: TagHolder, position: Int) {
             GlassWidgetStyle.apply(holder.row, 16f)
+            holder.row.alpha = 1f
+            holder.row.isClickable = position != 0
+            holder.row.isFocusable = position != 0
+            holder.row.isLongClickable = false
+            holder.row.headlineTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX, holder.defaultHeadlineSizePx)
+            holder.row.headlineTextView.typeface = holder.defaultHeadlineTypeface
+            ViewCompat.setAccessibilityHeading(holder.row, position == 0)
             if (position == 0) {
                 holder.row.headline = summaryText
                 holder.row.supportingText = null
                 holder.row.trailingText = null
                 holder.row.setOnClickListener(null)
+                holder.row.setTextColor(PaletteManager.colors(this@TagSearchActivity).glassSecondaryText)
+                holder.row.headlineTextView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                holder.row.headlineTextView.setTypeface(holder.defaultHeadlineTypeface, Typeface.BOLD)
             } else if (mode == TagSearchMode.REMOTE_FILTER) {
                 val filter = filters[position - 1]
                 holder.row.headline = filter.name
@@ -535,7 +587,7 @@ class TagSearchActivity : AppCompatActivity() {
                     append("维护者：").append(filter.creator ?: "未知")
                     if (filter.description.isNotBlank()) append("\n").append(filter.description)
                 }
-                holder.row.trailingText = "剧透 ${if (filter.spoilerCount >= 0) filter.spoilerCount else "?"} · 隐藏 ${if (filter.hiddenCount >= 0) filter.hiddenCount else "?"}"
+                holder.row.trailingText = "剧透 ${if (filter.spoilerCount >= 0) filter.spoilerCount else "未知"} · 隐藏 ${if (filter.hiddenCount >= 0) filter.hiddenCount else "未知"}"
                 holder.row.setOnClickListener {
                     startActivity(Intent(this@TagSearchActivity, FilterDetailsActivity::class.java)
                         .putExtra(FilterDetailsActivity.EXTRA_FILTER_ID, filter.id))
@@ -553,7 +605,10 @@ class TagSearchActivity : AppCompatActivity() {
         }
     }
 
-    private class TagHolder(val row: LiquidGlassListItem) : RecyclerView.ViewHolder(row)
+    private class TagHolder(val row: LiquidGlassListItem) : RecyclerView.ViewHolder(row) {
+        val defaultHeadlineSizePx = row.headlineTextView.textSize
+        val defaultHeadlineTypeface = row.headlineTextView.typeface
+    }
 
     private fun <T : LiquidGlassView> trackGlass(view: T, source: View, radius: Float = 24f): T {
         GlassWidgetStyle.apply(view, radius)

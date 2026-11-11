@@ -71,10 +71,20 @@ class FavoritesActivity : AppCompatActivity() {
         feed.setTabs(listOf("本地收藏夹", "Derpibooru收藏")) { index ->
             if (index == 0) showFolders() else showServer()
         }
-        feed.results.layoutManager = GridLayoutManager(this, 2).apply {
+        val favoritesGrid = GridLayoutManager(this, AdaptiveLayoutPolicy.artworkColumnCount(this)).apply {
             spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
-                override fun getSpanSize(position: Int): Int = if (rows.getOrNull(position) is Row.Folder) 1 else 2
+                override fun getSpanSize(position: Int): Int = when (rows.getOrNull(position)) {
+                    is Row.Action, null -> spanCount
+                    else -> 1
+                }
             }
+        }
+        feed.results.layoutManager = favoritesGrid
+        feed.results.addOnLayoutChangeListener { view, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left == oldRight - oldLeft || view.width <= 0) return@addOnLayoutChangeListener
+            val widthDp = (view.width / resources.displayMetrics.density).toInt()
+            val columns = AdaptiveLayoutPolicy.artworkColumnCountForWidth(widthDp)
+            if (favoritesGrid.spanCount != columns) favoritesGrid.spanCount = columns
         }
         feed.results.adapter = favoritesAdapter
         feed.refresh.setCanRefresh { chosen.isEmpty() && if (showingServer) !serverLoading else !importing }

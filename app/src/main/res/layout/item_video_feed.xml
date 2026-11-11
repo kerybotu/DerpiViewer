@@ -76,23 +76,32 @@
         android:layout_height="wrap_content"
         android:layout_gravity="end|center_vertical"
         android:layout_marginEnd="16dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp"
         android:paddingVertical="6dp">
-        <LinearLayout
+        <ScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-            <ImageButton android:id="@+id/video_upvote" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="点赞" android:padding="10dp" android:src="@drawable/ic_arrow_up" />
-            <TextView android:id="@+id/video_upvote_count" android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center" android:textSize="11sp" android:textStyle="bold" />
-            <ImageButton android:id="@+id/video_downvote" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="踩" android:padding="10dp" android:src="@drawable/ic_arrow_down" />
-            <View android:id="@+id/video_action_divider_primary" android:layout_width="28dp" android:layout_height="1dp" android:layout_marginVertical="6dp" />
-            <ImageButton android:id="@+id/video_favorite" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="收藏" android:padding="10dp" android:src="@drawable/ic_favorite" />
-            <View android:id="@+id/video_action_divider_secondary" android:layout_width="28dp" android:layout_height="1dp" />
-            <ImageButton android:id="@+id/video_comments" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="评论" android:padding="10dp" android:src="@drawable/ic_comment" />
-            <View android:id="@+id/video_action_divider_tertiary" android:layout_width="28dp" android:layout_height="1dp" />
-            <ImageButton android:id="@+id/video_download" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="下载" android:padding="10dp" android:src="@drawable/ic_download" />
-            <ImageButton android:id="@+id/video_more" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="更多" android:padding="10dp" android:src="@drawable/ic_more" />
-        </LinearLayout>
+            android:fillViewport="false"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+                <ImageButton android:id="@+id/video_upvote" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="点赞" android:padding="10dp" android:src="@drawable/ic_arrow_up" />
+                <TextView android:id="@+id/video_upvote_count" android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center" android:textSize="11sp" android:textStyle="bold" />
+                <ImageButton android:id="@+id/video_downvote" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="踩" android:padding="10dp" android:src="@drawable/ic_arrow_down" />
+                <View android:id="@+id/video_action_divider_primary" android:layout_width="28dp" android:layout_height="1dp" android:layout_marginVertical="6dp" />
+                <ImageButton android:id="@+id/video_favorite" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="收藏" android:padding="10dp" android:src="@drawable/ic_favorite" />
+                <View android:id="@+id/video_action_divider_secondary" android:layout_width="28dp" android:layout_height="1dp" />
+                <ImageButton android:id="@+id/video_comments" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="评论" android:padding="10dp" android:src="@drawable/ic_comment" />
+                <View android:id="@+id/video_action_divider_tertiary" android:layout_width="28dp" android:layout_height="1dp" />
+                <ImageButton android:id="@+id/video_download" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="下载" android:padding="10dp" android:src="@drawable/ic_download" />
+                <ImageButton android:id="@+id/video_more" android:layout_width="44dp" android:layout_height="40dp" android:background="@android:color/transparent" android:contentDescription="更多" android:padding="10dp" android:src="@drawable/ic_more" />
+            </LinearLayout>
+        </ScrollView>
     </com.kerybotu.derpibooru.mirror.ui.IslandGlassView>
 
     <com.kerybotu.derpibooru.mirror.ui.IslandGlassView

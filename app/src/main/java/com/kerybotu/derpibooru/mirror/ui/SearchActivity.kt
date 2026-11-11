@@ -3,6 +3,7 @@ package com.kerybotu.derpibooru.mirror.ui
 import android.animation.ValueAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
@@ -12,6 +13,7 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.util.AttributeSet
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -62,6 +64,70 @@ private val SORT_FIELDS = listOf(
     "_score" to "相关度", "width" to "宽度", "height" to "高度", "comment_count" to "评论数", "tag_count" to "标签数量", "pixels" to "像素数", "size" to "文件大小", "duration" to "时长"
 )
 
+/** Lightweight wrapping row for filter controls in the Views-based search screen. */
+private class SearchFlowLayout @JvmOverloads constructor(
+    context: Context,
+    private val horizontalGap: Int = 0,
+    private val verticalGap: Int = 0,
+    attrs: AttributeSet? = null
+) : ViewGroup(context, attrs) {
+    class LayoutParams(width: Int, height: Int) : ViewGroup.LayoutParams(width, height)
+
+    override fun generateDefaultLayoutParams(): ViewGroup.LayoutParams = LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+
+    override fun generateLayoutParams(attrs: AttributeSet): ViewGroup.LayoutParams = LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+
+    override fun checkLayoutParams(params: ViewGroup.LayoutParams): Boolean = params is LayoutParams
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        var rowWidth = paddingLeft
+        var rowHeight = 0
+        var totalHeight = paddingTop
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == GONE) continue
+            measureChild(child, widthMeasureSpec, heightMeasureSpec)
+            val nextWidth = if (rowWidth == paddingLeft) rowWidth + child.measuredWidth else rowWidth + horizontalGap + child.measuredWidth
+            if (nextWidth + paddingRight > width && rowWidth > paddingLeft) {
+                totalHeight += rowHeight + verticalGap
+                rowWidth = paddingLeft + child.measuredWidth
+                rowHeight = child.measuredHeight
+            } else {
+                rowWidth = nextWidth
+                rowHeight = maxOf(rowHeight, child.measuredHeight)
+            }
+        }
+        setMeasuredDimension(resolveSize(width, widthMeasureSpec), resolveSize(totalHeight + rowHeight + paddingBottom, heightMeasureSpec))
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val maxRight = right - left - paddingRight
+        var x = paddingLeft
+        var y = paddingTop
+        var rowHeight = 0
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == GONE) continue
+            val childRight = x + child.measuredWidth
+            if (childRight > maxRight && x > paddingLeft) {
+                x = paddingLeft
+                y += rowHeight + verticalGap
+                rowHeight = 0
+            }
+            child.layout(x, y, x + child.measuredWidth, y + child.measuredHeight)
+            x += child.measuredWidth + horizontalGap
+            rowHeight = maxOf(rowHeight, child.measuredHeight)
+        }
+    }
+}
+
 class SearchActivity : AppCompatActivity() {
     companion object {
         private const val PAGE_SIZE = 50
@@ -82,6 +148,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var pageBackdrop: View
     private lateinit var resultsSurface: IosPullRefreshLayout
     private lateinit var controls: LinearLayout
+    private lateinit var queryComponent: LinearLayout
     private lateinit var headerExtras: LinearLayout
     private lateinit var loadingPanel: LiquidGlassView
     private lateinit var loadingIndicator: IosActivityIndicator
@@ -108,6 +175,7 @@ class SearchActivity : AppCompatActivity() {
     private var headerHiddenPixels = 0f
     private var headerSnapAnimator: ValueAnimator? = null
     private var bottomInset = 0
+    private var topInset = 0
     private var systemLeftInset = 0
     private var systemRightInset = 0
     private var appliedPalette: PaletteDefinitions.Scheme? = null
@@ -251,6 +319,7 @@ class SearchActivity : AppCompatActivity() {
             setOnClickListener { setSearchPanelsCollapsed(headerHiddenPixels < headerContentHeight / 2f) }
         }
         controls.addView(toolbar, rowParams())
+        queryComponent = row().apply { gravity = Gravity.CENTER_VERTICAL }
         queryInput = object : MultiAutoCompleteTextView(this) {
             override fun convertSelectionToString(selectedItem: Any?): CharSequence =
                 (selectedItem as? TagEntry)?.englishName ?: super.convertSelectionToString(selectedItem)
@@ -269,12 +338,16 @@ class SearchActivity : AppCompatActivity() {
             }
         }
         queryInputSurface = trackGlass(LiquidGlassView(this)).apply {
-            addView(queryInput, FrameLayout.LayoutParams(-1, dp(56)))
+            addView(queryInput, FrameLayout.LayoutParams(-1, -1))
         }
-        controls.addView(queryInputSurface, rowParams())
+        queryComponent.addView(queryInputSurface, LinearLayout.LayoutParams(0, dp(56), 1f))
+        queryComponent.addView(button("搜索") { runSearch() }, LinearLayout.LayoutParams(dp(88), dp(56)).apply {
+            marginStart = dp(8)
+        })
+        controls.addView(queryComponent, rowParams())
         headerExtras = column()
         val chips = LiquidGlassChipGroup(this).apply {
-            isSingleLine = true
+            isSingleLine = false
         }
         fun addChip(label: String, value: String) {
             chips.addView(trackGlass(LiquidGlassChip(this)).apply {
@@ -285,15 +358,9 @@ class SearchActivity : AppCompatActivity() {
         }
         addChip("安全", "safe"); addChip("动图", "animated:true")
         if (ApiKeyStore.isLoggedIn(this)) { addChip("我的收藏", "my:faves"); addChip("我的点赞", "my:upvotes") }
-        headerExtras.addView(HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(chips)
-        }, rowParams())
-        val actions = row()
-        actions.addView(button("高级筛选") { showAdvanced() }, weightedParams())
-        actions.addView(button("搜索") { runSearch() }, weightedParams())
-        headerExtras.addView(actions, rowParams())
-        val sorts = row()
+        headerExtras.addView(chips, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        val filterAndSort = SearchFlowLayout(this, dp(8), dp(8))
+        filterAndSort.addView(button("高级筛选") { showAdvanced() }, SearchFlowLayout.LayoutParams(-2, dp(52)))
         val field = button("排序：${SORT_FIELDS[sortIndex].second}") { }
         field.setOnClickListener {
             showChoices("排序字段", SORT_FIELDS.map { it.second }, sortIndex) {
@@ -306,9 +373,9 @@ class SearchActivity : AppCompatActivity() {
                 directionIndex = it; direction.text = if (it == 0) "降序 ▾" else "升序 ▴"
             }
         }
-        sorts.addView(field, LinearLayout.LayoutParams(0, dp(52), 2f).apply { marginEnd = dp(6) })
-        sorts.addView(direction, LinearLayout.LayoutParams(0, dp(52), 1f))
-        headerExtras.addView(sorts, rowParams())
+        filterAndSort.addView(field, SearchFlowLayout.LayoutParams(-2, dp(52)))
+        filterAndSort.addView(direction, SearchFlowLayout.LayoutParams(-2, dp(52)))
+        headerExtras.addView(filterAndSort, LinearLayout.LayoutParams(-1, -2))
         controls.addView(headerExtras, LinearLayout.LayoutParams(-1, -2))
         selectionActions = row().apply { visibility = View.GONE }
         downloadButton = button("下载") {
@@ -355,7 +422,7 @@ class SearchActivity : AppCompatActivity() {
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             systemLeftInset = bars.left
             systemRightInset = bars.right
-            controls.setPadding(bars.left + dp(12), bars.top + dp(8), bars.right + dp(12), 0)
+            topInset = bars.top
             bottomInset = maxOf(bars.bottom, ime.bottom)
             updateResultInsets()
             updateResponsiveSearchControls()
@@ -372,27 +439,170 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun updateResponsiveSearchControls() {
-        if (!::searchRoot.isInitialized || !::controls.isInitialized || searchRoot.width <= 0) return
-        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(this, searchRoot)
-        val orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        if (controls.orientation == orientation) return
-        controls.orientation = orientation
-        controls.gravity = if (horizontal) Gravity.CENTER_VERTICAL else Gravity.TOP
+        if (!::searchRoot.isInitialized || !::controls.isInitialized || searchRoot.width <= 0 || searchRoot.height <= 0) return
+        val density = resources.displayMetrics.density
+        val safeBounds = safeContentBounds()
+        val availableWidth = safeBounds.width().coerceAtLeast(1)
+        val availableHeight = safeBounds.height().coerceAtLeast(1)
+        val spec = AdaptiveLayoutPolicy.specFor(
+            (availableWidth / density).toInt().coerceAtLeast(1),
+            (availableHeight / density).toInt().coerceAtLeast(1)
+        )
+        val wideLayout = spec.widthClass.ordinal >= AdaptiveLayoutPolicy.WindowWidthClass.LARGE.ordinal &&
+            spec.heightClass != AdaptiveLayoutPolicy.WindowHeightClass.COMPACT
+        val orientation = if (wideLayout) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        if (controls.orientation != orientation) controls.orientation = orientation
+        controls.gravity = if (wideLayout) Gravity.CENTER_VERTICAL else Gravity.TOP
         val title = controls.getChildAt(0)
         val selection = controls.getChildAt(3)
-        if (horizontal) {
-            title.layoutParams = LinearLayout.LayoutParams(dp(72), dp(56)).apply { marginEnd = dp(6) }
-            queryInputSurface.layoutParams = LinearLayout.LayoutParams(0, dp(56), 1f).apply { marginEnd = dp(8) }
-            headerExtras.layoutParams = LinearLayout.LayoutParams(0, -2, 2f).apply { marginEnd = dp(6) }
-            selection.layoutParams = LinearLayout.LayoutParams(dp(116), -2)
+        val spacing = dp(spec.componentSpacingDp)
+        if (wideLayout) {
+            setLinearLayoutParams(title, dp(72), dp(56), 0f, spacing)
+            setLinearLayoutParams(queryComponent, 0, dp(56), 1f, spacing)
+            setLinearLayoutParams(headerExtras, 0, -2, 2f, spacing)
+            setLinearLayoutParams(selection, dp(116), -2, 0f, 0)
         } else {
-            title.layoutParams = rowParams()
-            queryInputSurface.layoutParams = rowParams()
-            headerExtras.layoutParams = LinearLayout.LayoutParams(-1, -2)
-            selection.layoutParams = rowParams()
+            setLinearLayoutParams(title, -1, -2, 0f, 0, spacing)
+            setLinearLayoutParams(queryComponent, -1, -2, 0f, 0, spacing)
+            setLinearLayoutParams(headerExtras, -1, -2, 0f, 0)
+            setLinearLayoutParams(selection, -1, -2, 0f, 0, spacing)
         }
+        val maxContentWidth = dp(spec.contentMaxWidthDp)
+        val controlWidth = minOf(availableWidth, maxContentWidth)
+        val leftMargin = safeBounds.left + (availableWidth - controlWidth) / 2
+        val rootParams = controls.layoutParams as? FrameLayout.LayoutParams
+        if (rootParams == null || rootParams.width != controlWidth || rootParams.marginStart != leftMargin ||
+            rootParams.gravity != (Gravity.TOP or Gravity.START)
+        ) {
+            controls.layoutParams = FrameLayout.LayoutParams(controlWidth, -2, Gravity.TOP or Gravity.START).apply {
+                marginStart = leftMargin
+            }
+        }
+        val horizontalPadding = dp(spec.horizontalPaddingDp)
+        val verticalPadding = safeBounds.top + spacing
+        if (controls.paddingLeft != horizontalPadding || controls.paddingTop != verticalPadding ||
+            controls.paddingRight != horizontalPadding || controls.paddingBottom != 0
+        ) controls.setPadding(horizontalPadding, verticalPadding, horizontalPadding, 0)
         controls.requestLayout()
         updateResultInsets()
+    }
+
+    private fun setLinearLayoutParams(
+        view: View,
+        width: Int,
+        height: Int,
+        weight: Float,
+        marginEnd: Int,
+        bottomMargin: Int = 0
+    ) {
+        val current = view.layoutParams as? LinearLayout.LayoutParams
+        if (current == null || current.width != width || current.height != height || current.weight != weight ||
+            current.marginEnd != marginEnd || current.bottomMargin != bottomMargin
+        ) {
+            view.layoutParams = LinearLayout.LayoutParams(width, height, weight).apply {
+                this.marginEnd = marginEnd
+                this.bottomMargin = bottomMargin
+            }
+        }
+    }
+
+    private fun safeContentBounds(): Rect {
+        val windowRoot = searchRoot.rootView
+        val windowWidth = windowRoot.width.takeIf { it > 0 } ?: searchRoot.width
+        val windowHeight = windowRoot.height.takeIf { it > 0 } ?: searchRoot.height
+        val location = IntArray(2)
+        searchRoot.getLocationInWindow(location)
+        val rootLeft = location[0]
+        val rootTop = location[1]
+        val left = maxOf(rootLeft, systemLeftInset).minus(rootLeft).coerceIn(0, searchRoot.width)
+        val rightEdge = minOf(rootLeft + searchRoot.width, windowWidth - systemRightInset)
+        val right = (rightEdge - rootLeft).coerceIn(left, searchRoot.width)
+        val top = maxOf(rootTop, topInset).minus(rootTop).coerceIn(0, searchRoot.height)
+        val bottomEdge = minOf(rootTop + searchRoot.height, windowHeight - bottomInset)
+        val bottom = (bottomEdge - rootTop).coerceIn(top, searchRoot.height)
+        return Rect(left, top, right, bottom)
+    }
+
+    private class SearchFlowLayout(
+        context: Context,
+        private val horizontalSpacing: Int,
+        private val verticalSpacing: Int
+    ) : ViewGroup(context) {
+        class LayoutParams(width: Int, height: Int) : MarginLayoutParams(width, height)
+
+        override fun generateDefaultLayoutParams(): ViewGroup.LayoutParams =
+            LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+        override fun generateLayoutParams(params: ViewGroup.LayoutParams): ViewGroup.LayoutParams =
+            LayoutParams(params.width, params.height)
+
+        override fun generateLayoutParams(attrs: AttributeSet?): ViewGroup.LayoutParams =
+            LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+        override fun checkLayoutParams(params: ViewGroup.LayoutParams?): Boolean = params is LayoutParams
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val widthMode = MeasureSpec.getMode(widthMeasureSpec)
+            val widthLimit = if (widthMode == MeasureSpec.UNSPECIFIED) Int.MAX_VALUE else
+                (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight).coerceAtLeast(0)
+            var lineWidth = 0
+            var lineHeight = 0
+            var usedWidth = 0
+            var usedHeight = paddingTop + paddingBottom
+            var lineHasChildren = false
+            for (index in 0 until childCount) {
+                val child = getChildAt(index)
+                if (child.visibility == View.GONE) continue
+                val params = child.layoutParams as LayoutParams
+                measureChildWithMargins(child, widthMeasureSpec, 0, heightMeasureSpec, 0)
+                val childWidth = params.leftMargin + child.measuredWidth + params.rightMargin
+                val childHeight = params.topMargin + child.measuredHeight + params.bottomMargin
+                if (lineHasChildren && lineWidth + horizontalSpacing + childWidth > widthLimit) {
+                    usedWidth = maxOf(usedWidth, lineWidth)
+                    usedHeight += lineHeight + verticalSpacing
+                    lineWidth = 0
+                    lineHeight = 0
+                    lineHasChildren = false
+                }
+                lineWidth += (if (lineHasChildren) horizontalSpacing else 0) + childWidth
+                lineHeight = maxOf(lineHeight, childHeight)
+                lineHasChildren = true
+            }
+            usedWidth = maxOf(usedWidth, lineWidth) + paddingLeft + paddingRight
+            usedHeight += lineHeight
+            setMeasuredDimension(
+                resolveSizeAndState(usedWidth, widthMeasureSpec, 0),
+                resolveSizeAndState(usedHeight, heightMeasureSpec, 0)
+            )
+        }
+
+        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+            val contentRight = width - paddingRight
+            var x = paddingLeft
+            var y = paddingTop
+            var lineHeight = 0
+            var lineHasChildren = false
+            for (index in 0 until childCount) {
+                val child = getChildAt(index)
+                if (child.visibility == View.GONE) continue
+                val params = child.layoutParams as LayoutParams
+                val childWidth = params.leftMargin + child.measuredWidth + params.rightMargin
+                val childHeight = params.topMargin + child.measuredHeight + params.bottomMargin
+                if (lineHasChildren && x + horizontalSpacing + childWidth > contentRight) {
+                    x = paddingLeft
+                    y += lineHeight + verticalSpacing
+                    lineHeight = 0
+                    lineHasChildren = false
+                }
+                if (lineHasChildren) x += horizontalSpacing
+                val childLeft = x + params.leftMargin
+                val childTop = y + params.topMargin
+                child.layout(childLeft, childTop, childLeft + child.measuredWidth, childTop + child.measuredHeight)
+                x += childWidth
+                lineHeight = maxOf(lineHeight, childHeight)
+                lineHasChildren = true
+            }
+        }
     }
 
     private fun appendQuery(value: String) {
@@ -800,8 +1010,8 @@ class SearchActivity : AppCompatActivity() {
     private fun updateResultInsets() {
         if (!::results.isInitialized) return
         val density = resources.displayMetrics.density
-        val windowWidth = (resources.configuration.screenWidthDp * density).toInt()
-        val safeWidth = ((results.width.takeIf { it > 0 } ?: windowWidth) - systemLeftInset - systemRightInset).coerceAtLeast(1)
+        val safeBounds = safeContentBounds()
+        val safeWidth = (results.width.takeIf { it > 0 } ?: safeBounds.width()).coerceAtMost(safeBounds.width()).coerceAtLeast(1)
         val safeWidthDp = (safeWidth / density).toInt().coerceAtLeast(1)
         val horizontalInset = AdaptiveLayoutPolicy.artworkHorizontalInsetPx(this, safeWidthDp)
         val columns = AdaptiveLayoutPolicy.artworkColumnCountForWidth(safeWidthDp)
@@ -809,16 +1019,16 @@ class SearchActivity : AppCompatActivity() {
             if (grid.spanCount != columns) grid.spanCount = columns
         }
         results.setPadding(
-            systemLeftInset + horizontalInset,
+            safeBounds.left + horizontalInset,
             controls.height + dp(8),
-            systemRightInset + horizontalInset,
+            (searchRoot.width - safeBounds.right) + horizontalInset,
             bottomInset + dp(8)
         )
         resultsSurface.contentTopInset = results.paddingTop
         if (::loadingPanel.isInitialized) {
             loadingPanel.layoutParams = (loadingPanel.layoutParams as FrameLayout.LayoutParams).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
-                leftMargin = systemLeftInset + (safeWidth - width) / 2
+                leftMargin = safeBounds.left + (safeWidth - width) / 2
                 rightMargin = 0
             }
         }
@@ -826,7 +1036,7 @@ class SearchActivity : AppCompatActivity() {
             statusPanel.layoutParams = (statusPanel.layoutParams as FrameLayout.LayoutParams).apply {
                 width = (safeWidth - horizontalInset * 2).coerceAtLeast(1)
                 gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
-                leftMargin = systemLeftInset + horizontalInset
+                leftMargin = safeBounds.left + horizontalInset
                 rightMargin = 0
             }
         }

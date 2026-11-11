@@ -30,8 +30,8 @@ data class VideoPost(
     val mimeType: String = "video/mp4",
     val width: Int = 0,
     val height: Int = 0,
-    val uploader: String,
-    val tags: List<String>,
+    val uploader: String?,
+    val tags: List<String>?,
     var upvotes: Int,
     var downvotes: Int,
     val commentCount: Int,
@@ -61,6 +61,10 @@ class VideoFeedAdapter(
     private var bottomInset = 0
     private var endInset = 0
     private var landscape = false
+    private var safeLeftInset = 0
+    private var safeTopInset = 0
+    private var safeRightInset = 0
+    private var safeBottomInset = 0
     var onHolderBound: ((Int) -> Unit)? = null
     /** Called after a ViewPager2 page has actually been attached to the inner RecyclerView. */
     var onHolderAttached: ((Holder, Int) -> Unit)? = null
@@ -88,21 +92,48 @@ class VideoFeedAdapter(
         landscape = isLandscape
         if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size, PALETTE_PAYLOAD)
     }
+
+    fun setSafeInsets(left: Int, top: Int, right: Int, bottom: Int) {
+        val normalizedLeft = left.coerceAtLeast(0)
+        val normalizedTop = top.coerceAtLeast(0)
+        val normalizedRight = right.coerceAtLeast(0)
+        val normalizedBottom = bottom.coerceAtLeast(0)
+        if (safeLeftInset == normalizedLeft && safeTopInset == normalizedTop &&
+            safeRightInset == normalizedRight && safeBottomInset == normalizedBottom
+        ) return
+        safeLeftInset = normalizedLeft
+        safeTopInset = normalizedTop
+        safeRightInset = normalizedRight
+        safeBottomInset = normalizedBottom
+        if (items.isNotEmpty()) notifyItemRangeChanged(0, items.size, PALETTE_PAYLOAD)
+    }
+
     override fun getItemCount(): Int = items.size
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
-        ItemVideoFeedBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-    ).also { holder ->
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+        val holder = Holder(ItemVideoFeedBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+        holder.itemView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                holder.applyNavigationInsets(
+                    bottomInset, endInset, landscape,
+                    safeLeftInset, safeTopInset, safeRightInset, safeBottomInset
+                )
+            }
+        }
         with(holder.binding) {
             glassBackdrop.track(videoActionRail, Ui2DesignSystem.Shape.island)
             glassBackdrop.track(videoInfoOverlay, Ui2DesignSystem.Shape.large)
             glassBackdrop.track(videoBufferGlass, Ui2DesignSystem.Shape.pill)
             glassBackdrop.track(videoSpeedGlass, Ui2DesignSystem.Shape.pill)
         }
+        return holder
     }
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.bind(items[position], position, actions, bottomInset, endInset, landscape)
+        holder.bind(
+            items[position], position, actions, bottomInset, endInset, landscape,
+            safeLeftInset, safeTopInset, safeRightInset, safeBottomInset
+        )
         holder.itemView.post {
             val boundPosition = holder.bindingAdapterPosition
             if (boundPosition != RecyclerView.NO_POSITION) onHolderBound?.invoke(boundPosition)
@@ -122,7 +153,10 @@ class VideoFeedAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int, payloads: MutableList<Any>) {
         if (payloads.isNotEmpty() && payloads.all { it == PALETTE_PAYLOAD }) {
             holder.applyPalette()
-            holder.applyNavigationInsets(bottomInset, endInset, landscape)
+            holder.applyNavigationInsets(
+                bottomInset, endInset, landscape,
+                safeLeftInset, safeTopInset, safeRightInset, safeBottomInset
+            )
         }
         else onBindViewHolder(holder, position)
     }
@@ -149,7 +183,11 @@ class VideoFeedAdapter(
             actions: Actions,
             bottomInset: Int,
             endInset: Int,
-            landscape: Boolean
+            landscape: Boolean,
+            safeLeftInset: Int,
+            safeTopInset: Int,
+            safeRightInset: Int,
+            safeBottomInset: Int
         ) = with(binding) {
             boundId = post.id
             seekState.cancel()
@@ -160,7 +198,10 @@ class VideoFeedAdapter(
             videoPreview.visibility = View.VISIBLE
             videoPreviewLoading.visibility = View.VISIBLE
             videoPlaybackError.visibility = View.GONE
-            applyNavigationInsets(bottomInset, endInset, landscape)
+            applyNavigationInsets(
+                bottomInset, endInset, landscape,
+                safeLeftInset, safeTopInset, safeRightInset, safeBottomInset
+            )
             applyPalette()
             imageRequests.asBitmap()
                 .load(post.thumbnailUrl)
@@ -189,8 +230,16 @@ class VideoFeedAdapter(
                     }
                 })
                 .into(videoPreview)
-            videoUploader.text = post.uploader
-            videoTags.text = post.tags.take(3).joinToString("  ·  ")
+            val uploader = post.uploader?.trim().orEmpty().takeUnless { it.equals("null", ignoreCase = true) }.orEmpty()
+            videoUploader.text = uploader
+            videoUploader.visibility = if (uploader.isBlank()) View.GONE else View.VISIBLE
+            val tags = post.tags.orEmpty().asSequence()
+                .map(String::trim)
+                .filter { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+                .take(3)
+                .joinToString("  ·  ")
+            videoTags.text = tags
+            videoTags.visibility = if (tags.isBlank()) View.GONE else View.VISIBLE
             videoUpvoteCount.text = post.upvotes.toString()
             videoUpvote.setOnClickListener { actions.onUpvote(bindingAdapterPosition) }
             videoDownvote.setOnClickListener { actions.onDownvote(bindingAdapterPosition) }
@@ -256,27 +305,82 @@ class VideoFeedAdapter(
             binding.videoFavorite.imageTintList = ColorStateList.valueOf(if (isFavorite) colors.primary else colors.glassText)
         }
 
-        fun applyNavigationInsets(bottomInset: Int, endInset: Int, landscape: Boolean) {
+        fun applyNavigationInsets(
+            bottomInset: Int,
+            endInset: Int,
+            landscape: Boolean,
+            safeLeftInset: Int,
+            safeTopInset: Int,
+            safeRightInset: Int,
+            safeBottomInset: Int
+        ) {
             binding.root.post {
-                val horizontalMargin = dp(binding.root, 16)
+                if (binding.root.width <= 0 || binding.root.height <= 0) return@post
+                val density = binding.root.resources.displayMetrics.density
+                val widthDp = (binding.root.width / density).toInt().coerceAtLeast(1)
+                val heightDp = (binding.root.height / density).toInt().coerceAtLeast(1)
+                val spec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+                val horizontalMargin = dp(binding.root, spec.componentSpacingDp)
+                val safeStart = if (androidx.core.view.ViewCompat.getLayoutDirection(binding.root) == androidx.core.view.ViewCompat.LAYOUT_DIRECTION_RTL) {
+                    safeRightInset
+                } else {
+                    safeLeftInset
+                }
+                val safeEnd = if (androidx.core.view.ViewCompat.getLayoutDirection(binding.root) == androidx.core.view.ViewCompat.LAYOUT_DIRECTION_RTL) {
+                    safeLeftInset
+                } else {
+                    safeRightInset
+                }
+                val bottomMargin = maxOf(bottomInset, safeBottomInset) + horizontalMargin
+                val measuredRailHeight = binding.videoActionRail.height.takeIf { it > 0 } ?: dp(binding.root, 340)
+                val panelHeight = binding.videoInfoOverlay.height.takeIf { it > 0 } ?: dp(binding.root, 120)
+                val safeTop = safeTopInset + horizontalMargin
+                val safeBottom = bottomMargin
+                val railTop = safeTop + ((binding.root.height - safeTop - safeBottom - measuredRailHeight).coerceAtLeast(0) / 2)
+                val panelTop = binding.root.height - bottomMargin - panelHeight
+                val verticalOverlap = railTop + measuredRailHeight + horizontalMargin > panelTop
+                val sideBySide = landscape || endInset > 0 ||
+                    spec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL ||
+                    spec.heightClass == AdaptiveLayoutPolicy.WindowHeightClass.COMPACT || verticalOverlap
+                val railWidth = binding.videoActionRail.width.takeIf { it > 0 } ?: dp(binding.root, 52)
+                val infoStartMargin = safeStart + horizontalMargin
+                val infoEndMargin = safeEnd + endInset + horizontalMargin +
+                    if (sideBySide) railWidth + horizontalMargin else 0
+                val availableWidth = (binding.root.width - infoStartMargin - infoEndMargin).coerceAtLeast(dp(binding.root, 1))
+                val preferredWidth = dp(binding.root, minOf(560, spec.contentMaxWidthDp))
                 val infoParams = binding.videoInfoOverlay.layoutParams as android.widget.FrameLayout.LayoutParams
-                val availableWidth = (binding.root.width - horizontalMargin * 2 - if (landscape) endInset else 0)
-                    .coerceAtLeast(0)
-                val preferredWidth = dp(binding.root, if (landscape) 520 else 560)
                 infoParams.width = availableWidth.coerceAtMost(preferredWidth)
-                infoParams.gravity = if (landscape) {
+                infoParams.gravity = if (sideBySide) {
                     android.view.Gravity.BOTTOM or android.view.Gravity.START
                 } else {
                     android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
                 }
-                infoParams.leftMargin = horizontalMargin
-                infoParams.rightMargin = if (landscape) endInset + horizontalMargin else horizontalMargin
-                infoParams.bottomMargin = bottomInset + dp(binding.root, 12)
+                infoParams.marginStart = infoStartMargin
+                infoParams.marginEnd = infoEndMargin
+                infoParams.leftMargin = 0
+                infoParams.rightMargin = 0
+                infoParams.bottomMargin = bottomMargin
                 binding.videoInfoOverlay.layoutParams = infoParams
 
                 val railParams = binding.videoActionRail.layoutParams as android.widget.FrameLayout.LayoutParams
-                railParams.rightMargin = endInset + horizontalMargin
-                binding.videoActionRail.layoutParams = railParams
+                val railEndMargin = safeEnd + endInset + horizontalMargin
+                val railTopMargin = safeTopInset + horizontalMargin
+                val railBottomMargin = maxOf(bottomInset, safeBottomInset) + horizontalMargin
+                val railNeedsBoundedHeight = landscape ||
+                    spec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL ||
+                    spec.heightClass == AdaptiveLayoutPolicy.WindowHeightClass.COMPACT
+                val usableRailHeight = (binding.root.height - railTopMargin - railBottomMargin)
+                    .coerceAtLeast(dp(binding.root, 64))
+                val railHeight = if (railNeedsBoundedHeight) usableRailHeight else android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                if (railParams.marginEnd != railEndMargin || railParams.topMargin != railTopMargin ||
+                    railParams.bottomMargin != railBottomMargin || railParams.height != railHeight
+                ) {
+                    railParams.marginEnd = railEndMargin
+                    railParams.topMargin = railTopMargin
+                    railParams.bottomMargin = railBottomMargin
+                    railParams.height = railHeight
+                    binding.videoActionRail.layoutParams = railParams
+                }
             }
         }
 

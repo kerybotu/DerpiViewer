@@ -355,7 +355,12 @@ class MainActivity : AppCompatActivity() {
             binding.appBarLayout.layoutParams = appBarParams
             binding.appBarLayout.post { homeTopIslandController?.onLayoutChanged() }
 
-            val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
+            val widthDp = ((binding.root.width - navigationBarInsetHorizontal) / resources.displayMetrics.density).toInt()
+                .takeIf { it > 0 } ?: resources.configuration.screenWidthDp
+            val heightDp = (binding.root.height / resources.displayMetrics.density).toInt()
+                .takeIf { it > 0 } ?: resources.configuration.screenHeightDp
+            val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+            val horizontal = layoutSpec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL
             binding.glassBottomNavigation.setVerticalNavigation(horizontal)
 
             val refreshParams = binding.homeRefresh.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
@@ -402,7 +407,12 @@ class MainActivity : AppCompatActivity() {
         binding.root.addOnLayoutChangeListener { _, left, top, right, bottom,
                                                 oldLeft, oldTop, oldRight, oldBottom ->
             if (left != oldLeft || top != oldTop || right != oldRight || bottom != oldBottom) {
-                val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
+                val widthDp = (binding.root.width / resources.displayMetrics.density).toInt()
+                    .takeIf { it > 0 } ?: resources.configuration.screenWidthDp
+                val heightDp = (binding.root.height / resources.displayMetrics.density).toInt()
+                    .takeIf { it > 0 } ?: resources.configuration.screenHeightDp
+                val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+                val horizontal = layoutSpec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL
                 binding.glassBottomNavigation.setVerticalNavigation(horizontal)
                 updateResponsiveIslandWidths()
                 binding.root.post {
@@ -439,7 +449,9 @@ class MainActivity : AppCompatActivity() {
             ?: (resources.configuration.screenWidthDp * density).toInt()
         val availableWindowWidth = (rootWidth - navigationBarInsetHorizontal).coerceAtLeast(1)
         val availableWidthDp = (availableWindowWidth / density).toInt()
-        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
+        val availableHeightDp = AdaptiveLayoutPolicy.availableWindowHeightDp(this, binding.root)
+        val horizontal = AdaptiveLayoutPolicy.specFor(availableWidthDp, availableHeightDp).navigationMode ==
+            AdaptiveLayoutPolicy.NavigationMode.RAIL
         val railSpace = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(availableWidthDp) + AdaptiveLayoutPolicy.tokensForWidth(availableWidthDp).screenGutterDp * 2) else 0
         val islandGutter = dp(Ui2DesignSystem.Spacing.islandMargin)
         val responsiveGutter = dp(AdaptiveLayoutPolicy.tokensForWidth(availableWidthDp).screenGutterDp)
@@ -448,7 +460,8 @@ class MainActivity : AppCompatActivity() {
         (binding.appBarLayout.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
             val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, availableIslandWidth)
             val gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
-            val left = if (horizontal) railSpace + dp(Ui2DesignSystem.Spacing.islandGap) else 0
+            val railRight = if (horizontal) binding.glassBottomNavigation.right else 0
+            val left = if (horizontal) railRight + dp(Ui2DesignSystem.Spacing.islandGap) else 0
             val coordinatorParams = params as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
             val effectiveGravity = if (horizontal) android.view.Gravity.TOP or android.view.Gravity.LEFT else gravity
             if (params.width != width || coordinatorParams?.gravity != effectiveGravity || params.leftMargin != left || params.marginStart != left) {
@@ -475,8 +488,10 @@ class MainActivity : AppCompatActivity() {
     ) {
         // Navigation islands remain visual overlays and never constrain the
         // full-screen grid's measured width or height.
-        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
         val widthDp = AdaptiveLayoutPolicy.availableContentWidthDp(this, binding.root)
+        val heightDp = AdaptiveLayoutPolicy.availableWindowHeightDp(this, binding.root)
+        val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+        val horizontal = layoutSpec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL
         val railSpace = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(widthDp) + AdaptiveLayoutPolicy.tokensForWidth(widthDp).screenGutterDp * 2) else 0
         refreshParams.leftMargin = railSpace
         refreshParams.rightMargin = 0
@@ -506,7 +521,6 @@ class MainActivity : AppCompatActivity() {
             columnCount = AdaptiveLayoutPolicy.artworkColumnCountForWidth(availableWidthDp)
             (binding.recyclerView.layoutManager as? GridLayoutManager)?.spanCount = columnCount
         }
-
         (binding.fabUploadContainer.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
             if (params is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
                 params.anchorId = R.id.glass_bottom_navigation
@@ -952,11 +966,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyAdaptiveNavigationLayout(configuration: Configuration) {
         if (!::binding.isInitialized) return
-        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(configuration)
+        val widthDp = AdaptiveLayoutPolicy.availableContentWidthDp(this, binding.root)
+            .takeIf { binding.root.width > 0 } ?: configuration.screenWidthDp.coerceAtLeast(1)
+        val heightDp = AdaptiveLayoutPolicy.availableWindowHeightDp(this, binding.root)
+            .takeIf { binding.root.height > 0 } ?: configuration.screenHeightDp.coerceAtLeast(1)
+        val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+        val horizontal = layoutSpec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL
         binding.glassBottomNavigation.setVerticalNavigation(horizontal)
-        val widthDp = configuration.screenWidthDp.coerceAtLeast(1)
         (binding.glassBottomNavigation.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-            params.width = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(widthDp))
+            params.width = if (horizontal) dp(layoutSpec.navigationWidthDp)
                 else AdaptiveLayoutPolicy.bottomIslandWidthPx(this, binding.root.width.takeIf { it > 0 } ?: dp(widthDp))
             params.height = if (horizontal) -2 else dp(64)
             params.marginStart = if (horizontal) navigationBarInsetHorizontal / 2 + dp(Ui2DesignSystem.Spacing.sm) else 0

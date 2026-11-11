@@ -3,10 +3,14 @@ package com.kerybotu.derpibooru.mirror.ui
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.kerybotu.derpibooru.mirror.PaletteManager
@@ -17,6 +21,10 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
     private lateinit var binding: ActivityVideoFeedBinding
     private lateinit var adapter: VideoFeedAdapter
     private lateinit var controller: VideoFeedController
+    private var safeLeftInset = 0
+    private var safeTopInset = 0
+    private var safeRightInset = 0
+    private var safeBottomInset = 0
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressTick = object : Runnable {
         override fun run() {
@@ -42,6 +50,25 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         Ui2DesignSystem.applyPressFeedback(binding.videoAudio)
         Ui2DesignSystem.applyPressFeedback(binding.videoSort)
         adapter = VideoFeedAdapter(this, binding.videoGlassBackdrop)
+        adapter.setSafeInsets(safeLeftInset, safeTopInset, safeRightInset, safeBottomInset)
+        binding.root.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                updateTopIslandPosition()
+            }
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val bars = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.systemBars())
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            val gestures = insets.getInsets(WindowInsetsCompat.Type.systemGestures())
+            safeLeftInset = maxOf(bars.left, cutout.left, gestures.left)
+            safeTopInset = maxOf(bars.top, cutout.top)
+            safeRightInset = maxOf(bars.right, cutout.right, gestures.right)
+            safeBottomInset = maxOf(bars.bottom, cutout.bottom, gestures.bottom)
+            adapter.setSafeInsets(safeLeftInset, safeTopInset, safeRightInset, safeBottomInset)
+            updateTopIslandPosition()
+            insets
+        }
+        ViewCompat.requestApplyInsets(binding.root)
         binding.videoPager.apply {
             orientation = ViewPager2.ORIENTATION_VERTICAL
             offscreenPageLimit = 1
@@ -138,4 +165,44 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         binding.videoMenu.visibility = View.GONE
         if (::adapter.isInitialized) adapter.refreshPalette()
     }
+
+    private fun updateTopIslandPosition() {
+        if (binding.root.width <= 0 || binding.root.height <= 0) return
+        val density = resources.displayMetrics.density
+        val widthDp = (binding.root.width / density).toInt().coerceAtLeast(1)
+        val heightDp = (binding.root.height / density).toInt().coerceAtLeast(1)
+        val spec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+        val sidePlacement = spec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL ||
+            AdaptiveLayoutPolicy.isHorizontalLayout(widthDp, heightDp)
+        val margin = dp(spec.componentSpacingDp)
+        val isRtl = ViewCompat.getLayoutDirection(binding.root) == ViewCompat.LAYOUT_DIRECTION_RTL
+        val safeStart = if (isRtl) safeRightInset else safeLeftInset
+        val safeEnd = if (isRtl) safeLeftInset else safeRightInset
+        val params = binding.videoTopIsland.layoutParams as? FrameLayout.LayoutParams ?: return
+        val availableWidth = (binding.root.width - safeLeftInset - safeRightInset - margin * 2).coerceAtLeast(dp(1))
+        val islandWidth = dp(180).coerceAtMost(availableWidth)
+        val gravity = if (sidePlacement) {
+            Gravity.TOP or Gravity.START
+        } else {
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        }
+        val startMargin = safeStart + margin
+        val endMargin = safeEnd + margin
+        val topMargin = safeTopInset + margin
+        val bottomMargin = 0
+        if (params.width != islandWidth || params.gravity != gravity ||
+            params.marginStart != startMargin || params.marginEnd != endMargin ||
+            params.topMargin != topMargin || params.bottomMargin != bottomMargin
+        ) {
+            params.width = islandWidth
+            params.gravity = gravity
+            params.marginStart = startMargin
+            params.marginEnd = endMargin
+            params.topMargin = topMargin
+            params.bottomMargin = bottomMargin
+            binding.videoTopIsland.layoutParams = params
+        }
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }

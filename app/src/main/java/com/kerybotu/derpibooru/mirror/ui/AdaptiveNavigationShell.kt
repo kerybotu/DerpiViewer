@@ -72,12 +72,13 @@ class AdaptiveNavigationShell private constructor(
         val density = activity.resources.displayMetrics.density
         val widthDp = ((root.width - insetLeft - insetRight) / density).toInt().coerceAtLeast(1)
         val heightDp = (root.height / density).toInt()
-        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(widthDp, heightDp)
+        val spec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+        val showRail = spec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL
         val railGutter = dp(AdaptiveLayoutPolicy.tokensForWidth(widthDp).screenGutterDp)
-        railHost.visibility = if (horizontal) View.VISIBLE else View.GONE
-        rail.setRenderingActive(horizontal && rail.isAttachedToWindow, content)
+        railHost.visibility = if (showRail) View.VISIBLE else View.GONE
+        rail.setRenderingActive(showRail && rail.isAttachedToWindow, content)
         val hostParams = railHost.layoutParams as LinearLayout.LayoutParams
-        val hostWidth = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(widthDp)) + railGutter * 2 else 0
+        val hostWidth = if (showRail) dp(spec.navigationWidthDp) + railGutter * 2 else 0
         if (hostParams.width != hostWidth) {
             hostParams.width = hostWidth
             railHost.layoutParams = hostParams
@@ -88,7 +89,7 @@ class AdaptiveNavigationShell private constructor(
             contentParams.weight = 1f
             content.layoutParams = contentParams
         }
-        val barWidth = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(widthDp)) else 0
+        val barWidth = if (showRail) dp(spec.navigationWidthDp) else 0
         val barParams = rail.layoutParams as FrameLayout.LayoutParams
         if (barParams.width != barWidth) {
             barParams.width = barWidth
