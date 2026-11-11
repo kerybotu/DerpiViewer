@@ -739,13 +739,16 @@ class MainActivity : AppCompatActivity() {
         if (total > 0) {
             binding.toolbar.title = "已选择${total}张图片"
             binding.toolbar.setNavigationIcon(R.drawable.ic_close)
+            binding.toolbar.navigationContentDescription = "取消选择"
             binding.toolbar.setNavigationOnClickListener { adapter.clearSelection(); featuredPanel?.clearSelection() }
             binding.btnDensity.visibility = View.GONE
             binding.btnSearch.visibility = View.GONE
             animateFabAction(R.drawable.ic_download, true)
         } else {
             binding.toolbar.title = "DerpiViewer"
-            // Restore the drawer toggle after the temporary selection close action.
+            // Restore both the glyph and action after leaving download selection.
+            binding.toolbar.setNavigationIcon(R.drawable.ic_menu)
+            binding.toolbar.setNavigationContentDescription(R.string.navigation_drawer_open)
             updateNavigationMenuMode()
             binding.btnDensity.visibility = View.VISIBLE
             binding.btnSearch.visibility = View.VISIBLE
