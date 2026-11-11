@@ -14,6 +14,7 @@ import android.util.TypedValue
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
@@ -152,7 +153,7 @@ class TagSearchActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
         }
-        controls.addView(modeSelector, LinearLayout.LayoutParams(-1, dp(48)).apply {
+        controls.addView(modeSelector, LinearLayout.LayoutParams(-1, dp(56)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
         })
         addModeButton("本地标签", TagSearchMode.LOCAL_TAG)
@@ -255,7 +256,8 @@ class TagSearchActivity : AppCompatActivity() {
                 updateModeUi()
             }
         }
-        modeSelector.addView(button, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+        button.minimumHeight = dp(48)
+        modeSelector.addView(button, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
             marginStart = dp(3); marginEnd = dp(3)
         })
     }
@@ -551,61 +553,75 @@ class TagSearchActivity : AppCompatActivity() {
         else -> "标签请求失败"
     }
 
-    private inner class TagAdapter : RecyclerView.Adapter<TagHolder>() {
+    private inner class TagAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         override fun getItemCount(): Int = (if (mode == TagSearchMode.REMOTE_FILTER) filters.size else tags.size) + 1
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TagHolder {
+        override fun getItemViewType(position: Int): Int = if (position == 0) 0 else 1
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            if (viewType == 0) {
+                val title = TextView(parent.context).apply {
+                    setTextColor(PaletteManager.colors(context).glassSecondaryText)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setTypeface(typeface, Typeface.BOLD)
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(16), dp(8), dp(16), dp(8))
+                    ViewCompat.setAccessibilityHeading(this, true)
+                    layoutParams = RecyclerView.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(4) }
+                }
+                return SectionTitleHolder(title)
+            }
             val row = trackGlass(LiquidGlassListItem(parent.context), pageBackdrop, 16f).apply {
                 headlineTextView.maxLines = 2
                 supportingTextView.maxLines = Int.MAX_VALUE
                 layoutParams = RecyclerView.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
             }
-            return TagHolder(row)
+            return TagResultHolder(row)
         }
 
-        override fun onBindViewHolder(holder: TagHolder, position: Int) {
-            GlassWidgetStyle.apply(holder.row, 16f)
-            holder.row.alpha = 1f
-            holder.row.isClickable = position != 0
-            holder.row.isFocusable = position != 0
-            holder.row.isLongClickable = false
-            holder.row.headlineTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX, holder.defaultHeadlineSizePx)
-            holder.row.headlineTextView.typeface = holder.defaultHeadlineTypeface
-            ViewCompat.setAccessibilityHeading(holder.row, position == 0)
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             if (position == 0) {
-                holder.row.headline = summaryText
-                holder.row.supportingText = null
-                holder.row.trailingText = null
-                holder.row.setOnClickListener(null)
-                holder.row.setTextColor(PaletteManager.colors(this@TagSearchActivity).glassSecondaryText)
-                holder.row.headlineTextView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                holder.row.headlineTextView.setTypeface(holder.defaultHeadlineTypeface, Typeface.BOLD)
-            } else if (mode == TagSearchMode.REMOTE_FILTER) {
+                (holder as SectionTitleHolder).title.text = summaryText
+                return
+            }
+            val resultHolder = holder as TagResultHolder
+            GlassWidgetStyle.apply(resultHolder.row, 16f)
+            resultHolder.row.alpha = 1f
+            resultHolder.row.isClickable = true
+            resultHolder.row.isFocusable = true
+            resultHolder.row.isLongClickable = false
+            resultHolder.row.headlineTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX, resultHolder.defaultHeadlineSizePx)
+            resultHolder.row.headlineTextView.typeface = resultHolder.defaultHeadlineTypeface
+            ViewCompat.setAccessibilityHeading(resultHolder.row, false)
+            if (mode == TagSearchMode.REMOTE_FILTER) {
                 val filter = filters[position - 1]
-                holder.row.headline = filter.name
-                holder.row.supportingText = buildString {
+                resultHolder.row.headline = filter.name
+                resultHolder.row.supportingText = buildString {
                     append("维护者：").append(filter.creator ?: "未知")
                     if (filter.description.isNotBlank()) append("\n").append(filter.description)
                 }
-                holder.row.trailingText = "剧透 ${if (filter.spoilerCount >= 0) filter.spoilerCount else "未知"} · 隐藏 ${if (filter.hiddenCount >= 0) filter.hiddenCount else "未知"}"
-                holder.row.setOnClickListener {
+                resultHolder.row.trailingText = "剧透 ${if (filter.spoilerCount >= 0) filter.spoilerCount else "未知"} · 隐藏 ${if (filter.hiddenCount >= 0) filter.hiddenCount else "未知"}"
+                resultHolder.row.setOnClickListener {
                     startActivity(Intent(this@TagSearchActivity, FilterDetailsActivity::class.java)
                         .putExtra(FilterDetailsActivity.EXTRA_FILTER_ID, filter.id))
                 }
             } else {
                 val tag = tags[position - 1]
-                holder.row.headline = tag.name
-                holder.row.supportingText = tag.description.takeIf { it.isNotBlank() }
-                holder.row.trailingText = "${numberFormat.format(tag.images)} 张"
-                holder.row.setOnClickListener {
+                resultHolder.row.headline = tag.name
+                resultHolder.row.supportingText = tag.description.takeIf { it.isNotBlank() }
+                resultHolder.row.trailingText = "${numberFormat.format(tag.images)} 张"
+                resultHolder.row.setOnClickListener {
                     startActivity(Intent(this@TagSearchActivity, SearchActivity::class.java)
                         .putExtra(SearchActivity.EXTRA_INITIAL_QUERY, tag.name))
                 }
             }
         }
+
     }
 
-    private class TagHolder(val row: LiquidGlassListItem) : RecyclerView.ViewHolder(row) {
+    private class SectionTitleHolder(val title: TextView) : RecyclerView.ViewHolder(title)
+
+    private class TagResultHolder(val row: LiquidGlassListItem) : RecyclerView.ViewHolder(row) {
         val defaultHeadlineSizePx = row.headlineTextView.textSize
         val defaultHeadlineTypeface = row.headlineTextView.typeface
     }

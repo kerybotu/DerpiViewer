@@ -172,8 +172,12 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         val widthDp = (binding.root.width / density).toInt().coerceAtLeast(1)
         val heightDp = (binding.root.height / density).toInt().coerceAtLeast(1)
         val spec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
+        // This view is measured after AdaptiveNavigationShell removes the rail
+        // from its content width. Use the window configuration as well so a
+        // phone landscape window does not incorrectly center controls over the
+        // media subject.
         val sidePlacement = spec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL ||
-            AdaptiveLayoutPolicy.isHorizontalLayout(widthDp, heightDp)
+            AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
         val margin = dp(spec.componentSpacingDp)
         val isRtl = ViewCompat.getLayoutDirection(binding.root) == ViewCompat.LAYOUT_DIRECTION_RTL
         val safeStart = if (isRtl) safeRightInset else safeLeftInset
