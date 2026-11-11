@@ -14,6 +14,7 @@ class RecentCommentsActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         feed = CommentsFeedView(this, "全站评论") { finish() }
         setContentView(feed)
+        AdaptiveNavigationShell.install(this, feed, AdaptiveNavigationShell.HOME)
     }
 
     override fun onResume() {

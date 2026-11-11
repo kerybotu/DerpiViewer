@@ -126,10 +126,12 @@ class FilterEditorActivity : AppCompatActivity() {
             setOnClickListener { save() }
             layoutParams = LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(12) }
         })
-        setContentView(ScrollView(this).apply {
+        val pageRoot = ScrollView(this).apply {
             isFillViewport = true
             addView(root)
-        })
+        }
+        setContentView(pageRoot)
+        AdaptiveNavigationShell.install(this, pageRoot, AdaptiveNavigationShell.HOME)
     }
 
     private fun section(title: String, helper: String, vararg children: android.view.View) =

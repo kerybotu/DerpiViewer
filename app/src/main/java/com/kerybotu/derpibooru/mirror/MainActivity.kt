@@ -31,6 +31,7 @@ import com.kerybotu.derpibooru.mirror.ui.ImageDetailActivity
 import com.kerybotu.derpibooru.mirror.ui.FilterCache
 import com.kerybotu.derpibooru.mirror.ui.CdnImageGate
 import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
+import com.kerybotu.derpibooru.mirror.ui.AdaptiveNavigationShell
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
 import com.kerybotu.derpibooru.mirror.ui.HomeTopIslandController
 import com.kerybotu.derpibooru.mirror.ui.GlassWidgetStyle
@@ -51,6 +52,10 @@ import com.kerybotu.derpibooru.mirror.update.AppUpdateManager
 import com.kerybotu.derpibooru.mirror.update.UpdateUi
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val EXTRA_ADAPTIVE_DESTINATION = "adaptive_destination"
+    }
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var homeBackdrop: ScrollContentBackdrop
@@ -113,6 +118,7 @@ class MainActivity : AppCompatActivity() {
 
         // 处理状态栏与顶栏重叠问题
         applyWindowInsets()
+        binding.root.post { if (!isFinishing && !isDestroyed) applyAdaptiveNavigationLayout(resources.configuration) }
         // The top island is measured after insets are applied and can change size
         // on rotation, window resizing, or when its visibility is restored. Keep
         // the grid's initial content offset tied to that measured size without
@@ -132,16 +138,23 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
         homeTopIslandController = HomeTopIslandController(binding.appBarLayout, binding.toolbar)
 
-        val navigationIds = listOf(R.id.tab_home, R.id.tab_video_feed, R.id.tab_featured, R.id.tab_messages, R.id.tab_profile)
         val navigationTabs = listOf(
             LiquidGlassTabBar.TabItem("首页", getDrawable(R.drawable.ic_home)),
+            LiquidGlassTabBar.TabItem("搜索", getDrawable(R.drawable.ic_search)),
             LiquidGlassTabBar.TabItem("视频", getDrawable(R.drawable.ic_video)),
-            LiquidGlassTabBar.TabItem("热门", getDrawable(R.drawable.ic_whatshot)),
-            LiquidGlassTabBar.TabItem("评论", getDrawable(R.drawable.ic_comment)),
-            LiquidGlassTabBar.TabItem("我的", getDrawable(R.drawable.ic_account_box))
+            LiquidGlassTabBar.TabItem("收藏", getDrawable(R.drawable.ic_favorite)),
+            LiquidGlassTabBar.TabItem("个人", getDrawable(R.drawable.ic_account_box))
         )
         binding.glassBottomNavigation.configureTabs(navigationTabs)
-        binding.glassBottomNavigation.onItemSelected = { index -> handlePrimaryNavigation(navigationIds[index]) }
+        binding.glassBottomNavigation.onItemSelected = { index ->
+            when (index) {
+                AdaptiveNavigationShell.HOME -> handlePrimaryNavigation(R.id.tab_home)
+                AdaptiveNavigationShell.SEARCH -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.SearchActivity::class.java))
+                AdaptiveNavigationShell.VIDEO -> handlePrimaryNavigation(R.id.tab_video_feed)
+                AdaptiveNavigationShell.FAVORITES -> startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.FavoritesActivity::class.java))
+                AdaptiveNavigationShell.PROFILE -> handlePrimaryNavigation(R.id.tab_profile)
+            }
+        }
         binding.glassBottomNavigation.onItemReselected = { index -> if (index == 0) resetHomeAndRefresh() }
         applyUi2Shell()
         configureUploadFab()
@@ -342,9 +355,8 @@ class MainActivity : AppCompatActivity() {
             binding.appBarLayout.layoutParams = appBarParams
             binding.appBarLayout.post { homeTopIslandController?.onLayoutChanged() }
 
-            // Landscape uses the same bottom island as portrait. The legacy
-            // side rail was a separate layout system and caused the oversized
-            // right-hand navigation surface.
+            val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
+            binding.glassBottomNavigation.setVerticalNavigation(horizontal)
 
             val refreshParams = binding.homeRefresh.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
             refreshParams.behavior = null
@@ -355,14 +367,15 @@ class MainActivity : AppCompatActivity() {
             binding.homeRefresh.layoutParams = refreshParams
 
             val bottomParams = binding.glassBottomNavigation.layoutParams as android.view.ViewGroup.MarginLayoutParams
-            // 64dp keeps the floating island compact while fitting both icon and label.
-            bottomParams.height = dp(64)
+            // The same glass island becomes a vertical rail when the usable window is wide.
+            bottomParams.height = if (horizontal) -2 else dp(64)
             if (bottomParams is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
-                bottomParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                bottomParams.gravity = if (horizontal) android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+                    else android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
             }
-            bottomParams.marginStart = 0
+            bottomParams.marginStart = if (horizontal) navigationInsets.left + dp(Ui2DesignSystem.Spacing.sm) else 0
             bottomParams.marginEnd = 0
-            bottomParams.bottomMargin = navigationBarHeight + dp(Ui2DesignSystem.Spacing.md)
+            bottomParams.bottomMargin = if (horizontal) 0 else navigationBarHeight + dp(Ui2DesignSystem.Spacing.md)
             binding.glassBottomNavigation.layoutParams = bottomParams
 
             val fabParams = binding.fabUploadContainer.layoutParams as? android.view.ViewGroup.MarginLayoutParams
@@ -389,13 +402,34 @@ class MainActivity : AppCompatActivity() {
         binding.root.addOnLayoutChangeListener { _, left, top, right, bottom,
                                                 oldLeft, oldTop, oldRight, oldBottom ->
             if (left != oldLeft || top != oldTop || right != oldRight || bottom != oldBottom) {
+                val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
+                binding.glassBottomNavigation.setVerticalNavigation(horizontal)
                 updateResponsiveIslandWidths()
                 binding.root.post {
-                    if (!isFinishing && !isDestroyed) ViewCompat.requestApplyInsets(binding.root)
+                    if (isFinishing || isDestroyed) return@post
+                    ViewCompat.requestApplyInsets(binding.root)
+                    val refreshParams = binding.homeRefresh.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+                    if (refreshParams != null) updateMainContentInsets(refreshParams)
+                    updateUploadFabPosition()
                 }
             }
         }
         ViewCompat.requestApplyInsets(binding.root)
+        applyAdaptiveDestination(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyAdaptiveDestination(intent)
+    }
+
+    private fun applyAdaptiveDestination(intent: Intent) {
+        val destination = intent.getIntExtra(EXTRA_ADAPTIVE_DESTINATION, View.NO_ID)
+        if (destination == View.NO_ID || !::binding.isInitialized) return
+        binding.root.post {
+            if (!isFinishing && !isDestroyed) handlePrimaryNavigation(destination)
+        }
     }
 
     private fun updateResponsiveIslandWidths() {
@@ -405,19 +439,30 @@ class MainActivity : AppCompatActivity() {
             ?: (resources.configuration.screenWidthDp * density).toInt()
         val availableWindowWidth = (rootWidth - navigationBarInsetHorizontal).coerceAtLeast(1)
         val availableWidthDp = (availableWindowWidth / density).toInt()
+        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
+        val railSpace = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(availableWidthDp) + AdaptiveLayoutPolicy.tokensForWidth(availableWidthDp).screenGutterDp * 2) else 0
         val islandGutter = dp(Ui2DesignSystem.Spacing.islandMargin)
         val responsiveGutter = dp(AdaptiveLayoutPolicy.tokensForWidth(availableWidthDp).screenGutterDp)
-        val availableIslandWidth = (availableWindowWidth - maxOf(islandGutter, responsiveGutter) * 2).coerceAtLeast(1)
+        val availableIslandWidth = (availableWindowWidth - railSpace - maxOf(islandGutter, responsiveGutter) * 2).coerceAtLeast(1)
 
         (binding.appBarLayout.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
             val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, availableIslandWidth)
-            if (params.width != width) {
+            val gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+            val left = if (horizontal) railSpace + dp(Ui2DesignSystem.Spacing.islandGap) else 0
+            val coordinatorParams = params as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+            val effectiveGravity = if (horizontal) android.view.Gravity.TOP or android.view.Gravity.LEFT else gravity
+            if (params.width != width || coordinatorParams?.gravity != effectiveGravity || params.leftMargin != left || params.marginStart != left) {
                 params.width = width
+                coordinatorParams?.gravity = effectiveGravity
+                params.leftMargin = left
+                params.marginStart = left
+                params.marginEnd = 0
                 binding.appBarLayout.layoutParams = params
             }
         }
         (binding.glassBottomNavigation.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-            val width = AdaptiveLayoutPolicy.bottomIslandWidthPx(this, availableIslandWidth)
+            val width = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(availableWidthDp))
+                else AdaptiveLayoutPolicy.bottomIslandWidthPx(this, availableIslandWidth)
             if (params.width != width) {
                 params.width = width
                 binding.glassBottomNavigation.layoutParams = params
@@ -430,9 +475,19 @@ class MainActivity : AppCompatActivity() {
     ) {
         // Navigation islands remain visual overlays and never constrain the
         // full-screen grid's measured width or height.
-        refreshParams.leftMargin = 0
+        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)
+        val widthDp = AdaptiveLayoutPolicy.availableContentWidthDp(this, binding.root)
+        val railSpace = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(widthDp) + AdaptiveLayoutPolicy.tokensForWidth(widthDp).screenGutterDp * 2) else 0
+        refreshParams.leftMargin = railSpace
         refreshParams.rightMargin = 0
         binding.homeRefresh.layoutParams = refreshParams
+
+        (binding.mainContentHost.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
+            if (params.leftMargin != railSpace) {
+                params.leftMargin = railSpace
+                binding.mainContentHost.layoutParams = params
+            }
+        }
 
         val navHeight = binding.glassBottomNavigation.measuredHeight
         val availableWidthDp = AdaptiveLayoutPolicy.availableContentWidthDp(this, binding.recyclerView)
@@ -472,8 +527,12 @@ class MainActivity : AppCompatActivity() {
         val navParams = binding.glassBottomNavigation.layoutParams as? android.view.ViewGroup.MarginLayoutParams
         val navigationIslandInset = navHeight + (navParams?.bottomMargin ?: navigationBarInsetBottom)
         val videoBottomInset = navigationIslandInset + dp(Ui2DesignSystem.Spacing.sm)
-        embeddedVideo?.setNavigationInsets(videoBottomInset, 0, false)
-        embeddedProfile?.setBottomInset(videoBottomInset)
+        embeddedVideo?.setNavigationInsets(
+            if (horizontal) 0 else videoBottomInset,
+            0,
+            horizontal
+        )
+        embeddedProfile?.setBottomInset(if (horizontal) navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.sm) else videoBottomInset)
     }
 
     /** Keeps the grid full-screen while offsetting only its initial content position. */
@@ -576,11 +635,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncNavigationSelection(itemId: Int) {
         val index = when (itemId) {
-            R.id.tab_home -> 0
-            R.id.tab_video_feed -> 1
-            R.id.tab_featured -> 2
-            R.id.tab_messages -> 3
-            R.id.tab_profile -> 4
+            R.id.tab_home -> AdaptiveNavigationShell.HOME
+            R.id.tab_video_feed -> AdaptiveNavigationShell.VIDEO
+            R.id.tab_profile -> AdaptiveNavigationShell.PROFILE
             else -> return
         }
         if (::binding.isInitialized) {
@@ -893,6 +950,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private fun applyAdaptiveNavigationLayout(configuration: Configuration) {
+        if (!::binding.isInitialized) return
+        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(configuration)
+        binding.glassBottomNavigation.setVerticalNavigation(horizontal)
+        val widthDp = configuration.screenWidthDp.coerceAtLeast(1)
+        (binding.glassBottomNavigation.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
+            params.width = if (horizontal) dp(AdaptiveLayoutPolicy.navigationRailWidthDp(widthDp))
+                else AdaptiveLayoutPolicy.bottomIslandWidthPx(this, binding.root.width.takeIf { it > 0 } ?: dp(widthDp))
+            params.height = if (horizontal) -2 else dp(64)
+            params.marginStart = if (horizontal) navigationBarInsetHorizontal / 2 + dp(Ui2DesignSystem.Spacing.sm) else 0
+            params.marginEnd = 0
+            params.bottomMargin = if (horizontal) 0 else navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.md)
+            (params as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.gravity =
+                if (horizontal) android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+                else android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+            binding.glassBottomNavigation.layoutParams = params
+        }
+        val refreshParams = binding.homeRefresh.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+        if (refreshParams != null) updateMainContentInsets(refreshParams)
+        updateResponsiveIslandWidths()
+        updateUploadFabPosition()
+    }
+
     private fun applyUi2Shell() {
         if (!::binding.isInitialized) return
         val colors = PaletteManager.colors(this)
@@ -1009,6 +1089,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUploadFabPosition() {
         val navigation = binding.glassBottomNavigation
+        if (AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)) {
+            val fabParams = binding.fabUploadContainer.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+                ?: return
+            fabParams.anchorId = View.NO_ID
+            fabParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+            fabParams.marginEnd = dp(Ui2DesignSystem.Spacing.md)
+            fabParams.bottomMargin = navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.md)
+            binding.fabUploadContainer.layoutParams = fabParams
+            binding.fabUploadContainer.translationX = 0f
+            return
+        }
+        val fabParams = binding.fabUploadContainer.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+        fabParams?.let {
+            it.anchorId = R.id.glass_bottom_navigation
+            it.anchorGravity = android.view.Gravity.TOP or android.view.Gravity.END
+            it.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            it.marginEnd = 0
+            binding.fabUploadContainer.layoutParams = it
+        }
         val row = navigation.getChildAt(0) as? android.view.ViewGroup ?: return
         val trailingTab = row.getChildAt(row.childCount - 1) ?: return
         val fab = binding.fabUploadContainer
@@ -1338,10 +1437,12 @@ class MainActivity : AppCompatActivity() {
         super.onConfigurationChanged(newConfig)
         if (!::binding.isInitialized) return
         applyUi2Shell()
+        // Re-run the shared window/insets layout path so navigation changes
+        // between the bottom island and the landscape rail with the window.
         ViewCompat.requestApplyInsets(binding.root)
         binding.root.post {
             if (isFinishing || isDestroyed) return@post
-            updateResponsiveIslandWidths()
+            applyAdaptiveNavigationLayout(newConfig)
             updateArtworkTopPadding()
             homeTopIslandController?.onLayoutChanged()
         }

@@ -74,6 +74,7 @@ class DownloadManagerActivity : AppCompatActivity() {
             override fun handleOnBackPressed() { goBack() }
         })
         setContentView(feed)
+        AdaptiveNavigationShell.install(this, feed, AdaptiveNavigationShell.FAVORITES)
     }
 
     private fun goBack() {

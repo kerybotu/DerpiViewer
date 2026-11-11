@@ -19,6 +19,7 @@ class ProfileActivity : AppCompatActivity() {
         if (intent.hasExtra(EXTRA_USER_ID) && userId == null) { finish(); return }
         profile = EmbeddedProfileView(this, requestedUserId = userId, onBack = { finish() })
         setContentView(profile)
+        AdaptiveNavigationShell.install(this, profile, AdaptiveNavigationShell.PROFILE)
         ViewCompat.requestApplyInsets(profile)
     }
 

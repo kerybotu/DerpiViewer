@@ -33,6 +33,7 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         )
         binding = ActivityVideoFeedBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        AdaptiveNavigationShell.install(this, binding.root, AdaptiveNavigationShell.VIDEO)
         binding.videoGlassBackdrop.track(binding.videoTopIsland, Ui2DesignSystem.Shape.topIsland)
         ResourceCoordinator.enterVideoTab()
         CdnImageGate.pausePrefetch(this)

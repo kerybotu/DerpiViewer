@@ -99,6 +99,7 @@ class ImageDetailActivity : AppCompatActivity() {
         }
     }
     private var bottomInset = 0
+    private var horizontalDetailLayout: Boolean? = null
     private var removePaletteObserver: (() -> Unit)? = null
     private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyPalette() }
     private val visibleBounds = Rect()
@@ -118,6 +119,7 @@ class ImageDetailActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         b = ActivityImageDetailBinding.inflate(layoutInflater)
         setContentView(b.root)
+        AdaptiveNavigationShell.install(this, b.root, AdaptiveNavigationShell.HOME)
         PaletteManager.apply(this)
         applyPalette()
         image = intent.getSerializableExtra("image") as? Image
@@ -162,6 +164,7 @@ class ImageDetailActivity : AppCompatActivity() {
         loadDetails()
         b.root.addOnLayoutChangeListener { _, left, _, right, bottom, oldLeft, _, oldRight, oldBottom ->
             if (right - left != oldRight - oldLeft || bottom != oldBottom) {
+                applyResponsiveDetailLayout()
                 applyIslandWidths()
                 updateSheetBounds()
             }
@@ -382,9 +385,12 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun applyIslandWidths() {
         val available = (b.root.width - b.bottomSheet.paddingLeft - b.bottomSheet.paddingRight).takeIf { it > 0 } ?: return
-        // Reuse the window-width policy's bounded island column for readable text.
-        val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, available)
-            .coerceAtMost((available - dp(24)).coerceAtLeast(dp(1)))
+        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(this, b.root)
+        val panelWidth = if (horizontal) {
+            (available * 0.42f).toInt().coerceIn(dp(216), dp(360))
+        } else available
+        val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, panelWidth)
+            .coerceAtMost((panelWidth - dp(24)).coerceAtLeast(dp(1)))
         listOf(b.detailAuthorPanel, b.detailInteractionPanel).forEach { island ->
             val params = island.layoutParams as? android.widget.LinearLayout.LayoutParams ?: return@forEach
             if (params.width != width || params.gravity != android.view.Gravity.CENTER_HORIZONTAL) {
@@ -393,9 +399,49 @@ class ImageDetailActivity : AppCompatActivity() {
                 island.layoutParams = params
             }
         }
-        b.detailTopIsland.layoutParams = b.detailTopIsland.layoutParams.apply { this.width = width }
+        val topWidth = if (horizontal) minOf(dp(280), (available - panelWidth - dp(24)).coerceAtLeast(dp(1))) else width
+        b.detailTopIsland.layoutParams = (b.detailTopIsland.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.apply {
+            this.width = topWidth
+            gravity = if (horizontal) android.view.Gravity.TOP or android.view.Gravity.LEFT
+                else android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+            leftMargin = if (horizontal) dp(8) else 0
+        } ?: b.detailTopIsland.layoutParams.apply { this.width = topWidth }
         b.detailContent.layoutParams = b.detailContent.layoutParams.apply { this.width = width + dp(24) }
         b.detailTagsGroup.post { updateTagWidths() }
+    }
+
+    private fun applyResponsiveDetailLayout() {
+        if (!::b.isInitialized || b.root.width <= 0 || b.root.height <= 0) return
+        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(this, b.root)
+        if (horizontalDetailLayout == horizontal) return
+        horizontalDetailLayout = horizontal
+        val available = (b.root.width - b.bottomSheet.paddingLeft - b.bottomSheet.paddingRight).coerceAtLeast(1)
+        val mediaWidth = if (horizontal) (available * 0.58f).toInt() else -1
+        listOf(b.detailImage, b.detailVideoPlayer, b.detailSpoilerCover).forEach { media ->
+            val params = media.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return@forEach
+            params.width = mediaWidth
+            params.gravity = if (horizontal) android.view.Gravity.TOP or android.view.Gravity.LEFT else android.view.Gravity.TOP or android.view.Gravity.LEFT
+            media.layoutParams = params
+        }
+        val sheetParams = b.bottomSheet.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams ?: return
+        if (horizontal) {
+            sheetParams.width = (available * 0.42f).toInt().coerceIn(dp(216), dp(360))
+            sheetParams.height = -1
+            sheetParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            sheetParams.topMargin = 0
+            b.bottomSheet.layoutParams = sheetParams
+            sheet.isDraggable = false
+            sheet.expandedOffset = 0
+            sheet.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        } else {
+            sheetParams.width = -1
+            sheetParams.height = -1
+            sheetParams.gravity = android.view.Gravity.TOP
+            sheetParams.topMargin = 0
+            b.bottomSheet.layoutParams = sheetParams
+            sheet.isDraggable = true
+            sheet.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED
+        }
     }
 
     private fun updateTagWidths() {
@@ -407,6 +453,13 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun updateSheetBounds() {
         if (!::sheet.isInitialized || b.root.height <= 0 || b.detailTopIsland.height <= 0) return
+        if (horizontalDetailLayout == true) {
+            if (sheet.expandedOffset != 0) sheet.expandedOffset = 0
+            if (b.bottomSheet.layoutParams.height != b.root.height) {
+                b.bottomSheet.layoutParams = b.bottomSheet.layoutParams.apply { height = b.root.height }
+            }
+            return
+        }
         // Use the laid-out, inset-aware navigation boundary. Restoring its
         // elevation must not place it over the expanded author island.
         val top = (b.detailTopIsland.bottom + dp(Ui2DesignSystem.Spacing.islandGap))

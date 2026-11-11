@@ -62,6 +62,7 @@ class FilterActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityFiltersBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        AdaptiveNavigationShell.install(this, binding.root, AdaptiveNavigationShell.HOME)
         PaletteManager.apply(this)
         binding.root.setBackgroundColor(palette.surface)
         configureTopIsland()

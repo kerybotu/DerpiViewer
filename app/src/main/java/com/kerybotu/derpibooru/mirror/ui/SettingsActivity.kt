@@ -151,6 +151,7 @@ class SettingsActivity : AppCompatActivity() {
             setBackgroundColor(PaletteManager.colors(this@SettingsActivity).surface)
         }
         setContentView(root)
+        AdaptiveNavigationShell.install(this, root, AdaptiveNavigationShell.HOME)
         CrashDiagnostics.recordEvent("SettingsActivity", "content_attached")
         CrashDiagnostics.recordEvent("SettingsActivity", "build_screen_started")
         buildScreen()
@@ -601,7 +602,20 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun spinnerAdapter(items: List<String>) = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, items)
+    private fun spinnerAdapter(items: List<String>): ArrayAdapter<String> =
+        object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
+            init { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+                super.getView(position, convertView, parent).apply {
+                    (this as? TextView)?.setTextColor(PaletteManager.colors(this@SettingsActivity).glassText)
+                }
+
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
+                super.getDropDownView(position, convertView, parent).apply {
+                    (this as? TextView)?.setTextColor(PaletteManager.colors(this@SettingsActivity).glassText)
+                }
+        }
 
     private fun bindActions() {
         accountLogin.setOnClickListener {
@@ -741,6 +755,8 @@ class SettingsActivity : AppCompatActivity() {
         accountStatus.setTextColor(colors.glassSecondaryText)
         updateSpinnerPalette(updateFrequency, colors)
         updateSpinnerPalette(spinnerSpoilerMode, colors)
+        (updateFrequency.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
+        (spinnerSpoilerMode.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
         applyTextPalette(contentColumn, colors)
         updateGlassRendering()
     }

@@ -33,4 +33,18 @@ class AdaptiveLayoutPolicyTest {
         assertEquals(4, AdaptiveLayoutPolicy.artworkColumnCountForWidth(800))
         assertEquals(6, AdaptiveLayoutPolicy.artworkColumnCountForWidth(1600))
     }
+
+    @Test
+    fun horizontalLayoutUsesAvailableAspectRatioInsteadOfDeviceOrientation() {
+        assertTrue(AdaptiveLayoutPolicy.isHorizontalLayout(820, 360))
+        assertTrue(!AdaptiveLayoutPolicy.isHorizontalLayout(600, 540))
+        assertTrue(!AdaptiveLayoutPolicy.isHorizontalLayout(520, 600))
+    }
+
+    @Test
+    fun horizontalNavigationRailLeavesUsefulContentWidth() {
+        assertEquals(72, AdaptiveLayoutPolicy.navigationRailWidthDp(520))
+        assertEquals(88, AdaptiveLayoutPolicy.navigationRailWidthDp(840))
+        assertEquals(684, AdaptiveLayoutPolicy.contentWidthAfterNavigationDp(820, 88, 24))
+    }
 }

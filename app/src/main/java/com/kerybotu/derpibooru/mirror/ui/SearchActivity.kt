@@ -75,6 +75,7 @@ class SearchActivity : AppCompatActivity() {
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var queryInput: MultiAutoCompleteTextView
+    private lateinit var queryInputSurface: LiquidGlassView
     private lateinit var results: RecyclerView
     private lateinit var adapter: ImageAdapter
     private lateinit var searchRoot: FrameLayout
@@ -115,6 +116,7 @@ class SearchActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         searchRoot = buildView()
         setContentView(searchRoot)
+        AdaptiveNavigationShell.install(this, searchRoot, AdaptiveNavigationShell.SEARCH)
         applySearchPalette()
         /* Legacy non-glass search layout retained in the checkpoint.
     }
@@ -266,10 +268,10 @@ class SearchActivity : AppCompatActivity() {
                 if (action == EditorInfo.IME_ACTION_SEARCH) { runSearch(); true } else false
             }
         }
-        val inputSurface = trackGlass(LiquidGlassView(this)).apply {
+        queryInputSurface = trackGlass(LiquidGlassView(this)).apply {
             addView(queryInput, FrameLayout.LayoutParams(-1, dp(56)))
         }
-        controls.addView(inputSurface, rowParams())
+        controls.addView(queryInputSurface, rowParams())
         headerExtras = column()
         val chips = LiquidGlassChipGroup(this).apply {
             isSingleLine = true
@@ -320,6 +322,7 @@ class SearchActivity : AppCompatActivity() {
         controls.addView(selectionActions, rowParams())
         root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         controls.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateResultInsets() }
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateResponsiveSearchControls() }
         headerExtras.post { headerContentHeight = headerExtras.height; setHeaderProgress(0f) }
 
         loadingIndicator = IosActivityIndicator(this).apply { contentDescription = "正在搜索" }
@@ -355,6 +358,7 @@ class SearchActivity : AppCompatActivity() {
             controls.setPadding(bars.left + dp(12), bars.top + dp(8), bars.right + dp(12), 0)
             bottomInset = maxOf(bars.bottom, ime.bottom)
             updateResultInsets()
+            updateResponsiveSearchControls()
             insets
         }
         val recent = getSharedPreferences("search_history", 0).getStringSet("items", emptySet()).orEmpty()
@@ -365,6 +369,30 @@ class SearchActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { loadSuggestions() }
         })
         return root
+    }
+
+    private fun updateResponsiveSearchControls() {
+        if (!::searchRoot.isInitialized || !::controls.isInitialized || searchRoot.width <= 0) return
+        val horizontal = AdaptiveLayoutPolicy.isHorizontalLayout(this, searchRoot)
+        val orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        if (controls.orientation == orientation) return
+        controls.orientation = orientation
+        controls.gravity = if (horizontal) Gravity.CENTER_VERTICAL else Gravity.TOP
+        val title = controls.getChildAt(0)
+        val selection = controls.getChildAt(3)
+        if (horizontal) {
+            title.layoutParams = LinearLayout.LayoutParams(dp(72), dp(56)).apply { marginEnd = dp(6) }
+            queryInputSurface.layoutParams = LinearLayout.LayoutParams(0, dp(56), 1f).apply { marginEnd = dp(8) }
+            headerExtras.layoutParams = LinearLayout.LayoutParams(0, -2, 2f).apply { marginEnd = dp(6) }
+            selection.layoutParams = LinearLayout.LayoutParams(dp(116), -2)
+        } else {
+            title.layoutParams = rowParams()
+            queryInputSurface.layoutParams = rowParams()
+            headerExtras.layoutParams = LinearLayout.LayoutParams(-1, -2)
+            selection.layoutParams = rowParams()
+        }
+        controls.requestLayout()
+        updateResultInsets()
     }
 
     private fun appendQuery(value: String) {

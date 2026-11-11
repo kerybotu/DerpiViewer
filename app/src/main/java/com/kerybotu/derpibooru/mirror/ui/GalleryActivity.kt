@@ -73,6 +73,7 @@ class GalleryActivity : AppCompatActivity() {
             }
         })
         setContentView(feed)
+        AdaptiveNavigationShell.install(this, feed, AdaptiveNavigationShell.HOME)
         load(reset = true)
     }
 

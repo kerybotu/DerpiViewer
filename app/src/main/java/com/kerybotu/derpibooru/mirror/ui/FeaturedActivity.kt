@@ -45,7 +45,9 @@ class FeaturedActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PaletteManager.apply(this)
-        setContentView(buildContent())
+        val pageRoot = buildContent()
+        setContentView(pageRoot)
+        AdaptiveNavigationShell.install(this, pageRoot, AdaptiveNavigationShell.HOME)
         loadFeatured(refresh = true)
     }
 

@@ -2,6 +2,7 @@ package com.kerybotu.derpibooru.mirror.ui
 
 import android.app.Activity
 import android.content.Context
+import android.content.res.Configuration
 import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.GridLayoutManager
@@ -19,6 +20,9 @@ object AdaptiveLayoutPolicy {
     const val MIN_ARTWORK_CELL_DP = 156
     const val GRID_GAP_DP = 8
     const val CONTENT_GUTTER_DP = 16
+    const val HORIZONTAL_LAYOUT_ASPECT_RATIO = 1.15f
+    const val COMPACT_NAVIGATION_RAIL_DP = 72
+    const val WIDE_NAVIGATION_RAIL_DP = 88
 
     enum class WindowWidthClass { COMPACT, MEDIUM, EXPANDED }
 
@@ -37,6 +41,18 @@ object AdaptiveLayoutPolicy {
         else -> WindowWidthClass.EXPANDED
     }
 
+    fun isHorizontalLayout(availableWidthDp: Int, availableHeightDp: Int): Boolean =
+        availableWidthDp > availableHeightDp * HORIZONTAL_LAYOUT_ASPECT_RATIO
+
+    fun isHorizontalLayout(configuration: Configuration): Boolean =
+        isHorizontalLayout(configuration.screenWidthDp, configuration.screenHeightDp)
+
+    fun navigationRailWidthDp(availableWidthDp: Int): Int =
+        if (availableWidthDp < 600) COMPACT_NAVIGATION_RAIL_DP else WIDE_NAVIGATION_RAIL_DP
+
+    fun contentWidthAfterNavigationDp(availableWidthDp: Int, railWidthDp: Int, gutterDp: Int): Int =
+        (availableWidthDp - railWidthDp - gutterDp * 2).coerceAtLeast(1)
+
     fun tokensForWidth(widthDp: Int): ResponsiveTokens = when (widthClass(widthDp)) {
         WindowWidthClass.COMPACT -> ResponsiveTokens(16, 600, TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
         WindowWidthClass.MEDIUM -> ResponsiveTokens(20, 900, MEDIUM_TOP_ISLAND_MAX_WIDTH_DP, BOTTOM_ISLAND_MAX_WIDTH_DP, MIN_ARTWORK_CELL_DP, 6)
@@ -53,8 +69,20 @@ object AdaptiveLayoutPolicy {
     fun availableContentHeightDp(context: Context): Int =
         context.resources.configuration.screenHeightDp.coerceAtLeast(1)
 
-    fun isLandscape(context: Context): Boolean =
-        context.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    fun availableWindowHeightDp(context: Context, view: View? = null): Int {
+        val density = context.resources.displayMetrics.density
+        val measuredHeight = view?.height?.takeIf { it > 0 }?.let { (it / density).toInt() }
+        return (measuredHeight ?: context.resources.configuration.screenHeightDp).coerceAtLeast(1)
+    }
+
+    fun isHorizontalLayout(context: Context, view: View? = null): Boolean {
+        val width = availableContentWidthDp(context, view)
+        val height = availableWindowHeightDp(context, view)
+        return isHorizontalLayout(width, height)
+    }
+
+    @Deprecated("Use available window aspect ratio via isHorizontalLayout")
+    fun isLandscape(context: Context): Boolean = isHorizontalLayout(context)
 
     fun contentIslandWidthPx(context: Context, availableWidthPx: Int): Int {
         val widthDp = (availableWidthPx / context.resources.displayMetrics.density).toInt()

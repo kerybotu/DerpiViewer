@@ -22,6 +22,9 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
     var onItemReselected: ((Int) -> Unit)? = null
     private var synchronizing = false
     private var hasIconTabs = false
+    private var verticalNavigation = false
+    private var railSelection: LiquidGlassView? = null
+    private var railTargetY = Float.NaN
     private var downX = 0f
     private var downY = 0f
     private var moved = false
@@ -31,6 +34,7 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
         minimumHeight = (64 * resources.displayMetrics.density).toInt()
         onTabSelected = { index ->
             applyForeground()
+            if (verticalNavigation) updateRailSelection(true)
             if (!synchronizing) onItemSelected?.invoke(index)
         }
     }
@@ -63,6 +67,51 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
             }
         }
         applyPalette()
+        applyNavigationOrientation()
+        if (verticalNavigation) post { updateRailSelection(false) }
+    }
+
+    /** Reflows the same animated tab cells into a vertical island for wide windows. */
+    fun setVerticalNavigation(vertical: Boolean) {
+        if (verticalNavigation == vertical) return
+        verticalNavigation = vertical
+        if (vertical && railSelection == null) {
+            railSelection = LiquidGlassView(context).also { selection ->
+                selection.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+                addView(selection, LayoutParams(1, 1, Gravity.TOP or Gravity.LEFT))
+            }
+        }
+        railSelection?.visibility = if (vertical) VISIBLE else GONE
+        railTargetY = Float.NaN
+        applyNavigationOrientation()
+        applyPalette()
+        if (verticalNavigation) post { updateRailSelection(false) }
+        requestLayout()
+    }
+
+    private fun applyNavigationOrientation() {
+        val row = getChildAt(0) as? LinearLayout ?: return
+        if (!hasIconTabs) return
+        row.orientation = if (verticalNavigation) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        row.layoutParams = (row.layoutParams as LayoutParams).apply {
+            gravity = if (verticalNavigation) Gravity.CENTER else Gravity.CENTER_VERTICAL
+            height = if (verticalNavigation) LayoutParams.MATCH_PARENT else LayoutParams.WRAP_CONTENT
+            width = if (verticalNavigation) LayoutParams.MATCH_PARENT else LayoutParams.MATCH_PARENT
+        }
+        for (index in 0 until row.childCount) {
+            val tab = row.getChildAt(index) as? LinearLayout ?: continue
+            tab.layoutParams = (tab.layoutParams as LinearLayout.LayoutParams).apply {
+                width = if (verticalNavigation) LayoutParams.MATCH_PARENT else 0
+                height = if (verticalNavigation) 0 else LayoutParams.MATCH_PARENT
+                weight = 1f
+            }
+            tab.minimumHeight = dp(48)
+            tab.setPadding(dp(4), dp(2), dp(4), dp(2))
+            tab.gravity = Gravity.CENTER
+        }
+        minimumHeight = if (verticalNavigation) dp(48 * row.childCount + NAVIGATION_INSET_DP * 2)
+            else dp(64)
+        setPadding(dp(NAVIGATION_INSET_DP), dp(NAVIGATION_INSET_DP), dp(NAVIGATION_INSET_DP), dp(NAVIGATION_INSET_DP))
     }
 
     private fun configureTextItem(tab: LinearLayout) {
@@ -131,20 +180,57 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
         applyForeground()
     }
 
-    private fun navigationRadiusDp(): Float =
-        (height.takeIf { it > 0 } ?: dp(64)) / resources.displayMetrics.density / 2f
+    private fun navigationRadiusDp(): Float {
+        val dimension = if (verticalNavigation) width else height.takeIf { it > 0 } ?: dp(64)
+        return dimension / resources.displayMetrics.density / 2f
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (!hasIconTabs) return
         // Keep the inset contours aligned when larger system fonts grow the bar.
-        cornerRadius = h / 2f
+        cornerRadius = (if (verticalNavigation) w else h) / 2f
         invalidateOutline()
         for (index in 0 until childCount) (getChildAt(index) as? LiquidGlassView)?.let { droplet ->
-            droplet.cornerRadius = (cornerRadius - paddingTop).coerceAtLeast(0f)
+            droplet.cornerRadius = if (verticalNavigation) {
+                (minOf(w, dp(NAVIGATION_ITEM_HEIGHT_DP)) / 2f - paddingTop).coerceAtLeast(0f)
+            } else (cornerRadius - paddingTop).coerceAtLeast(0f)
             droplet.invalidateOutline()
         }
     }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (verticalNavigation) updateRailSelection(false)
+    }
+
+    private fun updateRailSelection(animate: Boolean) {
+        val selection = railSelection ?: return
+        val row = getChildAt(0) as? ViewGroup ?: return
+        val cell = row.getChildAt(selectedIndex) ?: return
+        if (cell.width == 0 || cell.height == 0) return
+        // The library's droplet drag/settle calculations use X only. Keep that
+        // path for the bottom bar and drive this rail's selection on Y instead.
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child is LiquidGlassView && child !== selection) child.visibility = INVISIBLE
+        }
+        selection.visibility = VISIBLE
+        selection.layout(paddingLeft, paddingTop, paddingLeft + cell.width, paddingTop + cell.height)
+        selection.cornerRadius = minOf(cell.width, cell.height) / 2f
+        val target = (row.top + cell.top - paddingTop).toFloat()
+        if (target == railTargetY && !changedRailSize(selection, cell)) return
+        selection.animate().cancel()
+        val canAnimate = animate && !railTargetY.isNaN()
+        railTargetY = target
+        selection.translationX = (row.left + cell.left - paddingLeft).toFloat()
+        if (canAnimate) selection.animate().translationY(target).setDuration(Ui2DesignSystem.Motion.normalMs)
+            .setInterpolator(Ui2DesignSystem.Motion.spring).start()
+        else selection.translationY = target
+    }
+
+    private fun changedRailSize(selection: View, cell: View): Boolean =
+        selection.width != cell.width || selection.height != cell.height
 
     override fun onAppearanceChanged(isOverLight: Boolean) {
         super.onAppearanceChanged(isOverLight)
@@ -174,11 +260,27 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
         GlassWidgetStyle.setRenderingActive(this, active, source)
         // Both surfaces sample the same opaque page, avoiding double tint/blur.
         for (i in 0 until childCount) (getChildAt(i) as? LiquidGlassView)?.let {
-            GlassWidgetStyle.setRenderingActive(it, active, source)
+            GlassWidgetStyle.setRenderingActive(it, active && it.visibility == VISIBLE, source)
         }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (verticalNavigation) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = event.x; downY = event.y; moved = false }
+                MotionEvent.ACTION_MOVE -> if (abs(event.y - downY) > touchSlop || abs(event.x - downX) > touchSlop) moved = true
+                MotionEvent.ACTION_UP -> if (!moved && event.x in 0f..width.toFloat()) {
+                    val row = getChildAt(0) as? ViewGroup ?: return true
+                    val index = (0 until row.childCount).firstOrNull { i ->
+                        val cell = row.getChildAt(i)
+                        event.y >= row.top + cell.top && event.y < row.top + cell.bottom
+                    }
+                    if (index != null) row.getChildAt(index).performClick()
+                }
+                MotionEvent.ACTION_CANCEL -> moved = true
+            }
+            return true
+        }
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             downX = event.x; downY = event.y; moved = false
         }
@@ -196,5 +298,6 @@ class HomeGlassTabBar @JvmOverloads constructor(context: Context, attrs: Attribu
 
     private companion object {
         const val NAVIGATION_INSET_DP = 6
+        const val NAVIGATION_ITEM_HEIGHT_DP = 64
     }
 }

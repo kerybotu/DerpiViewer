@@ -56,6 +56,7 @@ class AboutDeveloperActivity : AppCompatActivity() {
         window.navigationBarColor = Color.TRANSPARENT
         root = FrameLayout(this).apply { clipChildren = false }
         setContentView(root)
+        AdaptiveNavigationShell.install(this, root, AdaptiveNavigationShell.PROFILE)
         buildScreen()
         PaletteManager.apply(this)
         applyPalette()

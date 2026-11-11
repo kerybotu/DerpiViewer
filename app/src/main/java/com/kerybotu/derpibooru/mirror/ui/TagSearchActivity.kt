@@ -98,6 +98,7 @@ class TagSearchActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         root = buildView()
         setContentView(root)
+        AdaptiveNavigationShell.install(this, root, AdaptiveNavigationShell.SEARCH)
         applyPalette()
         ViewCompat.requestApplyInsets(root)
         load(reset = true)

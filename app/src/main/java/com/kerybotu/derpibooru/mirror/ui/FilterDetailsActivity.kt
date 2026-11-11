@@ -40,6 +40,7 @@ class FilterDetailsActivity : AppCompatActivity() {
         }
         scroll.addView(content)
         setContentView(scroll)
+        AdaptiveNavigationShell.install(this, scroll, AdaptiveNavigationShell.HOME)
         renderLoading()
         val supplied = intent.getStringExtra(EXTRA_FILTER_JSON)?.let { runCatching { FilterJsonCodec.parseResponse(it) }.getOrNull() }
         if (supplied != null) render(supplied) else load(intent.getIntExtra(EXTRA_FILTER_ID, 0))
