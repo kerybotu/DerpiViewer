@@ -39,6 +39,7 @@ import com.kerybotu.derpibooru.mirror.translate.NiuTransService
 import com.kerybotu.derpibooru.mirror.download.DownloadQueueManager
 import com.kerybotu.derpibooru.mirror.favorites.FavoriteItem
 import com.kerybotu.derpibooru.mirror.favorites.LocalFavoritesStore
+import com.kerybotu.derpibooru.mirror.history.WatchHistoryStore
 import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuCard
 import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem
 import androidx.core.view.ViewCompat
@@ -126,6 +127,7 @@ class ImageDetailActivity : AppCompatActivity() {
             ?: intent.getIntExtra("image_id", -1).takeIf { it > 0 }?.let { Image(id = it, title = "", thumbnailUrl = null, width = 0, height = 0, score = 0, faves = 0, upvotes = 0, downvotes = 0, commentCount = 0, tags = emptyList()) }
             ?: run { finish(); return }
         CrashDiagnostics.recordEvent("ImageDetailActivity", "opened image_id=${image.id} experiment=${renderExperiment.id}")
+        recordWatchHistory()
         galleryImageIds = intent.getIntArrayExtra(SearchActivity.EXTRA_GALLERY_IMAGE_IDS)
             ?.let(ImageGalleryNavigation::normalize)
         @Suppress("DEPRECATION")
@@ -848,6 +850,7 @@ class ImageDetailActivity : AppCompatActivity() {
             .withEndAction {
                 val previousId = image.id
                 image = next
+                recordWatchHistory()
                 CrashDiagnostics.recordEvent("ImageDetailActivity", "image_changed from=$previousId to=${next.id} experiment=${renderExperiment.id}")
                 uploaderId = next.uploaderId
                 fullUrl = next.fullUrl ?: next.thumbnailUrl
@@ -872,6 +875,13 @@ class ImageDetailActivity : AppCompatActivity() {
                     .start()
             }
             .start()
+    }
+
+    private fun recordWatchHistory() {
+        if (!::image.isInitialized || image.id <= 0) return
+        scope.launch(Dispatchers.IO) {
+            runCatching { WatchHistoryStore(this@ImageDetailActivity).use { it.record(image) } }
+        }
     }
 
     private fun parseImage(o: JSONObject): Image {

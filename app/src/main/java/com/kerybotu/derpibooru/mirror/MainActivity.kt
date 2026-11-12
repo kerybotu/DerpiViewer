@@ -1505,6 +1505,9 @@ class MainActivity : AppCompatActivity() {
             com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem("downloads", R.drawable.ic_download, "下载管理", onClick = {
                 startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.DownloadManagerActivity::class.java))
             }),
+            com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem("history", R.drawable.ic_history, "观看历史", onClick = {
+                startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.WatchHistoryActivity::class.java))
+            }),
             com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem("settings", R.drawable.ic_settings, "设置", onClick = {
                 startActivity(Intent(this, com.kerybotu.derpibooru.mirror.ui.SettingsActivity::class.java))
             })
