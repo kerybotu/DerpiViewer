@@ -40,7 +40,7 @@ object CommentCardRenderer {
         })
 
         val body = TextView(context).apply {
-            text = comment.body
+            RichText.bind(this, comment.body)
             textSize = 14f
             setTextColor(colors.onSurface)
             setPadding(0, dp(context, 6), 0, 0)
@@ -55,7 +55,7 @@ object CommentCardRenderer {
                 setOnClickListener {
                     val translated = tag as? String
                     if (translated != null) {
-                        body.text = comment.body
+                        RichText.bind(body, comment.body)
                         tag = null
                         text = "翻译"
                         return@setOnClickListener
@@ -65,7 +65,7 @@ object CommentCardRenderer {
                     scope.launch {
                         NiuTransService.translate(comment.body)
                             .onSuccess {
-                                body.text = it
+                                RichText.bind(body, it)
                                 tag = it
                                 this@apply.text = "原文"
                             }

@@ -59,7 +59,7 @@ internal class GlassCommentCard(context: Context) : LiquidGlassListItem(context)
     ) {
         author.text = listOfNotNull(comment.author, comment.createdAt.take(10).takeIf { it.isNotBlank() })
             .joinToString(" · ")
-        body.text = if (translation?.showTranslation == true) translation.text ?: comment.body else comment.body
+        RichText.bind(body, if (translation?.showTranslation == true) translation.text ?: comment.body else comment.body)
         translateButton.visibility = if (NiuTransService.shouldTranslate(comment.body)) View.VISIBLE else View.GONE
         translateButton.text = when {
             translation?.loading == true -> "翻译中…"

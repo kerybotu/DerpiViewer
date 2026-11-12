@@ -71,6 +71,18 @@ class WatchHistoryStore(context: Context) : SQLiteOpenHelper(context.application
     }
 
     fun delete(imageId: Int) { writableDatabase.delete(TABLE, "image_id=?", arrayOf(imageId.toString())) }
+
+    fun deleteMany(imageIds: Collection<Int>) {
+        if (imageIds.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val placeholders = imageIds.joinToString(",") { "?" }
+            db.delete(TABLE, "image_id IN ($placeholders)", imageIds.map(Int::toString).toTypedArray())
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
     fun clear() { writableDatabase.delete(TABLE, null, null) }
 
     private fun mediaType(mime: String?, url: String?): String = when {

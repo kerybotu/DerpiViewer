@@ -21,7 +21,6 @@ import android.widget.Toast
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.appcompat.app.AppCompatActivity
-import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.chip.Chip
 import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.CrashDiagnostics
@@ -52,7 +51,8 @@ import org.json.JSONObject
 class ImageDetailActivity : AppCompatActivity() {
     private lateinit var b: ActivityImageDetailBinding
     private lateinit var image: Image
-    private lateinit var sheet: BottomSheetBehavior<View>
+    private lateinit var infoCard: DetailInfoCard
+    private lateinit var compactSummary: android.widget.TextView
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var fullUrl: String? = null
     private var mediaMimeType: String? = null
@@ -68,7 +68,13 @@ class ImageDetailActivity : AppCompatActivity() {
     private var gallerySortDirection: String? = null
     private var galleryPage: Int = 1
     private var detailJob: Job? = null
+    private var detailRequestGeneration = 0
+    private var imageBindingGeneration = 0
+    private var descriptionGeneration = 0
     private var tagJob: Job? = null
+    private var tagRequestGeneration = 0
+    private var commentsJob: Job? = null
+    private var commentsRequestGeneration = 0
     private var descriptionOriginal = ""
     private var descriptionTranslation: String? = null
     private var dragStartX = 0f
@@ -100,7 +106,6 @@ class ImageDetailActivity : AppCompatActivity() {
         }
     }
     private var bottomInset = 0
-    private var sidePaneDetailLayout: Boolean? = null
     private var removePaletteObserver: (() -> Unit)? = null
     private val paletteObserver: (com.kerybotu.derpibooru.mirror.PaletteDefinitions.Scheme) -> Unit = { applyPalette() }
     private val visibleBounds = Rect()
@@ -120,7 +125,13 @@ class ImageDetailActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         b = ActivityImageDetailBinding.inflate(layoutInflater)
         setContentView(b.root)
-        AdaptiveNavigationShell.install(this, b.root, AdaptiveNavigationShell.HOME)
+        AdaptiveNavigationShell.install(this, b.root, AdaptiveNavigationShell.HOME, AdaptiveNavigationShell.ContentMode.MEDIA_CANVAS)
+        AdaptiveNavigationContent.observe(b.root) {
+            updateDetailNavigationInsets()
+            applyResponsiveDetailLayout()
+            applyIslandWidths()
+            updateSheetBounds()
+        }
         PaletteManager.apply(this)
         applyPalette()
         image = intent.getSerializableExtra("image") as? Image
@@ -139,8 +150,25 @@ class ImageDetailActivity : AppCompatActivity() {
         galleryPage = intent.getIntExtra(SearchActivity.EXTRA_GALLERY_PAGE, 1).coerceAtLeast(1)
         mediaMimeType = image.mimeType
         uploaderId = image.uploaderId
-        sheet = BottomSheetBehavior.from(b.bottomSheet)
-        sheet.state = BottomSheetBehavior.STATE_COLLAPSED
+        val oldParent = b.bottomSheet.parent as android.view.ViewGroup
+        oldParent.removeView(b.bottomSheet)
+        infoCard = DetailInfoCard(this).apply {
+            tag = "detail-info-card"
+            elevation = dp(8).toFloat()
+            onProgress = { applyResponsiveDetailLayout() }
+        }
+        b.root.addView(infoCard, androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams(-1, -1))
+        infoCard.addView(b.bottomSheet, android.widget.FrameLayout.LayoutParams(-1, -1))
+        compactSummary = android.widget.TextView(this).apply {
+            textSize = 14f; setPadding(dp(16), dp(12), dp(16), dp(12))
+            setOnClickListener { infoCard.snap(DetailInfoState.EXPANDED) }
+        }
+        b.bottomSheet.addView(compactSummary, 3, android.widget.LinearLayout.LayoutParams(-1, -2))
+        b.sheetHandle.layoutParams = b.sheetHandle.layoutParams.apply { width = -1; height = dp(48) }
+        b.sheetHandle.contentDescription = "向左拖动展开信息，向右拖动收起"
+        b.sheetHandle.setOnClickListener { infoCard.snap(if (infoCard.progress >= .5f) DetailInfoState.COMPACT else DetailInfoState.EXPANDED) }
+        infoCard.snap(if (savedInstanceState?.getBoolean("infoExpanded") == true) DetailInfoState.EXPANDED else DetailInfoState.COMPACT, false)
+        applyPalette()
         b.detailBack.setOnClickListener { finish() }
         Ui2DesignSystem.applyPressFeedback(b.detailBack)
         b.btnShare.setOnClickListener { share() }
@@ -148,7 +176,7 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailLoadStatus.setOnClickListener { loadDetails() }
         b.btnExpandDescription.setOnClickListener { toggleDescription() }
         b.btnTranslateDescription.setOnClickListener { toggleDescriptionTranslation() }
-        b.detailCommentsCount.setOnClickListener { sheet.state = BottomSheetBehavior.STATE_EXPANDED }
+        b.detailCommentsCount.setOnClickListener { infoCard.snap(DetailInfoState.EXPANDED) }
         b.detailFaves.setOnClickListener {
             val store = LocalFavoritesStore(this)
             runCatching {
@@ -250,28 +278,50 @@ class ImageDetailActivity : AppCompatActivity() {
             // The source cache refreshes only when artwork, layout or scrolling changes.
             // Keep the GPU material active between those updates without repeating capture.
             GlassWidgetStyle.setRenderingActive(island, active, b.detailBackdrop, BackdropSourceMode.EXPLICIT_SOURCE)
+            // The prepared source remains valid when only the consumer moves,
+            // but the glass view still needs a frame so its renderer resolves
+            // the new source-to-consumer matrix. This is bounded to real bounds
+            // changes and does not recapture or redraw the source tree.
+            if (moved) island.invalidate()
             island.enableSensorHighlight = false
         }
+        if (::infoCard.isInitialized) update(infoCard)
         readingIslands.forEach(::update)
         update(b.detailTopIsland)
     }
 
     private fun bindInitial() {
+        val requestedId = image.id
+        val bindingGeneration = ++imageBindingGeneration
+        val bindingStartedAt = android.os.SystemClock.elapsedRealtime()
         spoilerRevealed = false
+        commentsJob?.cancel()
+        commentsRequestGeneration++
         b.detailFaves.text = image.faves.toString(); b.detailUpvotes.text = image.upvotes.toString()
         renderFavoriteState(LocalFavoritesStore(this).isFavoriteInDefaultFolder(image.id))
         b.detailCommentsCount.text = image.commentCount.toString()
         b.detailUploader.text = image.uploader ?: "未知上传者"; b.detailCreatedAt.text = image.createdAt?.take(10) ?: ""
-        b.detailTitle.text = image.title.ifBlank { "图片详情" }
+        b.detailTitle.text = "#${image.id}"
         b.detailArtworkTitle.text = image.title
         b.detailArtworkTitle.visibility = if (image.title.isBlank()) View.GONE else View.VISIBLE
         bindDescription(image.description.orEmpty())
         bindSources(emptyList())
+        b.detailCommentsPreview.removeAllViews()
+        b.detailCommentsStatus.text = getString(com.kerybotu.derpibooru.mirror.R.string.detail_comments_loading)
+        b.detailCommentsStatus.visibility = View.VISIBLE
         b.detailUploader.visibility = if (AppSettings.isUploaderHidden(this)) View.GONE else View.VISIBLE
         bindUploaderClick()
         b.detailScore.visibility = View.GONE
         bindTags(image.tags)
         showPreview(image.mimeType, if (image.mimeType?.startsWith("video/") == true) image.fullUrl ?: image.thumbnailUrl else image.thumbnailUrl)
+        b.detailTitle.postOnAnimation {
+            if (imageBindingGeneration == bindingGeneration && image.id == requestedId && !isFinishing && !isDestroyed) {
+                CrashDiagnostics.recordEvent(
+                    "ImageDetailActivity",
+                    "preview_info_frame image_id=$requestedId latency_ms=${android.os.SystemClock.elapsedRealtime() - bindingStartedAt}"
+                )
+            }
+        }
     }
 
     private fun renderFavoriteState(isFavorite: Boolean) {
@@ -287,17 +337,22 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun bindTags(tags: List<String>) {
         tagJob?.cancel()
+        val requestGeneration = ++tagRequestGeneration
+        val requestedId = image.id
         if (tags.isEmpty()) {
             b.detailTagsGroup.removeAllViews()
             b.detailTagsPanel.visibility = View.GONE
             return
         }
+        b.detailTagsGroup.removeAllViews()
+        b.detailTagsPanel.visibility = View.VISIBLE
         tagJob = scope.launch {
             val translated = if (AppSettings.isTagTranslationEnabled(this@ImageDetailActivity)) {
                 withContext(Dispatchers.IO) { TagDictionary.sortAndTranslate(this@ImageDetailActivity, tags) }
             } else {
                 tags.map { TagEntry(it, it, -1, 0, emptyList(), sourceName = it) }
             }
+            if (requestGeneration != tagRequestGeneration || image.id != requestedId || isFinishing || isDestroyed) return@launch
             // Initial feed data and full detail data can arrive in either order.
             // Only the newest binding owns the group, preventing duplicate chips and mixed sort orders.
             b.detailTagsGroup.removeAllViews()
@@ -339,7 +394,9 @@ class ImageDetailActivity : AppCompatActivity() {
         }
         b.bottomSheet.background = ColorDrawable(android.graphics.Color.TRANSPARENT)
         b.detailDivider.setBackgroundColor(palette.divider)
-        b.sheetHandle.setBackgroundColor(palette.muted)
+        b.sheetHandle.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        if (::infoCard.isInitialized) GlassWidgetStyle.apply(infoCard, Ui2DesignSystem.Shape.large, palette, GlassWidgetStyle.MaterialRole.READING)
+        if (::compactSummary.isInitialized) compactSummary.setTextColor(palette.glassText)
         b.btnShare.imageTintList = ColorStateList.valueOf(palette.onSurface)
         b.btnMore.imageTintList = ColorStateList.valueOf(palette.onSurface)
         b.detailUploaderAvatar.imageTintList = ColorStateList.valueOf(palette.glassText)
@@ -351,7 +408,7 @@ class ImageDetailActivity : AppCompatActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(b.root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             bottomInset = bars.bottom
-            b.bottomSheet.setPadding(bars.left, 0, bars.right, 0)
+            updateDetailNavigationInsets()
             (b.detailTopIsland.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
                 val margin = dp(8) + bars.top
                 if (params.topMargin != margin) { params.topMargin = margin; b.detailTopIsland.layoutParams = params }
@@ -385,74 +442,65 @@ class ImageDetailActivity : AppCompatActivity() {
         if (::image.isInitialized) updateGlassRendering()
     }
 
-    private fun applyIslandWidths() {
-        val available = (b.root.width - b.bottomSheet.paddingLeft - b.bottomSheet.paddingRight).takeIf { it > 0 } ?: return
-        val widthDp = (available / resources.displayMetrics.density).toInt()
-        val heightDp = AdaptiveLayoutPolicy.availableWindowHeightDp(this, b.root)
-        val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
-        val sidePane = layoutSpec.useDetailSidePane
-        val panelWidth = if (sidePane) {
-            dp(layoutSpec.panelWidthDp).coerceAtMost((available * 0.46f).toInt())
-        } else available
-        val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, panelWidth)
-            .coerceAtMost((panelWidth - dp(24)).coerceAtLeast(dp(1)))
-        listOf(b.detailAuthorPanel, b.detailInteractionPanel).forEach { island ->
-            val params = island.layoutParams as? android.widget.LinearLayout.LayoutParams ?: return@forEach
-            if (params.width != width || params.gravity != android.view.Gravity.CENTER_HORIZONTAL) {
-                params.width = width
-                params.gravity = android.view.Gravity.CENTER_HORIZONTAL
-                island.layoutParams = params
-            }
-        }
-        val mediaWidth = if (sidePane) (available - panelWidth - dp(16)).coerceAtLeast(dp(1)) else available
-        val topWidth = if (sidePane) minOf(dp(280), (mediaWidth - dp(24)).coerceAtLeast(dp(1))) else width
-        b.detailTopIsland.layoutParams = (b.detailTopIsland.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.apply {
-            this.width = topWidth
-            gravity = if (sidePane) android.view.Gravity.TOP or android.view.Gravity.LEFT
-                else android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
-            leftMargin = if (sidePane) dp(8) else 0
-        } ?: b.detailTopIsland.layoutParams.apply { this.width = topWidth }
-        b.detailContent.layoutParams = b.detailContent.layoutParams.apply { this.width = width + dp(24) }
-        b.detailTagsGroup.post { updateTagWidths() }
-    }
+    private fun applyIslandWidths() = applyResponsiveDetailLayout()
 
     private fun applyResponsiveDetailLayout() {
-        if (!::b.isInitialized || b.root.width <= 0 || b.root.height <= 0) return
-        val widthDp = (b.root.width / resources.displayMetrics.density).toInt()
-        val heightDp = (b.root.height / resources.displayMetrics.density).toInt()
-        val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
-        val sidePane = layoutSpec.useDetailSidePane
-        if (sidePaneDetailLayout == sidePane) return
-        sidePaneDetailLayout = sidePane
-        val available = (b.root.width - b.bottomSheet.paddingLeft - b.bottomSheet.paddingRight).coerceAtLeast(1)
-        val panelWidth = if (sidePane) dp(layoutSpec.panelWidthDp).coerceAtMost((available * 0.46f).toInt()) else available
-        val mediaWidth = if (sidePane) (available - panelWidth - dp(16)).coerceAtLeast(dp(1)) else -1
-        listOf(b.detailImage, b.detailVideoPlayer, b.detailSpoilerCover).forEach { media ->
-            val params = media.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return@forEach
-            params.width = mediaWidth
-            params.gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
-            media.layoutParams = params
+        if (!::infoCard.isInitialized || b.root.width <= 0 || b.root.height <= 0) return
+        val bars = ViewCompat.getRootWindowInsets(b.root)?.getInsets(
+            WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+        val safe = AdaptiveNavigationContent.horizontalInsets(b.root, bars?.left ?: 0, bars?.right ?: 0)
+        val gutter = dp(Ui2DesignSystem.Spacing.islandGap)
+        val available = (b.root.width - safe.left - safe.right - gutter * 2).coerceAtLeast(1)
+        val spec = AdaptiveLayoutPolicy.specFor((available / resources.displayMetrics.density).toInt(),
+            (b.root.height / resources.displayMetrics.density).toInt())
+        val wide = spec.widthClass != AdaptiveLayoutPolicy.WindowWidthClass.COMPACT || AdaptiveLayoutPolicy.isHorizontalLayout(spec.availableWidthDp, spec.availableHeightDp)
+        val top = (bars?.top ?: 0) + dp(80)
+        val height = (b.root.height - top - (bars?.bottom ?: 0) - gutter).coerceAtLeast(1)
+        val compact = if (wide) minOf(dp(280), (available * .42f).toInt()) else minOf(dp(320), available)
+        val expandedWidth = if (wide) minOf(dp(460), (available * .6f).toInt()) else available
+        val width = (compact + (expandedWidth - compact) * infoCard.progress).toInt().coerceAtLeast(1)
+        infoCard.dragRangePx = (expandedWidth - compact).coerceAtLeast(dp(100)).toFloat()
+        val cardHeight = if (wide) height else minOf(height, (dp(260) + (maxOf(dp(260), (height * .7f).toInt()) - dp(260)) * infoCard.progress).toInt())
+        val cardTop = if (wide) top else top + height - cardHeight
+        val params = infoCard.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+        if (params.width != width || params.height != cardHeight || params.topMargin != cardTop || params.rightMargin != safe.right + gutter) {
+            params.width = width; params.height = cardHeight; params.topMargin = cardTop
+            params.rightMargin = safe.right + gutter; params.gravity = android.view.Gravity.TOP or android.view.Gravity.RIGHT
+            infoCard.layoutParams = params
         }
-        val sheetParams = b.bottomSheet.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams ?: return
-        if (sidePane) {
-            sheetParams.width = panelWidth
-            sheetParams.height = -1
-            sheetParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
-            sheetParams.topMargin = 0
-            b.bottomSheet.layoutParams = sheetParams
-            sheet.isDraggable = false
-            sheet.expandedOffset = 0
-            sheet.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
-        } else {
-            sheetParams.width = -1
-            sheetParams.height = -1
-            sheetParams.gravity = android.view.Gravity.TOP
-            sheetParams.topMargin = 0
-            b.bottomSheet.layoutParams = sheetParams
-            sheet.isDraggable = true
-            sheet.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED
+        val mediaWidth = if (wide) (available - width - gutter).coerceAtLeast(1) else available
+        val mediaHeight = if (wide) height else (height - cardHeight - gutter).coerceAtLeast(1)
+        listOf(b.detailImage, b.detailVideoPlayer, b.detailSpoilerCover).forEach { media ->
+            val lp = media.layoutParams as android.widget.FrameLayout.LayoutParams
+            if (lp.width != mediaWidth || lp.height != mediaHeight || lp.leftMargin != safe.left + gutter || lp.topMargin != top) {
+                lp.width = mediaWidth; lp.height = mediaHeight; lp.leftMargin = safe.left + gutter; lp.topMargin = top
+                lp.gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT; media.layoutParams = lp
+                if (media === b.detailImage && !isImageZoomed()) matrixDrawable = null
+            }
+        }
+        b.bottomSheet.setPadding(0, 0, 0, 0)
+        val expandedInfo = infoCard.progress >= .5f
+        b.detailScroll.visibility = if (expandedInfo) View.VISIBLE else View.GONE
+        b.detailAuthorPanel.visibility = if (expandedInfo) View.VISIBLE else View.GONE
+        b.detailInteractionPanel.visibility = if (expandedInfo) View.VISIBLE else View.GONE
+        b.detailDivider.visibility = View.GONE
+        compactSummary.visibility = if (infoCard.progress < .5f) View.VISIBLE else View.GONE
+        b.detailDescription.maxLines = if (infoCard.progress >= .5f) Int.MAX_VALUE else 3
+        listOf(b.detailAuthorPanel, b.detailInteractionPanel).forEach { island ->
+            val lp = island.layoutParams as LinearLayout.LayoutParams
+            if (lp.width != -1) { lp.width = -1; island.layoutParams = lp }
+        }
+        if (b.detailContent.layoutParams.width != -1) b.detailContent.layoutParams = b.detailContent.layoutParams.apply { this.width = -1 }
+        val header = b.detailTopIsland.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+        val headerWidth = minOf(dp(240), available)
+        if (header.width != headerWidth || header.topMargin != (bars?.top ?: 0) + dp(8)) {
+            header.width = headerWidth; header.topMargin = (bars?.top ?: 0) + dp(8)
+            header.gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+            header.leftMargin = 0; header.rightMargin = 0; b.detailTopIsland.layoutParams = header
         }
     }
+
+    private fun updateDetailNavigationInsets() = Unit
 
     private fun updateTagWidths() {
         val width = b.detailTagsGroup.width.takeIf { it > 0 } ?: return
@@ -461,29 +509,7 @@ class ImageDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateSheetBounds() {
-        if (!::sheet.isInitialized || b.root.height <= 0 || b.detailTopIsland.height <= 0) return
-        if (sidePaneDetailLayout == true) {
-            if (sheet.expandedOffset != 0) sheet.expandedOffset = 0
-            if (b.bottomSheet.layoutParams.height != b.root.height) {
-                b.bottomSheet.layoutParams = b.bottomSheet.layoutParams.apply { height = b.root.height }
-            }
-            return
-        }
-        // Use the laid-out, inset-aware navigation boundary. Restoring its
-        // elevation must not place it over the expanded author island.
-        val top = (b.detailTopIsland.bottom + dp(Ui2DesignSystem.Spacing.islandGap))
-            .coerceIn(0, b.root.height - 1)
-        if (sheet.expandedOffset != top) sheet.expandedOffset = top
-        // A full-height sheet moved down would clip the last comments. Keep
-        // its viewport inside the root instead of padding by a screen offset.
-        val height = b.root.height - top
-        if (b.bottomSheet.layoutParams.height != height) {
-            b.bottomSheet.layoutParams = b.bottomSheet.layoutParams.apply { this.height = height }
-        }
-        val peek = b.detailInteractionPanel.bottom + bottomInset
-        if (peek > 0 && sheet.peekHeight != peek) sheet.peekHeight = peek.coerceAtMost(height)
-    }
+    private fun updateSheetBounds() = applyResponsiveDetailLayout()
 
     private fun setGestures() {
         b.detailImage.scaleType = ImageView.ScaleType.MATRIX
@@ -723,50 +749,84 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun loadDetails() {
         detailJob?.cancel()
-        b.detailLoadStatus.setText(com.kerybotu.derpibooru.mirror.R.string.detail_loading)
-        b.detailLoadStatus.isVisible = true
+        val requestedId = image.id
+        val requestGeneration = ++detailRequestGeneration
+        val requestStartedAt = android.os.SystemClock.elapsedRealtime()
+        val hasPreviewDetails = image.title.isNotBlank() || !image.uploader.isNullOrBlank() ||
+            image.tags.isNotEmpty() || !image.description.isNullOrBlank() || image.faves > 0 || image.commentCount > 0
+        b.detailLoadStatus.isVisible = !hasPreviewDetails
+        if (!hasPreviewDetails) b.detailLoadStatus.setText(com.kerybotu.derpibooru.mirror.R.string.detail_loading)
         b.detailLoadStatus.isEnabled = false
         detailJob = scope.launch {
-            val requestedId = image.id
             CrashDiagnostics.recordEvent("ImageDetailActivity", "details_load_started image_id=$requestedId")
             try {
                 val json = withContext(Dispatchers.IO) {
                     val filter = NetworkManager.currentFilterParam(this@ImageDetailActivity, "?")
                     NetworkManager.getApi(this@ImageDetailActivity, "images/$requestedId$filter")
                 }
-                if (image.id != requestedId) return@launch
+                if (detailRequestGeneration != requestGeneration || image.id != requestedId || isFinishing || isDestroyed) return@launch
                 if (json == null) {
                     showDetailLoadFailure()
                     CrashDiagnostics.recordEvent("ImageDetailActivity", "details_load_empty image_id=$requestedId")
                     return@launch
                 }
                 val item = JSONObject(json).getJSONObject("image")
-                val mime = item.optString("mime_type", image.mimeType)
+                val mime = item.optString("mime_type").takeIf(String::isNotBlank) ?: image.mimeType
+                val title = item.takeUnless { it.isNull("name") }?.optString("name").orEmpty()
+                val uploader = item.takeUnless { it.isNull("uploader") }?.optString("uploader")?.takeIf(String::isNotBlank)
+                val createdAt = item.optString("created_at").takeIf(String::isNotBlank) ?: image.createdAt
+                val description = item.takeUnless { it.isNull("description") }?.optString("description").orEmpty()
+                val full = item.optJSONObject("representations")?.optString("full")?.takeIf(String::isNotBlank) ?: image.fullUrl
+                val tags = item.optJSONArray("tags")?.let { array -> List(array.length()) { array.optString(it) } }
+                    ?.takeIf { it.isNotEmpty() } ?: image.tags
                 mediaMimeType = mime
-                image = image.copy(spoilered = item.optBoolean("spoilered", image.spoilered))
-                fullUrl = item.optJSONObject("representations")?.optString("full", null)
+                image = image.copy(
+                    title = title, uploader = uploader, createdAt = createdAt, description = description,
+                    tags = tags, fullUrl = full,
+                    faves = item.optInt("faves", image.faves), upvotes = item.optInt("upvotes", image.upvotes),
+                    downvotes = item.optInt("downvotes", image.downvotes),
+                    commentCount = item.optInt("comment_count", image.commentCount), mimeType = mime,
+                    uploaderId = item.optLong("uploader_id", image.uploaderId ?: -1L).takeIf { it > 0L },
+                    spoilered = item.optBoolean("spoilered", image.spoilered)
+                )
+                fullUrl = full
                 imageLoadFailedId = null
                 showPreview(mime, if (mime?.startsWith("video/") == true) fullUrl ?: image.fullUrl ?: image.thumbnailUrl else fullUrl ?: image.fullUrl ?: image.thumbnailUrl)
-                b.detailUploader.text = item.optString("uploader", "未知上传者"); b.detailCreatedAt.text = item.optString("created_at", "").take(10)
-                uploaderId = item.optLong("uploader_id", -1L).takeIf { it > 0L }
+                b.detailTitle.text = "#${image.id}"
+                b.detailArtworkTitle.text = title
+                b.detailArtworkTitle.visibility = if (title.isBlank()) View.GONE else View.VISIBLE
+                b.detailUploader.text = uploader ?: "未知上传者"
+                b.detailCreatedAt.text = createdAt?.take(10).orEmpty()
+                b.detailUploader.visibility = if (AppSettings.isUploaderHidden(this@ImageDetailActivity)) View.GONE else View.VISIBLE
+                uploaderId = image.uploaderId
                 bindUploaderClick()
-                bindDescription(item.optString("description", ""))
-                b.detailFaves.text = item.optInt("faves").toString()
-                b.detailUpvotes.text = item.optInt("upvotes").toString()
+                bindDescription(description)
+                b.detailFaves.text = image.faves.toString()
+                b.detailUpvotes.text = image.upvotes.toString()
                 b.detailScore.visibility = View.GONE
-                b.detailCommentsCount.text = item.optInt("comment_count").toString()
-                bindTags(item.optJSONArray("tags")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty())
+                b.detailCommentsCount.text = image.commentCount.toString()
+                bindTags(tags)
                 bindSources(item.optJSONArray("source_urls")?.let { urls ->
                     (0 until urls.length()).map { urls.optString(it) }
                 }.orEmpty())
                 loadComments()
                 CrashDiagnostics.recordEvent("ImageDetailActivity", "details_load_succeeded image_id=$requestedId")
-                if (imageLoadFailedId != requestedId) b.detailLoadStatus.isVisible = false
+                b.detailTitle.postOnAnimation {
+                    if (detailRequestGeneration == requestGeneration && image.id == requestedId && !isFinishing && !isDestroyed) {
+                        CrashDiagnostics.recordEvent(
+                            "ImageDetailActivity",
+                            "details_info_frame image_id=$requestedId latency_ms=${android.os.SystemClock.elapsedRealtime() - requestStartedAt}"
+                        )
+                    }
+                }
+                if (detailRequestGeneration == requestGeneration && image.id == requestedId && imageLoadFailedId != requestedId) b.detailLoadStatus.isVisible = false
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (error: Exception) {
                 CrashDiagnostics.recordFailure("ImageDetailActivity", "details_load image_id=${image.id}", error)
-                if (!isFinishing && !isDestroyed && image.id == requestedId) showDetailLoadFailure()
+                if (detailRequestGeneration == requestGeneration && !isFinishing && !isDestroyed && image.id == requestedId) {
+                    showDetailLoadFailure()
+                }
             }
         }
     }
@@ -887,7 +947,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun parseImage(o: JSONObject): Image {
         val reps = o.optJSONObject("representations")
         val tags = o.optJSONArray("tags")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty()
-        return Image(o.optInt("id"), "", reps?.optString("small", null) ?: reps?.optString("thumb", null), o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), tags, reps?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1L).takeIf { it > 0L }, o.optBoolean("spoilered", false))
+        return Image(o.optInt("id"), o.optString("name", ""), reps?.optString("small", null) ?: reps?.optString("thumb", null), o.optInt("width"), o.optInt("height"), o.optInt("score"), o.optInt("faves"), o.optInt("upvotes"), o.optInt("downvotes"), o.optInt("comment_count"), tags, reps?.optString("full", null), o.optString("uploader", null), o.optString("created_at", null), o.optString("description", null), o.optString("mime_type", null), o.optLong("uploader_id", -1L).takeIf { it > 0L }, o.optBoolean("spoilered", false))
     }
 
     private fun bindUploaderClick() {
@@ -897,59 +957,72 @@ class ImageDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadComments() = scope.launch {
+    private fun loadComments() {
+        commentsJob?.cancel()
+        val requestGeneration = ++commentsRequestGeneration
         val requestedId = image.id
-        try {
-            val query = java.net.URLEncoder.encode("image_id:$requestedId", "UTF-8")
-            val raw = withContext(Dispatchers.IO) {
-                NetworkManager.getApi(this@ImageDetailActivity, "search/comments?q=$query&per_page=50")
-            }
-            if (image.id != requestedId || isFinishing || isDestroyed) return@launch
-            val comments = runCatching { JSONObject(raw.orEmpty()).optJSONArray("comments") }.getOrNull()
-            if (comments == null || comments.length() == 0) {
+        commentsJob = scope.launch {
+            try {
+                val query = java.net.URLEncoder.encode("image_id:$requestedId", "UTF-8")
+                val raw = withContext(Dispatchers.IO) {
+                    NetworkManager.getApi(this@ImageDetailActivity, "search/comments?q=$query&per_page=50")
+                }
+                if (commentsRequestGeneration != requestGeneration || image.id != requestedId || isFinishing || isDestroyed) return@launch
+                val comments = runCatching { JSONObject(raw.orEmpty()).optJSONArray("comments") }.getOrNull()
+                if (comments == null || comments.length() == 0) {
+                    b.detailCommentsPreview.removeAllViews()
+                    b.detailCommentsStatus.text = if (raw == null) "评论暂时无法加载" else "暂无评论"
+                    b.detailCommentsStatus.visibility = View.VISIBLE
+                    return@launch
+                }
+                b.detailCommentsStatus.visibility = View.GONE
                 b.detailCommentsPreview.removeAllViews()
-                b.detailCommentsStatus.text = if (raw == null) "评论暂时无法加载" else "暂无评论"
-                b.detailCommentsStatus.visibility = View.VISIBLE
-                return@launch
-            }
-            b.detailCommentsStatus.visibility = View.GONE
-            b.detailCommentsPreview.removeAllViews()
-            for (index in 0 until comments.length()) {
-                val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
-                val card = GlassCommentCard(this@ImageDetailActivity)
-                card.bind(comment, null, { }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
-                b.detailCommentsPreview.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
-            }
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (error: Exception) {
-            CrashDiagnostics.recordFailure("ImageDetailActivity", "comments image_id=$requestedId", error)
-            if (!isFinishing && !isDestroyed && image.id == requestedId) {
-                b.detailCommentsStatus.text = "评论暂时无法加载"
-                b.detailCommentsStatus.visibility = View.VISIBLE
+                for (index in 0 until comments.length()) {
+                    val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
+                    val card = GlassCommentCard(this@ImageDetailActivity)
+                    card.bind(comment, null, { }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
+                    b.detailCommentsPreview.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                CrashDiagnostics.recordFailure("ImageDetailActivity", "comments image_id=$requestedId", error)
+                if (commentsRequestGeneration == requestGeneration && !isFinishing && !isDestroyed && image.id == requestedId) {
+                    b.detailCommentsStatus.text = "评论暂时无法加载"
+                    b.detailCommentsStatus.visibility = View.VISIBLE
+                }
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        if (::infoCard.isInitialized) outState.putBoolean("infoExpanded", infoCard.progress >= .5f)
+        super.onSaveInstanceState(outState)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun bindDescription(raw: String) {
+        descriptionGeneration++
         descriptionOriginal = raw
         descriptionTranslation = null
         expanded = false
         b.detailDescription.maxLines = 3
         b.btnExpandDescription.text = "展开阅读"
         b.detailDescriptionPanel.visibility = if (raw.isBlank() && image.title.isBlank()) View.GONE else View.VISIBLE
+        if (::compactSummary.isInitialized) {
+            compactSummary.text = "#${image.id} · ${image.tags.size} 个标签\n${raw.take(180)}\n← 向左拖动或点击展开完整信息"
+        }
         b.detailDescription.visibility = if (raw.isBlank()) View.GONE else View.VISIBLE
         b.detailDescriptionActions.visibility = if (raw.isBlank()) View.GONE else View.VISIBLE
-        b.detailDescription.text = raw
+        RichText.bind(b.detailDescription, raw)
         b.btnTranslateDescription.visibility = if (raw.isBlank()) View.GONE else View.VISIBLE
         b.btnTranslateDescription.text = "翻译"
         b.btnTranslateDescription.isEnabled = true
     }
 
     private fun bindSources(urls: List<String>) {
-        val text = urls.filter { it.isNotBlank() }.joinToString("\n")
+        val text = urls.mapNotNull { RichTextParser.safeUrl(it) }.filter { it.startsWith("https://", true) || it.startsWith("http://", true) }.joinToString("\n")
         b.detailSource.text = text
         b.detailSourcePanel.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
     }
@@ -957,19 +1030,27 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun toggleDescriptionTranslation() {
         descriptionTranslation?.let {
             descriptionTranslation = null
-            b.detailDescription.text = descriptionOriginal
+            RichText.bind(b.detailDescription, descriptionOriginal)
             b.btnTranslateDescription.text = "翻译"
             return
         }
         b.btnTranslateDescription.isEnabled = false
         b.btnTranslateDescription.text = "翻译中…"
+        val requestedGeneration = descriptionGeneration
+        val requestedDescription = descriptionOriginal
         scope.launch {
-            NiuTransService.translate(descriptionOriginal).onSuccess {
+            NiuTransService.translate(requestedDescription).onSuccess {
+                if (requestedGeneration != descriptionGeneration || isFinishing || isDestroyed) return@onSuccess
                 descriptionTranslation = it
-                b.detailDescription.text = it
+                RichText.bind(b.detailDescription, it)
                 b.btnTranslateDescription.text = "原文"
-            }.onFailure { Toast.makeText(this@ImageDetailActivity, "翻译失败", Toast.LENGTH_SHORT).show(); b.btnTranslateDescription.text = "翻译" }
-            b.btnTranslateDescription.isEnabled = true
+            }.onFailure {
+                if (requestedGeneration == descriptionGeneration && !isFinishing && !isDestroyed) {
+                    Toast.makeText(this@ImageDetailActivity, "翻译失败", Toast.LENGTH_SHORT).show()
+                    b.btnTranslateDescription.text = "翻译"
+                }
+            }
+            if (requestedGeneration == descriptionGeneration) b.btnTranslateDescription.isEnabled = true
         }
     }
 
@@ -1020,7 +1101,7 @@ class ImageDetailActivity : AppCompatActivity() {
         })
     }
 
-    private fun toggleDescription() { expanded = !expanded; b.detailDescription.maxLines = if (expanded) Int.MAX_VALUE else 3; b.btnExpandDescription.text = if (expanded) "收起" else "展开阅读"; sheet.state = BottomSheetBehavior.STATE_HALF_EXPANDED }
+    private fun toggleDescription() { expanded = !expanded; b.detailDescription.maxLines = if (expanded) Int.MAX_VALUE else 3; b.btnExpandDescription.text = if (expanded) "收起" else "展开阅读"; infoCard.snap(DetailInfoState.EXPANDED) }
     private fun share() { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "https://${AppSettings.getTargetDomain(this@ImageDetailActivity)}/images/${image.id}") }, "分享图片")) }
     private fun showMore() {
         val items = listOf(
