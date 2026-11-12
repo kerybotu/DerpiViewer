@@ -494,29 +494,45 @@ class SettingsActivity : AppCompatActivity() {
         val tokens = AdaptiveLayoutPolicy.tokensForWidth(widthDp)
         val gutter = dp(tokens.screenGutterDp)
         val maxContent = dp(tokens.contentMaxWidthDp)
-        val contentWidth = (safeWidth - gutter * 2).coerceAtMost(maxContent).coerceAtLeast(1)
+        val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, (root.height / density).toInt().coerceAtLeast(1))
+        val isRtl = ViewCompat.getLayoutDirection(root) == ViewCompat.LAYOUT_DIRECTION_RTL
+        val railInset = if (layoutSpec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL) {
+            AdaptiveLayoutPolicy.navigationInteractionInsetPx(this, widthDp)
+        } else 0
+        val contentStart = systemLeftInset + if (isRtl) 0 else railInset
+        val contentEnd = systemRightInset + if (isRtl) railInset else 0
+        val contentWidth = (root.width - contentStart - contentEnd - gutter * 2).coerceAtMost(maxContent).coerceAtLeast(1)
         val contentParams = contentColumn.layoutParams as FrameLayout.LayoutParams
-        if (contentParams.width != contentWidth) {
+        val contentGravity = Gravity.TOP or if (isRtl) Gravity.RIGHT else Gravity.LEFT
+        val contentMargin = railInset + gutter
+        val contentLeftMargin = if (isRtl) 0 else contentMargin
+        val contentRightMargin = if (isRtl) contentMargin else 0
+        if (contentParams.width != contentWidth || contentParams.gravity != contentGravity ||
+            contentParams.leftMargin != contentLeftMargin || contentParams.rightMargin != contentRightMargin) {
             contentParams.width = contentWidth
+            contentParams.gravity = contentGravity
+            contentParams.leftMargin = contentLeftMargin
+            contentParams.rightMargin = contentRightMargin
             contentColumn.layoutParams = contentParams
         }
-        val topWidth = AdaptiveLayoutPolicy.topIslandWidthPx(this, (safeWidth - gutter * 2).coerceAtLeast(1))
+        val topWidth = AdaptiveLayoutPolicy.topIslandWidthPx(this, contentWidth)
         (topIsland.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
             val topHeight = dp(64)
             val topMargin = systemTopInset + dp(Ui2DesignSystem.Spacing.sm)
-            // FrameLayout adds the full difference between asymmetric margins when centering.
-            // Position the island explicitly so it shares the scroll content's safe-area center.
-            val gravity = Gravity.TOP or Gravity.LEFT
-            val leftMargin = systemLeftInset + (safeWidth - topWidth) / 2
+            val gravity = Gravity.TOP or if (isRtl) Gravity.RIGHT else Gravity.LEFT
+            val islandMargin = if (isRtl) systemRightInset + railInset + gutter else contentStart + gutter
+            val leftMargin = if (isRtl) 0 else islandMargin
+            val rightMargin = if (isRtl) islandMargin else 0
             if (params.width != topWidth || params.height != topHeight ||
                 params.gravity != gravity || params.topMargin != topMargin ||
-                params.leftMargin != leftMargin
+                params.leftMargin != leftMargin || params.rightMargin != rightMargin
             ) {
                 params.width = topWidth
                 params.height = topHeight
                 params.gravity = gravity
                 params.topMargin = topMargin
                 params.leftMargin = leftMargin
+                params.rightMargin = rightMargin
                 topIsland.layoutParams = params
             }
         }

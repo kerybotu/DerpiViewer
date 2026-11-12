@@ -44,7 +44,9 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
         // consumes the status-bar safe area, keeping it independent from the
         // pager's measured bounds.
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
-            statusBarInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            statusBarInset = safe.top
+            adapter.setSafeInsets(safe.left, safe.top, safe.right, safe.bottom)
             updateTopIslandPosition()
             insets
         }
@@ -160,13 +162,15 @@ class EmbeddedVideoView(context: Context) : androidx.cardview.widget.CardView(co
     private fun updateTopIslandPosition() {
         val params = binding.videoTopIsland.layoutParams as FrameLayout.LayoutParams
         params.gravity = if (landscapeNavigation) {
-            android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+            android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
         } else {
             android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
         }
-        params.topMargin = if (landscapeNavigation) 0 else statusBarInset + dp(12)
+        // The parent is edge-to-edge: consume the safe top once, without a
+        // second decorative/status-bar offset inside the content area.
+        params.topMargin = statusBarInset
         params.bottomMargin = 0
-        params.marginStart = if (landscapeNavigation) dp(16) else 0
+        params.marginStart = 0
         params.marginEnd = 0
         binding.videoTopIsland.layoutParams = params
     }

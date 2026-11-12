@@ -23,6 +23,7 @@ object AdaptiveLayoutPolicy {
     const val HORIZONTAL_LAYOUT_ASPECT_RATIO = 1.15f
     const val COMPACT_NAVIGATION_RAIL_DP = 72
     const val WIDE_NAVIGATION_RAIL_DP = 88
+    const val MIN_HORIZONTAL_RAIL_WIDTH_DP = 520
     const val COMPACT_HEIGHT_MAX_DP = 480
     const val MEDIUM_HEIGHT_MAX_DP = 900
     const val DETAIL_SIDE_PANE_MIN_WIDTH_DP = 840
@@ -75,7 +76,7 @@ object AdaptiveLayoutPolicy {
         val widthClass = widthClass(width)
         val heightClass = heightClass(height)
         val useRail = widthClass.ordinal >= WindowWidthClass.EXPANDED.ordinal ||
-            (width >= 600 && isHorizontalLayout(width, height))
+            (width >= MIN_HORIZONTAL_RAIL_WIDTH_DP && isHorizontalLayout(width, height))
         val navigationMode = if (useRail) NavigationMode.RAIL else NavigationMode.BOTTOM_BAR
         val navigationWidth = if (useRail) navigationRailWidthDp(width) else 0
         val tokens = tokensForWidth(width)
@@ -126,6 +127,15 @@ object AdaptiveLayoutPolicy {
 
     fun navigationRailWidthDp(availableWidthDp: Int): Int =
         if (availableWidthDp < 600) COMPACT_NAVIGATION_RAIL_DP else WIDE_NAVIGATION_RAIL_DP
+
+    /** Width of the rail's actual interactive corridor plus its local gutter. */
+    fun navigationInteractionInsetPx(context: Context, availableWidthDp: Int, extraSpacingDp: Int = 16): Int {
+        val tokens = tokensForWidth(availableWidthDp)
+        val insetDp = if (specFor(availableWidthDp, 1).navigationMode == NavigationMode.RAIL) {
+            navigationRailWidthDp(availableWidthDp) + tokens.screenGutterDp + extraSpacingDp
+        } else tokens.screenGutterDp
+        return (insetDp * context.resources.displayMetrics.density).toInt()
+    }
 
     fun contentWidthAfterNavigationDp(availableWidthDp: Int, railWidthDp: Int, gutterDp: Int): Int =
         (availableWidthDp - railWidthDp - gutterDp * 2).coerceAtLeast(1)

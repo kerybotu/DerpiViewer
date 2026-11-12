@@ -7,7 +7,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.LinearLayout
+import android.widget.ScrollView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.example.liquidglass.LiquidGlassTabBar
@@ -20,8 +20,7 @@ class AdaptiveNavigationShell private constructor(
     private val content: View,
     private val selectedIndex: Int
 ) {
-    private val root = LinearLayout(activity).apply {
-        orientation = LinearLayout.HORIZONTAL
+    private val root = FrameLayout(activity).apply {
         clipChildren = false
         clipToPadding = false
     }
@@ -29,29 +28,39 @@ class AdaptiveNavigationShell private constructor(
         clipChildren = false
         clipToPadding = false
     }
+    private val railScroll = ScrollView(activity).apply {
+        isVerticalScrollBarEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        clipToPadding = true
+    }
     private val rail = HomeGlassTabBar(activity).apply {
-        configureTabs(navigationItems())
+        configureTabs(primaryNavigationItems(activity))
         setVerticalNavigation(true)
         selectItem(selectedIndex)
         onItemSelected = { navigate(it) }
+        onItemReselected = { if (selectedIndex == NO_SELECTION) navigate(it) }
         elevation = dp(8).toFloat()
     }
     private var insetLeft = 0
     private var insetRight = 0
+    private var insetTop = 0
+    private var insetBottom = 0
 
 
     init {
         val parent = content.parent as? ViewGroup
         parent?.removeView(content)
-        root.addView(railHost, LinearLayout.LayoutParams(0, -1))
-        root.addView(content, LinearLayout.LayoutParams(0, -1, 1f))
-        railHost.addView(rail, FrameLayout.LayoutParams(dp(AdaptiveLayoutPolicy.COMPACT_NAVIGATION_RAIL_DP), -2, Gravity.CENTER))
+        root.addView(content, FrameLayout.LayoutParams(-1, -1))
+        root.addView(railHost, FrameLayout.LayoutParams(-1, -1))
+        railScroll.addView(rail, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        railHost.addView(railScroll)
         activity.setContentView(root)
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             insetLeft = bars.left
             insetRight = bars.right
-            root.setPadding(insetLeft, 0, insetRight, 0)
+            insetTop = bars.top
+            insetBottom = bars.bottom
             updateLayout()
             insets
         }
@@ -77,60 +86,75 @@ class AdaptiveNavigationShell private constructor(
         val railGutter = dp(AdaptiveLayoutPolicy.tokensForWidth(widthDp).screenGutterDp)
         railHost.visibility = if (showRail) View.VISIBLE else View.GONE
         rail.setRenderingActive(showRail && rail.isAttachedToWindow, content)
-        val hostParams = railHost.layoutParams as LinearLayout.LayoutParams
-        val hostWidth = if (showRail) dp(spec.navigationWidthDp) + railGutter * 2 else 0
-        if (hostParams.width != hostWidth) {
-            hostParams.width = hostWidth
+        val hostParams = railHost.layoutParams as FrameLayout.LayoutParams
+        if (hostParams.width != ViewGroup.LayoutParams.MATCH_PARENT || hostParams.height != ViewGroup.LayoutParams.MATCH_PARENT) {
+            hostParams.width = ViewGroup.LayoutParams.MATCH_PARENT
+            hostParams.height = ViewGroup.LayoutParams.MATCH_PARENT
             railHost.layoutParams = hostParams
         }
-        val contentParams = content.layoutParams as LinearLayout.LayoutParams
-        if (contentParams.width != 0 || contentParams.weight != 1f) {
-            contentParams.width = 0
-            contentParams.weight = 1f
-            content.layoutParams = contentParams
-        }
-        val barWidth = if (showRail) dp(spec.navigationWidthDp) else 0
-        val barParams = rail.layoutParams as FrameLayout.LayoutParams
-        if (barParams.width != barWidth) {
-            barParams.width = barWidth
-            rail.layoutParams = barParams
+        val railParams = railScroll.layoutParams as FrameLayout.LayoutParams
+        val railWidth = if (showRail) dp(spec.navigationWidthDp) else 0
+        val railHeight = (root.height - insetTop - insetBottom - railGutter * 2).coerceAtLeast(0)
+        val railStart = if (ViewCompat.getLayoutDirection(root) == ViewCompat.LAYOUT_DIRECTION_RTL) insetRight + railGutter
+            else insetLeft + railGutter
+        if (railParams.width != railWidth || railParams.height != railHeight ||
+            railParams.marginStart != railStart || railParams.topMargin != insetTop + railGutter ||
+            railParams.gravity != (Gravity.TOP or Gravity.START)) {
+            railParams.width = railWidth
+            railParams.height = railHeight
+            railParams.marginStart = railStart
+            railParams.topMargin = insetTop + railGutter
+            railParams.bottomMargin = insetBottom + railGutter
+            railParams.gravity = Gravity.TOP or Gravity.START
+            railScroll.layoutParams = railParams
         }
     }
 
     private fun navigate(index: Int) {
         if (index == selectedIndex) return
-        val target = when (index) {
-            HOME -> MainActivity::class.java
-            SEARCH -> SearchActivity::class.java
-            VIDEO -> MainActivity::class.java
-            FAVORITES -> FavoritesActivity::class.java
-            else -> MainActivity::class.java
+        val destination = when (index) {
+            HOME -> R.id.tab_home
+            VIDEO -> R.id.tab_video_feed
+            FEATURED -> R.id.tab_featured
+            COMMENTS -> R.id.tab_messages
+            PROFILE -> R.id.tab_profile
+            else -> return
         }
-        val intent = Intent(activity, target).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-        when (index) {
-            HOME -> intent.putExtra(MainActivity.EXTRA_ADAPTIVE_DESTINATION, R.id.tab_home)
-            VIDEO -> intent.putExtra(MainActivity.EXTRA_ADAPTIVE_DESTINATION, R.id.tab_video_feed)
-            PROFILE -> intent.putExtra(MainActivity.EXTRA_ADAPTIVE_DESTINATION, R.id.tab_profile)
-        }
+        val intent = Intent(activity, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            .putExtra(MainActivity.EXTRA_ADAPTIVE_DESTINATION, destination)
         activity.startActivity(intent)
     }
-
-    private fun navigationItems() = listOf(
-        LiquidGlassTabBar.TabItem("首页", activity.getDrawable(R.drawable.ic_home)),
-        LiquidGlassTabBar.TabItem("搜索", activity.getDrawable(R.drawable.ic_search)),
-        LiquidGlassTabBar.TabItem("视频", activity.getDrawable(R.drawable.ic_video)),
-        LiquidGlassTabBar.TabItem("收藏", activity.getDrawable(R.drawable.ic_favorite)),
-        LiquidGlassTabBar.TabItem("个人", activity.getDrawable(R.drawable.ic_account_box))
-    )
 
     private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
     companion object {
         const val HOME = 0
-        const val SEARCH = 1
-        const val VIDEO = 2
-        const val FAVORITES = 3
+        const val VIDEO = 1
+        const val FEATURED = 2
+        const val COMMENTS = 3
         const val PROFILE = 4
+        // These host markers are not destinations in the original five tabs.
+        const val NO_SELECTION = -1
+        const val SEARCH = NO_SELECTION
+        const val FAVORITES = NO_SELECTION
+
+        fun primaryNavigationItems(activity: Activity) = listOf(
+            LiquidGlassTabBar.TabItem("首页", activity.getDrawable(R.drawable.ic_home)),
+            LiquidGlassTabBar.TabItem("视频", activity.getDrawable(R.drawable.ic_video)),
+            LiquidGlassTabBar.TabItem("热门", activity.getDrawable(R.drawable.ic_whatshot)),
+            LiquidGlassTabBar.TabItem("评论", activity.getDrawable(R.drawable.ic_comment)),
+            LiquidGlassTabBar.TabItem("我的", activity.getDrawable(R.drawable.ic_account_box))
+        )
+
+        fun primaryDestination(index: Int): Int = when (index) {
+            HOME -> R.id.tab_home
+            VIDEO -> R.id.tab_video_feed
+            FEATURED -> R.id.tab_featured
+            COMMENTS -> R.id.tab_messages
+            PROFILE -> R.id.tab_profile
+            else -> View.NO_ID
+        }
 
         fun install(activity: Activity, content: View, selectedIndex: Int): AdaptiveNavigationShell =
             AdaptiveNavigationShell(activity, content, selectedIndex)

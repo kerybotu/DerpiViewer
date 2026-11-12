@@ -332,7 +332,17 @@ class VideoFeedAdapter(
                     safeRightInset
                 }
                 val bottomMargin = maxOf(bottomInset, safeBottomInset) + horizontalMargin
-                val measuredRailHeight = binding.videoActionRail.height.takeIf { it > 0 } ?: dp(binding.root, 340)
+                // Measure the button group, not the previous island height: the
+                // latter may have been bounded by a shorter window last time.
+                val rail = binding.videoActionRail
+                val scroll = rail.getChildAt(0) as android.widget.ScrollView
+                val buttons = scroll.getChildAt(0)
+                val railWidth = rail.width.takeIf { it > 0 } ?: dp(binding.root, 52)
+                buttons.measure(
+                    View.MeasureSpec.makeMeasureSpec((railWidth - rail.paddingLeft - rail.paddingRight).coerceAtLeast(1), View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                )
+                val measuredRailHeight = buttons.measuredHeight + rail.paddingTop + rail.paddingBottom
                 val panelHeight = binding.videoInfoOverlay.height.takeIf { it > 0 } ?: dp(binding.root, 120)
                 val safeTop = safeTopInset + horizontalMargin
                 val safeBottom = bottomMargin
@@ -342,7 +352,6 @@ class VideoFeedAdapter(
                 val sideBySide = landscape || endInset > 0 ||
                     spec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL ||
                     spec.heightClass == AdaptiveLayoutPolicy.WindowHeightClass.COMPACT || verticalOverlap
-                val railWidth = binding.videoActionRail.width.takeIf { it > 0 } ?: dp(binding.root, 52)
                 val infoStartMargin = safeStart + horizontalMargin
                 val infoEndMargin = safeEnd + endInset + horizontalMargin +
                     if (sideBySide) railWidth + horizontalMargin else 0
@@ -364,21 +373,23 @@ class VideoFeedAdapter(
 
                 val railParams = binding.videoActionRail.layoutParams as android.widget.FrameLayout.LayoutParams
                 val railEndMargin = safeEnd + endInset + horizontalMargin
-                val railTopMargin = safeTopInset + horizontalMargin
-                val railBottomMargin = maxOf(bottomInset, safeBottomInset) + horizontalMargin
-                val railNeedsBoundedHeight = landscape ||
-                    spec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL ||
-                    spec.heightClass == AdaptiveLayoutPolicy.WindowHeightClass.COMPACT
-                val usableRailHeight = (binding.root.height - railTopMargin - railBottomMargin)
-                    .coerceAtLeast(dp(binding.root, 64))
-                val railHeight = if (railNeedsBoundedHeight) usableRailHeight else android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                // Center the whole group inside the actual content safe area.
+                // Equal gutters preserve that center; only oversized groups
+                // fill the interval and scroll internally.
+                val usableRailHeight = (binding.root.height - safeTop - safeBottom).coerceAtLeast(1)
+                val railHeight = minOf(measuredRailHeight, usableRailHeight)
+                val railTopMargin = safeTop + (usableRailHeight - railHeight) / 2
+                val railBottomMargin = safeBottom
+                val railGravity = android.view.Gravity.TOP or android.view.Gravity.END
                 if (railParams.marginEnd != railEndMargin || railParams.topMargin != railTopMargin ||
-                    railParams.bottomMargin != railBottomMargin || railParams.height != railHeight
+                    railParams.bottomMargin != railBottomMargin || railParams.height != railHeight ||
+                    railParams.gravity != railGravity
                 ) {
                     railParams.marginEnd = railEndMargin
                     railParams.topMargin = railTopMargin
                     railParams.bottomMargin = railBottomMargin
                     railParams.height = railHeight
+                    railParams.gravity = railGravity
                     binding.videoActionRail.layoutParams = railParams
                 }
             }

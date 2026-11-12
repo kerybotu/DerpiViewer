@@ -57,7 +57,7 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
             }
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
-            val bars = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             val gestures = insets.getInsets(WindowInsetsCompat.Type.systemGestures())
             safeLeftInset = maxOf(bars.left, cutout.left, gestures.left)
@@ -186,13 +186,13 @@ class VideoFeedActivity : AppCompatActivity(), VideoFeedAdapter.Actions {
         val availableWidth = (binding.root.width - safeLeftInset - safeRightInset - margin * 2).coerceAtLeast(dp(1))
         val islandWidth = dp(180).coerceAtMost(availableWidth)
         val gravity = if (sidePlacement) {
-            Gravity.TOP or Gravity.START
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL
         } else {
             Gravity.TOP or Gravity.CENTER_HORIZONTAL
         }
-        val startMargin = safeStart + margin
-        val endMargin = safeEnd + margin
-        val topMargin = safeTopInset + margin
+        val startMargin = if (sidePlacement) 0 else safeStart + margin
+        val endMargin = if (sidePlacement) 0 else safeEnd + margin
+        val topMargin = safeTopInset
         val bottomMargin = 0
         if (params.width != islandWidth || params.gravity != gravity ||
             params.marginStart != startMargin || params.marginEnd != endMargin ||

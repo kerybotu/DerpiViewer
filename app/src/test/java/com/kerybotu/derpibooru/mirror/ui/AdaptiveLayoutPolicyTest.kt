@@ -61,12 +61,17 @@ class AdaptiveLayoutPolicyTest {
     @Test
     fun phoneLandscapeKeepsCompactSinglePaneWhileExpandedLandscapeGetsSidePane() {
         val phoneLandscape = AdaptiveLayoutPolicy.specFor(640, 360)
+        val phoneLandscapeAfterSystemInsets = AdaptiveLayoutPolicy.specFor(576, 360)
+        val tooNarrowForRail = AdaptiveLayoutPolicy.specFor(519, 360)
         val tabletLandscape = AdaptiveLayoutPolicy.specFor(1280, 800)
         val portraitPhone = AdaptiveLayoutPolicy.specFor(411, 850)
 
         assertEquals(AdaptiveLayoutPolicy.WindowWidthClass.MEDIUM, phoneLandscape.widthClass)
         assertEquals(AdaptiveLayoutPolicy.WindowHeightClass.COMPACT, phoneLandscape.heightClass)
         assertEquals(AdaptiveLayoutPolicy.NavigationMode.RAIL, phoneLandscape.navigationMode)
+        assertEquals(AdaptiveLayoutPolicy.NavigationMode.RAIL, phoneLandscapeAfterSystemInsets.navigationMode)
+        assertTrue(!phoneLandscapeAfterSystemInsets.useDetailSidePane)
+        assertEquals(AdaptiveLayoutPolicy.NavigationMode.BOTTOM_BAR, tooNarrowForRail.navigationMode)
         assertTrue(!phoneLandscape.useDetailSidePane)
         assertEquals(AdaptiveLayoutPolicy.NavigationMode.BOTTOM_BAR, portraitPhone.navigationMode)
         assertTrue(tabletLandscape.useDetailSidePane)
