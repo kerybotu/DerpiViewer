@@ -18,8 +18,10 @@ import com.kerybotu.derpibooru.mirror.R
 class AdaptiveNavigationShell private constructor(
     private val activity: Activity,
     private val content: View,
-    private val selectedIndex: Int
+    private val selectedIndex: Int,
+    private val contentMode: ContentMode
 ) {
+    enum class ContentMode { SAFE_AREA, MEDIA_CANVAS }
     private val root = FrameLayout(activity).apply {
         clipChildren = false
         clipToPadding = false
@@ -64,6 +66,7 @@ class AdaptiveNavigationShell private constructor(
             updateLayout()
             insets
         }
+        railScroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> publishBounds() }
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateLayout() }
         ViewCompat.requestApplyInsets(root)
         root.post { updateLayout() }
@@ -107,6 +110,17 @@ class AdaptiveNavigationShell private constructor(
             railParams.bottomMargin = insetBottom + railGutter
             railParams.gravity = Gravity.TOP or Gravity.START
             railScroll.layoutParams = railParams
+        }
+        publishBounds()
+    }
+
+    private fun publishBounds() {
+        AdaptiveNavigationContent.publish(root, railScroll.takeIf { railHost.isShown }, dp(Ui2DesignSystem.Spacing.islandGap))
+        if (contentMode == ContentMode.SAFE_AREA) {
+            AdaptiveNavigationContent.applyFallbackInsets(
+                content,
+                AdaptiveNavigationContent.horizontalInsets(content, insetLeft, insetRight)
+            )
         }
     }
 
@@ -156,7 +170,11 @@ class AdaptiveNavigationShell private constructor(
             else -> View.NO_ID
         }
 
-        fun install(activity: Activity, content: View, selectedIndex: Int): AdaptiveNavigationShell =
-            AdaptiveNavigationShell(activity, content, selectedIndex)
+        fun install(
+            activity: Activity,
+            content: View,
+            selectedIndex: Int,
+            contentMode: ContentMode = ContentMode.SAFE_AREA
+        ): AdaptiveNavigationShell = AdaptiveNavigationShell(activity, content, selectedIndex, contentMode)
     }
 }

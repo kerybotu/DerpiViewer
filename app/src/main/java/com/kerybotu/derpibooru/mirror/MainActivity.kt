@@ -31,6 +31,7 @@ import com.kerybotu.derpibooru.mirror.ui.ImageDetailActivity
 import com.kerybotu.derpibooru.mirror.ui.FilterCache
 import com.kerybotu.derpibooru.mirror.ui.CdnImageGate
 import com.kerybotu.derpibooru.mirror.ui.AdaptiveLayoutPolicy
+import com.kerybotu.derpibooru.mirror.ui.AdaptiveNavigationContent
 import com.kerybotu.derpibooru.mirror.ui.AdaptiveNavigationShell
 import com.kerybotu.derpibooru.mirror.ui.Ui2DesignSystem
 import com.kerybotu.derpibooru.mirror.ui.HomeTopIslandController
@@ -80,6 +81,8 @@ class MainActivity : AppCompatActivity() {
     private var toolbarBasePaddingBottom = 0
     private var navigationBarInsetBottom = 0
     private var navigationBarInsetHorizontal = 0
+    private var navigationInsetLeft = 0
+    private var navigationInsetRight = 0
     private var artworkBasePaddingTop = 0
     private var artworkBasePaddingBottom = 0
     private var homeLoadJob: Job? = null
@@ -152,6 +155,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         binding.glassBottomNavigation.addOnLayoutChangeListener(updateFabPosition)
+        binding.glassBottomNavigation.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (::binding.isInitialized) publishMainNavigationBounds()
+        }
         binding.fabUploadContainer.addOnLayoutChangeListener(updateFabPosition)
 
         // 初始化 DrawerLayout 和侧滑菜单
@@ -198,6 +204,20 @@ class MainActivity : AppCompatActivity() {
         })
         binding.recyclerView.layoutManager = GridLayoutManager(this, columnCount)
         AdaptiveLayoutPolicy.configureArtworkGrid(this, binding.recyclerView)
+        // configureArtworkGrid also updates its base padding when the grid is
+        // remeasured. Re-apply the shared navigation safe area after a rail
+        // or window resize so that the grid never falls back under the rail.
+        binding.recyclerView.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) {
+                binding.recyclerView.post {
+                    if (!isFinishing && !isDestroyed) {
+                        val refreshParams = binding.homeRefresh.layoutParams
+                            as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+                        if (refreshParams != null) updateMainContentInsets(refreshParams)
+                    }
+                }
+            }
+        }
         artworkBasePaddingTop = binding.recyclerView.paddingTop
         // The XML bottom padding is a legacy navigation-bar workaround.  In
         // the island layout the navigation surface overlays the grid, so use
@@ -205,6 +225,20 @@ class MainActivity : AppCompatActivity() {
         artworkBasePaddingBottom = dp(4)
         binding.recyclerView.adapter = adapter
         binding.homeRefresh.scrollTarget = binding.recyclerView
+        // The home grid is hosted directly by the Activity root, so it must
+        // observe the shared navigation bounds itself. Other pages receive
+        // the same callback through their content hosts; without this
+        // observer a rail resize/rotation leaves the home padding stale.
+        AdaptiveNavigationContent.observe(binding.root) {
+            if (isFinishing || isDestroyed) return@observe
+            val refreshParams = binding.homeRefresh.layoutParams
+                as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+            if (refreshParams != null) {
+                updateMainContentInsets(refreshParams)
+            } else {
+                publishMainNavigationBounds()
+            }
+        }
         binding.homeRefresh.setCanRefresh { !loading && binding.startupOverlay.visibility != View.VISIBLE }
         initializeEmbeddedScreens()
         binding.homeRefresh.setOnRefreshListener {
@@ -314,6 +348,8 @@ class MainActivity : AppCompatActivity() {
             currentStatusBarHeight = statusBarHeight
             val navigationInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val navigationBarHeight = navigationInsets.bottom
+            navigationInsetLeft = navigationInsets.left
+            navigationInsetRight = navigationInsets.right
             navigationBarInsetBottom = navigationBarHeight
             navigationBarInsetHorizontal = navigationInsets.left + navigationInsets.right
             updateResponsiveIslandWidths()
@@ -446,7 +482,7 @@ class MainActivity : AppCompatActivity() {
         val availableIslandWidth = (availableWindowWidth - maxOf(outerGutter, railAvoidance) * 2).coerceAtLeast(1)
 
         (binding.appBarLayout.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-            val width = AdaptiveLayoutPolicy.topIslandWidthPx(this, availableIslandWidth)
+            val width = homeArtworkViewport().topIslandWidth
             val gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
             val coordinatorParams = params as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
             if (params.width != width || coordinatorParams?.gravity != gravity || params.leftMargin != 0 || params.marginStart != 0) {
@@ -488,13 +524,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        publishMainNavigationBounds(horizontal)
+        updateResponsiveIslandWidths()
         val navHeight = binding.glassBottomNavigation.measuredHeight
-        val availableWidthDp = AdaptiveLayoutPolicy.availableContentWidthDp(this, binding.recyclerView)
-        val horizontalInset = AdaptiveLayoutPolicy.artworkHorizontalInsetPx(this, availableWidthDp)
-        val railAvoidance = if (horizontal) navigationInteractionInsetPx(widthDp) else 0
-        val isRtl = androidx.core.view.ViewCompat.getLayoutDirection(binding.root) == androidx.core.view.ViewCompat.LAYOUT_DIRECTION_RTL
-        val contentLeft = horizontalInset + if (isRtl) 0 else railAvoidance
-        val contentRight = horizontalInset + if (isRtl) railAvoidance else 0
+        val viewport = homeArtworkViewport()
+        val contentLeft = viewport.leftPadding
+        val contentRight = viewport.rightPadding
         val topPadding = topIslandContentPadding()
         val bottomInset = artworkBasePaddingBottom
         binding.recyclerView.setPadding(contentLeft, topPadding, contentRight, bottomInset)
@@ -505,10 +540,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.homeRefresh.post {
             if (binding.homeRefresh.width <= 0) return@post
-            val measuredWidthDp = (binding.homeRefresh.width / resources.displayMetrics.density).toInt()
-            val railInset = if (horizontal) navigationInteractionInsetPx(measuredWidthDp) else 0
-            val availableGridWidthDp = (measuredWidthDp - (railInset / resources.displayMetrics.density).toInt()).coerceAtLeast(1)
-            columnCount = AdaptiveLayoutPolicy.artworkColumnCountForWidth(availableGridWidthDp)
+            columnCount = homeArtworkViewport().columns
             (binding.recyclerView.layoutManager as? GridLayoutManager)?.spanCount = columnCount
         }
         (binding.fabUploadContainer.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
@@ -539,24 +571,39 @@ class MainActivity : AppCompatActivity() {
         embeddedProfile?.setBottomInset(if (horizontal) navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.sm) else videoBottomInset)
     }
 
+    private fun homeArtworkViewport(): AdaptiveLayoutPolicy.ArtworkViewport {
+        // mainContentHost is GONE on the home tab, so it has no usable width
+        // from which to resolve the rail bounds. Read the published bounds from
+        // the always-measured Activity root instead.
+        val safe = com.kerybotu.derpibooru.mirror.ui.AdaptiveNavigationContent.horizontalInsets(
+            binding.root, navigationInsetLeft, navigationInsetRight
+        )
+        return AdaptiveLayoutPolicy.artworkViewport(this, binding.root.width.coerceAtLeast(1), safe)
+    }
+
+    private fun publishMainNavigationBounds(horizontal: Boolean = binding.glassBottomNavigation.height > binding.glassBottomNavigation.width) {
+        val navigation = binding.glassBottomNavigation.takeIf { horizontal && it.height > it.width }
+        com.kerybotu.derpibooru.mirror.ui.AdaptiveNavigationContent.publish(
+            binding.root, navigation,
+            dp(Ui2DesignSystem.Spacing.islandGap)
+        )
+    }
+
     /** Keeps the grid full-screen while offsetting only its initial content position. */
     private fun updateArtworkTopPadding() {
         if (!::binding.isInitialized) return
         val topPadding = topIslandContentPadding()
-        if (binding.recyclerView.paddingTop == topPadding) return
-        val widthDp = AdaptiveLayoutPolicy.availableContentWidthDp(this, binding.root)
-        val horizontal = AdaptiveLayoutPolicy.specFor(
-            widthDp,
-            AdaptiveLayoutPolicy.availableWindowHeightDp(this, binding.root)
-        ).navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL
-        val horizontalInset = AdaptiveLayoutPolicy.artworkHorizontalInsetPx(this, widthDp)
-        val railInset = if (horizontal) navigationInteractionInsetPx(widthDp) else 0
-        val isRtl = androidx.core.view.ViewCompat.getLayoutDirection(binding.root) == androidx.core.view.ViewCompat.LAYOUT_DIRECTION_RTL
-        binding.recyclerView.setPadding(
-            horizontalInset + if (isRtl) 0 else railInset,
+        val viewport = homeArtworkViewport()
+        val current = binding.recyclerView
+        if (current.paddingLeft == viewport.leftPadding &&
+            current.paddingTop == topPadding &&
+            current.paddingRight == viewport.rightPadding
+        ) return
+        current.setPadding(
+            viewport.leftPadding,
             topPadding,
-            horizontalInset + if (isRtl) railInset else 0,
-            binding.recyclerView.paddingBottom
+            viewport.rightPadding,
+            current.paddingBottom
         )
         binding.recyclerView.clipToPadding = false
     }

@@ -213,6 +213,20 @@ object AdaptiveLayoutPolicy {
         return dp(context, outerGutter + tokens.screenGutterDp)
     }
 
+    data class ArtworkViewport(val leftPadding: Int, val rightPadding: Int, val columns: Int, val topIslandWidth: Int)
+
+    /** Home and Featured share the same card viewport and window-centered floating header. */
+    fun artworkViewport(context: Context, width: Int, safe: AdaptiveNavigationContent.HorizontalInsets): ArtworkViewport {
+        val contentWidth = (width - safe.left - safe.right).coerceAtLeast(1)
+        val widthDp = (contentWidth / context.resources.displayMetrics.density).toInt()
+        val gutter = artworkHorizontalInsetPx(context, widthDp)
+        val symmetricInset = maxOf(safe.left, safe.right) + dp(context, Ui2DesignSystem.Spacing.islandMargin)
+        return ArtworkViewport(
+            safe.left + gutter, safe.right + gutter, artworkColumnCountForWidth(widthDp),
+            topIslandWidthPx(context, (width - symmetricInset * 2).coerceAtLeast(1))
+        )
+    }
+
     fun configureArtworkGrid(activity: Activity, recyclerView: RecyclerView, grid: GridLayoutManager? = null): Int {
         val spanCount = artworkColumnCount(activity)
         val manager = grid ?: (recyclerView.layoutManager as? GridLayoutManager)

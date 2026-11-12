@@ -1,0 +1,5 @@
+<resources>
+    <item name="adaptive_navigation_bounds" type="id" />
+    <item name="adaptive_navigation_observer" type="id" />
+    <item name="adaptive_navigation_base_padding" type="id" />
+</resources>
