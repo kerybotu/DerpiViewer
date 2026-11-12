@@ -54,7 +54,7 @@ object CacheManager {
 
         clearOwnPrefsCache(context, "static_rules_prefs")
         clearOwnPrefsCache(context, "dynamic_selectors_prefs")
-        clearOwnPrefsCache(context, "ip_optimizer_prefs")
+        // Routing preferences are durable state, independent of image/WebView caches.
 
         val after = calculateCacheSize(context)
         (before - after).coerceAtLeast(0L)

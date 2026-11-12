@@ -1,6 +1,9 @@
 package com.kerybotu.derpibooru.mirror
 
 import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -23,7 +26,7 @@ import kotlin.random.Random
  * 2. Cloudflare 官方 IP 段 API 随机采样（24 小时缓存，每次候选重新随机采样）
  * 3. 本地预编码兜底列表（Worker 完全不可用时使用）
  *
- * 测速结果缓存 5 分钟，短时间内重复启动直接复用。
+ * 测速结果按独立设置持久化，默认六小时内直接复用。
  */
 object IpOptimizer {
 
@@ -35,7 +38,10 @@ object IpOptimizer {
 
     private const val KEY_LAST_BEST_IP = "last_best_ip"
     private const val KEY_LAST_BEST_TIME = "last_best_time"
-    private const val SHORT_CACHE_TTL_MS = 5 * 60 * 1000L // 测速结果缓存 5 分钟
+    private val benchmarkMutex = Mutex()
+    private var completedAt = 0L
+    private var completedConfig = ""
+    private var completedResults: Map<String, OptimizeResult> = emptyMap()
 
     private const val WORKER_URL = "https://cloudflarecdnip.495648.xyz/"
 
@@ -259,7 +265,7 @@ object IpOptimizer {
     private const val MAX_CONCURRENT_TESTS = 20 // 并发测速上限，避免资源耗尽
     private const val DOMAIN_TCP_CANDIDATES = 8
 
-    data class OptimizeResult(val ip: String, val didOptimize: Boolean)
+    data class OptimizeResult(val ip: String, val didOptimize: Boolean, val verified: Boolean = true, val latencyMs: Long? = null)
 
     /**
      * Runs the expensive candidate speed ranking once and reuses it for all
@@ -272,11 +278,39 @@ object IpOptimizer {
         forceRefresh: Boolean = false,
         onProgress: ((domain: String, tested: Int, total: Int) -> Unit)? = null
     ): Map<String, OptimizeResult> {
+        val requestedAt = System.currentTimeMillis()
+        return benchmarkMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val domains = domainKeys.map { it.trim().lowercase() }.distinct()
+                if (completedAt >= requestedAt && completedConfig == configurationKey(context) &&
+                    domains.all { it in completedResults }) {
+                    Log.i("NodeRouting", "event=benchmark_joined")
+                    completedResults.filterKeys { it in domains }
+                } else {
+                    val config = configurationKey(context)
+                    val results = getBestIpsLocked(context, domains, forceRefresh, requestedAt, onProgress)
+                    completedConfig = config
+                    completedResults = results
+                    completedAt = System.currentTimeMillis()
+                    results
+                }
+            }
+        }
+    }
+
+    private suspend fun getBestIpsLocked(
+        context: Context,
+        domainKeys: List<String>,
+        forceRefresh: Boolean,
+        requestedAt: Long,
+        onProgress: ((String, Int, Int) -> Unit)?
+    ): Map<String, OptimizeResult> {
         val domains = domainKeys.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
         if (domains.isEmpty()) return emptyMap()
         val results = LinkedHashMap<String, OptimizeResult>()
         val missing = domains.filter { domain ->
-            val cached = if (forceRefresh) null else readCachedResult(context, domain)
+            // Concurrent forced callers share the result completed while they waited.
+            val cached = readCachedResult(context, domain, if (forceRefresh) requestedAt else null)
             if (cached != null) {
                 results[domain] = cached
                 false
@@ -284,6 +318,8 @@ object IpOptimizer {
         }
         if (missing.isEmpty()) return results
 
+        val config = configurationKey(context)
+        Log.i("NodeRouting", "event=benchmark_start domains=${missing.joinToString(",")} forced=$forceRefresh")
         val candidates = buildCandidatePool(context, forceRefresh)
         val ranked = speedTestRanked(candidates, 443) { tested, total ->
             // The shared speed stage is deliberately reported once. Callers
@@ -293,11 +329,15 @@ object IpOptimizer {
         val usable = ranked.ifEmpty { candidates }
         missing.forEach { domain ->
             val domainRanked = tcpRankForDomain(domain, usable.take(DOMAIN_TCP_CANDIDATES), onProgress)
-            val best = domainRanked.firstOrNull() ?: usable.firstOrNull() ?: FALLBACK_IP_LIST.first()
-            val result = OptimizeResult(best, didOptimize = true)
-            persistResult(context, domain, best)
+            val best = domainRanked.firstOrNull()?.first ?: usable.firstOrNull() ?: FALLBACK_IP_LIST.first()
+            val verified = domainRanked.isNotEmpty()
+            val latency = domainRanked.firstOrNull()?.second
+            val result = OptimizeResult(best, didOptimize = true, verified = verified, latencyMs = latency)
+            if (verified && config == configurationKey(context)) persistResult(context, domain, best, latency!!)
+            Log.i("NodeRouting", "event=node_selected domain=$domain ip=$best verified=$verified latency_ms=$latency")
             results[domain] = result
         }
+        Log.i("NodeRouting", "event=benchmark_end verified=${results.values.all { it.verified }}")
         return results
     }
 
@@ -307,49 +347,41 @@ object IpOptimizer {
         domainKey: String = AppSettings.getTargetDomain(context),
         onProgress: ((tested: Int, total: Int) -> Unit)? = null
     ): OptimizeResult {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val now = System.currentTimeMillis()
-        val cacheSuffix = domainKey.lowercase().replace(Regex("[^a-z0-9]"), "_")
-        val bestIpKey = "${KEY_LAST_BEST_IP}_$cacheSuffix"
-        val bestTimeKey = "${KEY_LAST_BEST_TIME}_$cacheSuffix"
-
-        if (!forceRefresh) {
-            val lastIp = prefs.getString(bestIpKey, null)
-            val lastTime = prefs.getLong(bestTimeKey, 0L)
-            if (!lastIp.isNullOrBlank() && now - lastTime < SHORT_CACHE_TTL_MS) {
-                return OptimizeResult(lastIp, didOptimize = false)
-            }
-        }
-
-        val candidatePool = buildCandidatePool(context, forceRefresh)
-        val best = speedTest(candidatePool, 443, onProgress)
-            ?: candidatePool.firstOrNull()
-            ?: FALLBACK_IP_LIST.first()
-
-        prefs.edit()
-            .putString(bestIpKey, best)
-            .putLong(bestTimeKey, now)
-            .apply()
-
-        return OptimizeResult(best, didOptimize = true)
+        return getBestIpsShared(context, listOf(domainKey), forceRefresh) { _, tested, total ->
+            onProgress?.invoke(tested, total)
+        }.getValue(domainKey.trim().lowercase())
     }
 
-    private fun readCachedResult(context: Context, domainKey: String): OptimizeResult? {
+    private fun configurationKey(context: Context): String =
+        "v2|$WORKER_URL|$CF_IPS_API_URL|${FALLBACK_IP_LIST.hashCode()}|" +
+            "${AppSettings.getTargetDomain(context)}|${AppSettings.getManualIp(context)}|${AppSettings.isCdnDirect(context)}"
+
+    private fun readCachedResult(context: Context, domainKey: String, newerThan: Long? = null): OptimizeResult? {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val suffix = domainKey.lowercase().replace(Regex("[^a-z0-9]"), "_")
         val ip = prefs.getString("${KEY_LAST_BEST_IP}_$suffix", null)
         val time = prefs.getLong("${KEY_LAST_BEST_TIME}_$suffix", 0L)
-        return if (!ip.isNullOrBlank() && System.currentTimeMillis() - time < SHORT_CACHE_TTL_MS) {
-            OptimizeResult(ip, didOptimize = false)
+        val interval = AppSettings.getNodeBenchmarkIntervalHours(context) * 3_600_000L
+        val valid = !ip.isNullOrBlank() && isValidIp(ip) &&
+            prefs.getString("best_config_$suffix", null) == configurationKey(context) &&
+            com.kerybotu.derpibooru.mirror.network.NodeRoutingPolicy.isFresh(time, System.currentTimeMillis(), interval) &&
+            (newerThan == null || time >= newerThan)
+        Log.i("NodeRouting", "event=${if (valid) "history_reused" else "history_missing_or_expired"} domain=$domainKey interval_ms=$interval next_at=${time + interval}")
+        return if (valid) {
+            requireNotNull(ip)
+            OptimizeResult(ip, didOptimize = false, latencyMs = prefs.getLong("best_latency_$suffix", -1L).takeIf { it >= 0 })
         } else null
     }
 
-    private fun persistResult(context: Context, domainKey: String, ip: String) {
+    private fun persistResult(context: Context, domainKey: String, ip: String, latencyMs: Long) {
         val suffix = domainKey.lowercase().replace(Regex("[^a-z0-9]"), "_")
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        val saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString("${KEY_LAST_BEST_IP}_$suffix", ip)
+            .putLong("best_latency_$suffix", latencyMs)
             .putLong("${KEY_LAST_BEST_TIME}_$suffix", System.currentTimeMillis())
-            .apply()
+            .putString("best_config_$suffix", configurationKey(context))
+            .commit()
+        if (!saved) Log.e("NodeRouting", "event=node_persistence_failed domain=$domainKey")
     }
 
     /**
@@ -426,6 +458,7 @@ object IpOptimizer {
     private fun isValidIp(s: String): Boolean {
         val value = s.trim().removePrefix("[").removeSuffix("]")
         if (value.isEmpty() || value.any { it.isWhitespace() }) return false
+        if (!value.contains(':') && !value.matches(Regex("[0-9.]+"))) return false
         return runCatching {
             java.net.InetAddress.getByName(value)
             value.contains('.') || value.contains(':')
@@ -634,7 +667,7 @@ object IpOptimizer {
         domain: String,
         candidates: List<String>,
         onProgress: ((domain: String, tested: Int, total: Int) -> Unit)?
-    ): List<String> = withContext(Dispatchers.IO) {
+    ): List<Pair<String, Long>> = withContext(Dispatchers.IO) {
         val semaphore = Semaphore(minOf(MAX_CONCURRENT_TESTS, DOMAIN_TCP_CANDIDATES))
         val completed = java.util.concurrent.atomic.AtomicInteger(0)
         candidates.map { ip ->
@@ -645,7 +678,7 @@ object IpOptimizer {
                     ip to latency
                 }
             }
-        }.awaitAll().filter { it.second >= 0 }.sortedBy { it.second }.map { it.first }
+        }.awaitAll().filter { it.second >= 0 }.sortedBy { it.second }
     }
 
     private fun measureTcpConnectLatency(ip: String, port: Int): Long {

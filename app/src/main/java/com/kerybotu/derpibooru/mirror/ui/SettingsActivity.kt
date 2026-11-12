@@ -99,6 +99,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var manualIp: EditText
     private lateinit var saveNetwork: LiquidGlassButton
     private lateinit var optimizeIp: LiquidGlassButton
+    private lateinit var nodeBenchmarkInterval: Spinner
     private lateinit var deepOptimizeIp: LiquidGlassButton
     private lateinit var restoreAutoIp: LiquidGlassButton
     private lateinit var networkStatus: TextView
@@ -333,6 +334,20 @@ class SettingsActivity : AppCompatActivity() {
         switchCdnDirect = settingSwitch("derpicdn.net 使用直连")
         sectionContent(section).addView(switchIp, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         sectionContent(section).addView(switchCdnDirect)
+        sectionContent(section).addView(bodyText().apply { text = "节点测速间隔（复用最佳节点的有效期，非连接超时）" })
+        nodeBenchmarkInterval = glassSpinner()
+        val intervalOptions = listOf(1, 3, 6, 12, 24, 72, 168)
+        nodeBenchmarkInterval.adapter = spinnerAdapter(intervalOptions.map { "$it 小时" })
+        nodeBenchmarkInterval.setSelection(intervalOptions.indexOf(AppSettings.getNodeBenchmarkIntervalHours(this)).coerceAtLeast(0))
+        nodeBenchmarkInterval.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                AppSettings.setNodeBenchmarkIntervalHours(this@SettingsActivity, intervalOptions[position])
+                android.util.Log.i("NodeRouting", "event=interval_changed hours=${intervalOptions[position]}")
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        sectionContent(section).addView(nodeBenchmarkInterval, LinearLayout.LayoutParams(-1, dp(52)))
+        sectionContent(section).addView(bodyText().apply { text = "未到期启动时直接使用历史节点；连续连接失败或持续低速时允许提前测速。" })
         manualIp = glassEditText("手动优选节点 IP（支持 IPv4 / IPv6，留空为自动）", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
         sectionContent(section).addView(inputSurface(manualIp), LinearLayout.LayoutParams(-1, dp(60)).apply { topMargin = dp(6) })
 
@@ -770,6 +785,7 @@ class SettingsActivity : AppCompatActivity() {
         networkStatus.setTextColor(colors.glassSecondaryText)
         accountStatus.setTextColor(colors.glassSecondaryText)
         updateSpinnerPalette(updateFrequency, colors)
+        updateSpinnerPalette(nodeBenchmarkInterval, colors)
         updateSpinnerPalette(spinnerSpoilerMode, colors)
         (updateFrequency.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
         (spinnerSpoilerMode.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()

@@ -8,6 +8,9 @@ import com.kerybotu.derpibooru.mirror.IpOptimizer
 import com.kerybotu.derpibooru.mirror.LocalProxyServer
 import com.kerybotu.derpibooru.mirror.auth.ApiKeyStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -44,6 +47,8 @@ object NetworkManager {
     private var okHttpClient: OkHttpClient? = null
     @Volatile private var mediaHttpClient: OkHttpClient? = null
     private val initializationMutex = Mutex()
+    private val routingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val routingQuality = NodeRoutingPolicy()
     private val revision = MutableStateFlow(0L)
     val configurationVersion = revision.asStateFlow()
     @Volatile private var preferredRouteIps: Map<String, String> = emptyMap()
@@ -86,10 +91,10 @@ object NetworkManager {
     suspend fun init(
         context: Context,
         forceRefresh: Boolean = false,
+        rebuildClient: Boolean = false,
         onOptimizationProgress: ((domain: String, tested: Int, total: Int) -> Unit)? = null
     ) = initializationMutex.withLock {
-        if (isReady() && !forceRefresh) return@withLock
-        if (isReady()) shutdown()
+        if (isReady() && !forceRefresh && !rebuildClient) return@withLock
         val startedAtVersion = revision.value
         var pendingProxy: LocalProxyServer? = null
         var pendingRoutes = emptyMap<String, String>()
@@ -109,6 +114,7 @@ object NetworkManager {
                     "runtimeChromeMajor=${Regex("Chrome/(\\d+)", RegexOption.IGNORE_CASE).find(runtimeUserAgent)?.groupValues?.get(1) ?: "none"}"
             )
             val builder = OkHttpClient.Builder()
+                .eventListenerFactory { routeListener(context.applicationContext) }
                 .cookieJar(SharedCookieJar())
                 .addInterceptor { chain ->
                     chain.proceed(chain.request().newBuilder().header("User-Agent", userAgent).build())
@@ -166,6 +172,8 @@ object NetworkManager {
                 pendingProxy?.stop()
                 return@withLock // A settings change superseded this initialization.
             }
+            // Keep the working route alive until its replacement is ready.
+            if (isReady()) shutdown()
             localProxyServer = pendingProxy
             preferredRouteIps = pendingRoutes
             okHttpClient = builder.build()
@@ -384,6 +392,67 @@ object NetworkManager {
     suspend fun forceOptimize(context: Context): IpOptimizer.OptimizeResult =
         IpOptimizer.getBestIpSmart(context, forceRefresh = true)
 
+    private fun routeListener(context: Context) = object : okhttp3.EventListener() {
+        private val version = revision.value
+        private var startedAt = System.nanoTime()
+        private var headersMs = 0L
+        private var bytes = 0L
+        private var bodyStartedAt = 0L
+        private var bodyMs = 0L
+        private var eligible = false
+
+        override fun requestHeadersEnd(call: okhttp3.Call, request: Request) {
+            startedAt = System.nanoTime()
+        }
+
+        override fun responseHeadersEnd(call: okhttp3.Call, response: okhttp3.Response) {
+            headersMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+            // Challenges, authentication and server errors are not route failures.
+            eligible = response.isSuccessful &&
+                !response.header("Content-Type").orEmpty().contains("text/html", true)
+        }
+
+        override fun responseBodyStart(call: okhttp3.Call) { bodyStartedAt = System.nanoTime() }
+        override fun responseBodyEnd(call: okhttp3.Call, byteCount: Long) {
+            bytes = byteCount
+            bodyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - bodyStartedAt)
+        }
+
+        override fun callEnd(call: okhttp3.Call) {
+            if (eligible) report(call, false, headersMs > 8_000L ||
+                (bytes >= 32_768 && bodyMs > 2_000 && bytes * 1_000 / bodyMs < 16_384))
+        }
+
+        override fun callFailed(call: okhttp3.Call, ioe: java.io.IOException) {
+            if (!call.isCanceled() && classify(ioe) in setOf(ApiFailureKind.DNS, ApiFailureKind.TCP,
+                    ApiFailureKind.TLS, ApiFailureKind.CONNECT_TIMEOUT, ApiFailureKind.READ_TIMEOUT)) {
+                report(call, true, false)
+            }
+        }
+
+        private fun report(call: okhttp3.Call, failed: Boolean, slow: Boolean) {
+            val host = call.request().url.host
+            if (version != revision.value || host !in preferredRouteIps ||
+                !AppSettings.isIpOptimizationEnabled(context) || AppSettings.getManualIp(context) != null) return
+            if (!routingQuality.observe(host, failed, slow, android.os.SystemClock.elapsedRealtime())) return
+            Log.w("NodeRouting", "event=${if (failed) "history_connection_failed" else "quality_degraded"} host=$host")
+            routingScope.launch {
+                try {
+                    val domains = preferredRouteIps.keys.toList()
+                    val results = IpOptimizer.getBestIpsShared(context, domains, forceRefresh = true)
+                    if (version == revision.value && results.values.all { it.verified } && domains.isNotEmpty()) {
+                        reinitialize(context)
+                        Log.i("NodeRouting", "event=route_switch_success")
+                    } else Log.w("NodeRouting", "event=route_switch_failed reason=unverified_or_configuration_changed")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("NodeRouting", "event=route_switch_failed cause=${e.javaClass.simpleName}")
+                } finally { routingQuality.finished() }
+            }
+        }
+    }
+
     fun isReady(): Boolean = okHttpClient != null
 
     /**
@@ -407,8 +476,7 @@ object NetworkManager {
     fun userAgent(): String = activeUserAgent
 
     suspend fun reinitialize(context: Context, forceRefresh: Boolean = false) {
-        shutdown()
-        init(context, forceRefresh)
+        init(context, forceRefresh, rebuildClient = true)
     }
 
     fun shutdown() {

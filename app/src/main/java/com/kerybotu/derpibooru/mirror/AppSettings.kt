@@ -88,6 +88,13 @@ object AppSettings {
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    fun getNodeBenchmarkIntervalHours(context: Context): Int =
+        prefs(context).getInt("node_benchmark_interval_hours", 6).coerceIn(1, 168)
+
+    fun setNodeBenchmarkIntervalHours(context: Context, hours: Int) {
+        prefs(context).edit().putInt("node_benchmark_interval_hours", hours.coerceIn(1, 168)).apply()
+    }
+
     fun isIpOptimizationEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_USE_IP_OPTIMIZATION, true)
     fun setIpOptimizationEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(KEY_USE_IP_OPTIMIZATION, enabled).apply()
     fun isCdnDirect(context: Context): Boolean = prefs(context).getBoolean(KEY_CDN_DIRECT, false)
