@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
     private var navigationBarInsetHorizontal = 0
     private var navigationInsetLeft = 0
     private var navigationInsetRight = 0
+    private var uploadFabAnchorGeneration = 0
     private var artworkBasePaddingTop = 0
     private var artworkBasePaddingBottom = 0
     private var homeLoadJob: Job? = null
@@ -385,6 +386,7 @@ class MainActivity : AppCompatActivity() {
             val layoutSpec = AdaptiveLayoutPolicy.specFor(widthDp, heightDp)
             val horizontal = layoutSpec.navigationMode == AdaptiveLayoutPolicy.NavigationMode.RAIL
             binding.glassBottomNavigation.setVerticalNavigation(horizontal)
+            scheduleUploadFabAnchor(horizontal)
 
             val refreshParams = binding.homeRefresh.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
             refreshParams.behavior = null
@@ -405,19 +407,6 @@ class MainActivity : AppCompatActivity() {
             bottomParams.marginEnd = 0
             bottomParams.bottomMargin = if (horizontal) 0 else navigationBarHeight + dp(Ui2DesignSystem.Spacing.md)
             binding.glassBottomNavigation.layoutParams = bottomParams
-
-            val fabParams = binding.fabUploadContainer.layoutParams as? android.view.ViewGroup.MarginLayoutParams
-            fabParams?.let {
-                if (it is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
-                    it.anchorId = R.id.glass_bottom_navigation
-                    it.anchorGravity = android.view.Gravity.TOP or android.view.Gravity.END
-                    it.gravity = android.view.Gravity.TOP or android.view.Gravity.END
-                    it.topMargin = -dp(28)
-                    it.marginEnd = 0
-                    it.rightMargin = 0
-                }
-                binding.fabUploadContainer.layoutParams = it
-            }
 
             binding.glassBottomNavigation.post {
                 if (!isFinishing) {
@@ -543,18 +532,7 @@ class MainActivity : AppCompatActivity() {
             columnCount = homeArtworkViewport().columns
             (binding.recyclerView.layoutManager as? GridLayoutManager)?.spanCount = columnCount
         }
-        (binding.fabUploadContainer.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { params ->
-            if (params is androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
-                params.anchorId = R.id.glass_bottom_navigation
-                params.anchorGravity = android.view.Gravity.TOP or android.view.Gravity.END
-                params.gravity = android.view.Gravity.TOP or android.view.Gravity.END
-                params.topMargin = -binding.fabUploadContainer.measuredHeight / 2
-                params.marginEnd = 0
-                params.rightMargin = 0
-            }
-            binding.fabUploadContainer.layoutParams = params
-        }
-        updateUploadFabPosition()
+        scheduleUploadFabAnchor(horizontal)
         // Video controls have their own relationship to the Bottom Island;
         // keep that safe-area calculation independent from the artwork grid.
         // The bottom island's margin already contains the system navigation
@@ -1168,25 +1146,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUploadFabPosition() {
         val navigation = binding.glassBottomNavigation
-        if (AdaptiveLayoutPolicy.isHorizontalLayout(resources.configuration)) {
+        val horizontal = navigation.height > navigation.width
+        if (horizontal) {
             val fabParams = binding.fabUploadContainer.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
                 ?: return
-            fabParams.anchorId = View.NO_ID
-            fabParams.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
-            fabParams.marginEnd = dp(Ui2DesignSystem.Spacing.md)
-            fabParams.bottomMargin = navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.md)
-            binding.fabUploadContainer.layoutParams = fabParams
+            if (fabParams.anchorId != View.NO_ID || fabParams.gravity != (android.view.Gravity.BOTTOM or android.view.Gravity.END) ||
+                fabParams.marginEnd != dp(Ui2DesignSystem.Spacing.md) || fabParams.bottomMargin != navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.md)) return
             binding.fabUploadContainer.translationX = 0f
             return
         }
         val fabParams = binding.fabUploadContainer.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
-        fabParams?.let {
-            it.anchorId = R.id.glass_bottom_navigation
-            it.anchorGravity = android.view.Gravity.TOP or android.view.Gravity.END
-            it.gravity = android.view.Gravity.TOP or android.view.Gravity.END
-            it.marginEnd = 0
-            binding.fabUploadContainer.layoutParams = it
-        }
+        if (fabParams?.anchorId != R.id.glass_bottom_navigation) return
         val row = navigation.getChildAt(0) as? android.view.ViewGroup ?: return
         val trailingTab = row.getChildAt(row.childCount - 1) ?: return
         val fab = binding.fabUploadContainer
@@ -1198,6 +1168,41 @@ class MainActivity : AppCompatActivity() {
         navigation.getLocationOnScreen(navigationLocation)
         val anchoredFabCenterX = navigationLocation[0] + navigation.width - fab.width / 2f
         fab.translationX = tabCenterX - anchoredFabCenterX
+    }
+
+    /** CoordinatorLayout forbids changing anchor ids during its measure/layout pass. */
+    private fun scheduleUploadFabAnchor(horizontal: Boolean) {
+        if (!::binding.isInitialized) return
+        val generation = ++uploadFabAnchorGeneration
+        binding.fabUploadContainer.post {
+            if (generation != uploadFabAnchorGeneration || isFinishing || isDestroyed) return@post
+            val useRail = horizontal
+            val params = binding.fabUploadContainer.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
+                ?: return@post
+            val anchor = if (useRail) View.NO_ID else R.id.glass_bottom_navigation
+            val gravity = if (useRail) android.view.Gravity.BOTTOM or android.view.Gravity.END
+                else android.view.Gravity.TOP or android.view.Gravity.END
+            val marginEnd = if (useRail) dp(Ui2DesignSystem.Spacing.md) else 0
+            val bottomMargin = if (useRail) navigationBarInsetBottom + dp(Ui2DesignSystem.Spacing.md) else 0
+            val topMargin = if (useRail) 0 else -binding.fabUploadContainer.measuredHeight / 2
+            val needsUpdate = params.anchorId != anchor || params.gravity != gravity ||
+                (useRail && (params.marginEnd != marginEnd || params.bottomMargin != bottomMargin)) ||
+                (!useRail && (params.marginEnd != 0 || params.topMargin != topMargin))
+            if (!needsUpdate) {
+                updateUploadFabPosition()
+                return@post
+            }
+            params.anchorId = anchor
+            params.gravity = gravity
+            params.marginEnd = marginEnd
+            params.rightMargin = marginEnd
+            params.bottomMargin = bottomMargin
+            params.topMargin = topMargin
+            if (!useRail) params.anchorGravity = android.view.Gravity.TOP or android.view.Gravity.END
+            binding.fabUploadContainer.layoutParams = params
+            binding.fabUploadContainer.translationX = 0f
+            binding.fabUploadContainer.post { if (!isFinishing && !isDestroyed) updateUploadFabPosition() }
+        }
     }
 
     /** Route the toolbar affordance to the shared UI 2.0 menu throughout startup. */
