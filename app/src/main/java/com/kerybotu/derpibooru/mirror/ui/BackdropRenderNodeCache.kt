@@ -129,7 +129,14 @@ internal object BackdropRenderNodeCache {
         val entry = entries[source] ?: return
         if (entry.rejected) return
         val node = consumer?.let(entry.consumerNodes::get) ?: entry.node
-        if (node.hasDisplayList()) canvas.drawRenderNode(node)
+        if (node.hasDisplayList()) {
+            // GlassLensRenderer/HardwareBackdropBlur already translates the
+            // capture canvas using the current source/consumer screen offset.
+            // The prepared node is source-local; applying another matrix here
+            // double-translates scrolling content and makes it drift away from
+            // the glass island.
+            canvas.drawRenderNode(node)
+        }
     }
 
     fun hasPreparedFrame(source: View, consumer: LiquidGlassView): Boolean {

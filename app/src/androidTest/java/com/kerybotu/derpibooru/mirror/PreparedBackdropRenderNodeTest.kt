@@ -1,6 +1,8 @@
 package com.kerybotu.derpibooru.mirror
 
 import android.graphics.RenderNode
+import android.graphics.Matrix
+import android.graphics.Bitmap
 import android.view.View
 import android.widget.FrameLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -49,6 +51,48 @@ class PreparedBackdropRenderNodeTest {
             assertFalse(BackdropRenderNodeCache.prepareForTest(source))
 
             BackdropRenderNodeCache.releaseForTest(source)
+        }
+    }
+
+    @Test
+    fun preparedBackdropNodeRemainsSourceLocalForLibraryRendererOffset() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val window = FrameLayout(context).apply { layout(0, 0, 500, 500) }
+            val source = View(context).apply { layout(0, 0, 500, 500) }
+            val consumer = LiquidGlassView(context).apply { layout(24, 120, 224, 220) }
+            window.addView(source)
+            window.addView(consumer)
+            assertTrue(BackdropRenderNodeCache.prepareForTest(source, consumer))
+            val bitmap = Bitmap.createBitmap(500, 500, Bitmap.Config.ARGB_8888)
+            val canvas = MatrixRecordingCanvas(bitmap)
+            canvas.translate(-24f, -120f)
+            BackdropRenderNodeCache.drawPreparedForTest(source, consumer, canvas)
+            assertTranslation(canvas.lastNodeMatrix, -24f, -120f)
+
+            consumer.translationY = 64f
+            canvas.translate(0f, -64f)
+            BackdropRenderNodeCache.drawPreparedForTest(source, consumer, canvas)
+            assertTranslation(canvas.lastNodeMatrix, -24f, -184f)
+            BackdropRenderNodeCache.releaseForTest(source)
+            bitmap.recycle()
+        }
+    }
+
+    private fun assertTranslation(matrix: Matrix, expectedX: Float, expectedY: Float) {
+        val values = FloatArray(9)
+        matrix.getValues(values)
+        assertEquals(1f, values[Matrix.MSCALE_X], .001f)
+        assertEquals(1f, values[Matrix.MSCALE_Y], .001f)
+        assertEquals(expectedX, values[Matrix.MTRANS_X], .001f)
+        assertEquals(expectedY, values[Matrix.MTRANS_Y], .001f)
+    }
+
+    private class MatrixRecordingCanvas(bitmap: android.graphics.Bitmap) : android.graphics.Canvas(bitmap) {
+        val lastNodeMatrix = Matrix()
+
+        override fun drawRenderNode(node: RenderNode) {
+            getMatrix(lastNodeMatrix)
         }
     }
 
