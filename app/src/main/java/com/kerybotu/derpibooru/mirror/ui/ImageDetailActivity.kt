@@ -87,6 +87,9 @@ class ImageDetailActivity : AppCompatActivity() {
     private var baseScale = 1f
     private var maxScale = 5f
     private var matrixDrawable: Drawable? = null
+    // Fit artwork beside the information card, but never clip the zoom canvas to it.
+    // System/navigation insets still position controls and the initial fit rectangle.
+    private val imageFitBounds = Rect()
     private var renderingActive = false
     private var resumeBackdropEnabled = true
     private val renderExperiment by lazy { RenderCrashExperiment.from(this) }
@@ -470,10 +473,20 @@ class ImageDetailActivity : AppCompatActivity() {
         }
         val mediaWidth = if (wide) (available - width - gutter).coerceAtLeast(1) else available
         val mediaHeight = if (wide) height else (height - cardHeight - gutter).coerceAtLeast(1)
+        val fit = Rect(safe.left + gutter, top, safe.left + gutter + mediaWidth, top + mediaHeight)
+        if (imageFitBounds != fit) {
+            imageFitBounds.set(fit)
+            if (!isImageZoomed()) matrixDrawable = null
+        }
         listOf(b.detailImage, b.detailVideoPlayer, b.detailSpoilerCover).forEach { media ->
             val lp = media.layoutParams as android.widget.FrameLayout.LayoutParams
-            if (lp.width != mediaWidth || lp.height != mediaHeight || lp.leftMargin != safe.left + gutter || lp.topMargin != top) {
-                lp.width = mediaWidth; lp.height = mediaHeight; lp.leftMargin = safe.left + gutter; lp.topMargin = top
+            val imageCanvas = media === b.detailImage
+            val targetWidth = if (imageCanvas) b.root.width else mediaWidth
+            val targetHeight = if (imageCanvas) b.root.height else mediaHeight
+            val targetLeft = if (imageCanvas) 0 else safe.left + gutter
+            val targetTop = if (imageCanvas) 0 else top
+            if (lp.width != targetWidth || lp.height != targetHeight || lp.leftMargin != targetLeft || lp.topMargin != targetTop) {
+                lp.width = targetWidth; lp.height = targetHeight; lp.leftMargin = targetLeft; lp.topMargin = targetTop
                 lp.gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT; media.layoutParams = lp
                 if (media === b.detailImage && !isImageZoomed()) matrixDrawable = null
             }
@@ -741,11 +754,13 @@ class ImageDetailActivity : AppCompatActivity() {
 
     private fun fitImageToScreen(width: Int, height: Int) {
         if (width <= 0 || height <= 0 || b.detailImage.width <= 0 || b.detailImage.height <= 0) return
-        baseScale = minOf(b.detailImage.width.toFloat() / width, b.detailImage.height.toFloat() / height).coerceAtLeast(0.01f)
+        val fit = imageFitBounds.takeUnless { it.isEmpty } ?: Rect(0, 0, b.detailImage.width, b.detailImage.height)
+        baseScale = minOf(fit.width().toFloat() / width, fit.height().toFloat() / height).coerceAtLeast(0.01f)
         maxScale = baseScale * 5f
         imageMatrix.reset()
         imageMatrix.postScale(baseScale, baseScale)
-        imageMatrix.postTranslate((b.detailImage.width - width * baseScale) / 2f, (b.detailImage.height - height * baseScale) / 2f)
+        imageMatrix.postTranslate(fit.left + (fit.width() - width * baseScale) / 2f,
+            fit.top + (fit.height() - height * baseScale) / 2f)
         b.detailImage.imageMatrix = imageMatrix
     }
 
@@ -754,6 +769,10 @@ class ImageDetailActivity : AppCompatActivity() {
         val values = FloatArray(9)
         imageMatrix.getValues(values)
         val scale = currentImageScale()
+        if (scale <= baseScale * 1.001f) {
+            fitImageToScreen(drawable.intrinsicWidth, drawable.intrinsicHeight)
+            return
+        }
         val contentWidth = drawable.intrinsicWidth * scale
         val contentHeight = drawable.intrinsicHeight * scale
         val minX = if (contentWidth <= b.detailImage.width) (b.detailImage.width - contentWidth) / 2f else b.detailImage.width - contentWidth

@@ -1075,7 +1075,12 @@ class MainActivity : AppCompatActivity() {
         binding.appBarLayout.scaleY = 1f
         if (enabled) {
             // Keep both ancestors transparent so the live glass backdrop stays visible.
-            binding.appBarLayout.background = android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+            // AppBarLayout converts ColorDrawable into a MaterialShapeDrawable:
+            // its lift-on-scroll color animation can then paint an opaque surface
+            // behind the glass. The host owns geometry, never a second material.
+            binding.appBarLayout.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.TRANSPARENT)
+            }
             binding.appBarLayout.elevation = dp(Ui2DesignSystem.Elevation.islandDp.toInt()).toFloat()
             binding.headerGlass.cornerRadius = Ui2DesignSystem.Shape.topIsland * resources.displayMetrics.density
             // Clip the toolbar and the glass's GPU layer to the same rounded boundary.

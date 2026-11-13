@@ -67,13 +67,14 @@ internal object GlassFallbackMaterial {
         Spec(0xC7F4F7FA.toInt(), 0x8CFFFFFF.toInt(), 0x59FFFFFF)
     }
 
-    fun drawable(spec: Spec, cornerRadius: Float, strokeWidth: Float): Drawable =
-        TranslucentGlassDrawable(spec, cornerRadius, strokeWidth)
+    fun drawable(spec: Spec, cornerRadius: Float, strokeWidth: Float, layeredEdges: Boolean = false): Drawable =
+        TranslucentGlassDrawable(spec, cornerRadius, strokeWidth, layeredEdges)
 
     private class TranslucentGlassDrawable(
         private val spec: Spec,
         private val radius: Float,
-        private val strokeWidth: Float
+        private val strokeWidth: Float,
+        private val layeredEdges: Boolean
     ) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val rect = RectF()
@@ -106,6 +107,32 @@ internal object GlassFallbackMaterial {
             paint.strokeWidth = strokeWidth.coerceAtLeast(1f)
             paint.color = withDrawableAlpha(spec.highlightColor)
             canvas.drawPath(path, paint)
+
+            if (layeredEdges) {
+                // Home's low-cost coating keeps transmitted artwork unchanged.
+                // A shallow inner rim gives the existing material thickness;
+                // no gradients, capture, blur, or per-frame material rebuild.
+                val depth = strokeWidth * 2.5f
+                rect.set(bounds)
+                rect.inset(depth, depth)
+                val innerRadius = (radius - depth).coerceAtLeast(0f)
+                path.reset()
+                path.moveTo(rect.left, rect.bottom - innerRadius)
+                path.quadTo(rect.left, rect.bottom, rect.left + innerRadius, rect.bottom)
+                path.lineTo(rect.right - innerRadius, rect.bottom)
+                path.quadTo(rect.right, rect.bottom, rect.right, rect.bottom - innerRadius)
+                paint.strokeWidth = strokeWidth * 1.5f
+                paint.color = withDrawableAlpha(0x24000000)
+                canvas.drawPath(path, paint)
+                path.reset()
+                path.moveTo(rect.left, rect.top + innerRadius)
+                path.quadTo(rect.left, rect.top, rect.left + innerRadius, rect.top)
+                path.lineTo(rect.right - innerRadius, rect.top)
+                path.quadTo(rect.right, rect.top, rect.right, rect.top + innerRadius)
+                paint.strokeWidth = strokeWidth
+                paint.color = withDrawableAlpha(spec.highlightColor)
+                canvas.drawPath(path, paint)
+            }
         }
 
         override fun setAlpha(alpha: Int) { drawableAlpha = alpha.coerceIn(0, 255); invalidateSelf() }
@@ -233,7 +260,10 @@ object GlassWidgetStyle {
             GlassFallbackMaterial.drawable(
                 fallbackSpec,
                 view.cornerRadius,
-                view.resources.displayMetrics.density.coerceAtLeast(1f)
+                view.resources.displayMetrics.density.coerceAtLeast(1f),
+                // Only Home requested a deeper safe coating. Other pages and
+                // every normal hardware rendering plan retain their material.
+                layeredEdges = view.id == com.kerybotu.derpibooru.mirror.R.id.header_glass
             )
         } else {
             BackdropFallback(view, color).apply {
