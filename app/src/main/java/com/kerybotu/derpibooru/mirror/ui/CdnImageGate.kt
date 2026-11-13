@@ -6,6 +6,8 @@ import android.graphics.drawable.Drawable
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.Priority
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.signature.ObjectKey
 import com.bumptech.glide.load.engine.GlideException
 import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.target.Target
@@ -35,10 +37,17 @@ object CdnImageGate {
         onFailure: ((Exception) -> Unit)? = null
     ) {
         ensureRegistered(view.context)
-        var req = Glide.with(view).load(url).priority(Priority.HIGH)
+        val primary = url?.trim()?.takeIf { it.isNotEmpty() }
+        val fallback = placeholderUrl?.trim()?.takeIf { it.isNotEmpty() && it != primary }
+        val model = primary ?: fallback
+        var req = Glide.with(view).load(model).priority(Priority.HIGH)
+            .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+            .signature(ObjectKey(model ?: "empty-image"))
             .placeholder(R.drawable.ic_image_placeholder)
-        if (!placeholderUrl.isNullOrBlank()) {
-            req = req.thumbnail(Glide.with(view).load(placeholderUrl))
+            .fallback(R.drawable.ic_image_error)
+            .error(R.drawable.ic_image_error)
+        if (primary != null && fallback != null) {
+            req = req.thumbnail(Glide.with(view).load(fallback).diskCacheStrategy(DiskCacheStrategy.AUTOMATIC))
         }
         if (onFailure != null || onResourceChanged != null) {
             req.listener(object : RequestListener<Drawable> {

@@ -488,7 +488,23 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailDescription.maxLines = if (infoCard.progress >= .5f) Int.MAX_VALUE else 3
         listOf(b.detailAuthorPanel, b.detailInteractionPanel).forEach { island ->
             val lp = island.layoutParams as LinearLayout.LayoutParams
-            if (lp.width != -1) { lp.width = -1; island.layoutParams = lp }
+            // In landscape the interaction island is content-sized inside the
+            // information card.  It must not reserve a second full-width
+            // column beside the media; portrait keeps the existing full-width
+            // reading layout.
+            val desiredWidth = if (wide && island === b.detailInteractionPanel) {
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            } else LinearLayout.LayoutParams.MATCH_PARENT
+            if (lp.width != desiredWidth) { lp.width = desiredWidth; island.layoutParams = lp }
+            if (island === b.detailInteractionPanel) {
+                (island.getChildAt(0)?.layoutParams as? LinearLayout.LayoutParams)?.let { child ->
+                    val childWidth = if (wide) LinearLayout.LayoutParams.WRAP_CONTENT else LinearLayout.LayoutParams.MATCH_PARENT
+                    if (child.width != childWidth) {
+                        child.width = childWidth
+                        island.getChildAt(0).layoutParams = child
+                    }
+                }
+            }
         }
         if (b.detailContent.layoutParams.width != -1) b.detailContent.layoutParams = b.detailContent.layoutParams.apply { this.width = -1 }
         val header = b.detailTopIsland.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams

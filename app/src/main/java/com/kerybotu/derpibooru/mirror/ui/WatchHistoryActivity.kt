@@ -139,7 +139,10 @@ class WatchHistoryActivity : AppCompatActivity() {
         private val check = TextView(this@WatchHistoryActivity).apply { gravity = Gravity.CENTER; textSize = 24f; setTextColor(PaletteManager.colors(this@WatchHistoryActivity).primary) }
         init { row.addView(preview, LinearLayout.LayoutParams(dp(88), dp(88))); row.addView(text, LinearLayout.LayoutParams(0, -2, 1f)); row.addView(check, LinearLayout.LayoutParams(dp(48), dp(48))) }
         fun bind(entry: WatchHistoryEntry) {
-            CdnImageGate.load(preview, entry.thumbnailUrl)
+            // Older records may have lost their preview URL.  Reuse the
+            // shared loader with the original media URL as a secondary
+            // source; it still checks Glide's disk cache before the network.
+            CdnImageGate.load(preview, entry.thumbnailUrl, entry.fullUrl)
             val label = entry.title.ifBlank { "图片 #${entry.imageId}" }
             text.text = "$label\n#${entry.imageId} · ${entry.mediaType} · ${entry.watchCount} 次\n最近观看：${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(entry.lastWatchedAt))}"
             check.visibility = if (selecting) View.VISIBLE else View.GONE

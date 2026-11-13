@@ -381,6 +381,23 @@ object GlassWidgetStyle {
             view.outlineAmbientShadowColor = colors.glassShadow
             view.outlineSpotShadowColor = colors.glassShadow
         }
+        // Palette/theme refreshes also call applyMaterial(). Preserve the
+        // already selected safe or GPU plan instead of resetting the live
+        // surface to the flat defaults above.  The prepared-source check is
+        // side-effect free and keeps API 28 on the fallback path.
+        if (renderingStates.containsKey(view)) {
+            val fallback = isPerformanceFallback(view.context) || Build.VERSION.SDK_INT < 29
+            val sourceReady = hasActivePreparedSource(view)
+            configureRenderer(
+                view,
+                GlassRenderingPlan.resolve(
+                    fallbackEnabled = fallback,
+                    requestedActive = renderingStates[view] == true,
+                    sourceReady = sourceReady,
+                    apiLevel = Build.VERSION.SDK_INT
+                )
+            )
+        }
         when (view) {
             is LiquidGlassButton -> view.setTextColor(colors.glassText)
             is LiquidGlassChip -> view.setTextColor(colors.glassText)
