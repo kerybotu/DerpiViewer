@@ -53,6 +53,9 @@ class ImageDetailActivity : AppCompatActivity() {
     private lateinit var image: Image
     private lateinit var infoCard: DetailInfoCard
     private lateinit var compactSummary: android.widget.TextView
+    private lateinit var compactStatistics: DetailStatisticsView
+    private lateinit var portraitInteractionParams: LinearLayout.LayoutParams
+    private lateinit var portraitAuthorParams: LinearLayout.LayoutParams
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var fullUrl: String? = null
     private var mediaMimeType: String? = null
@@ -162,11 +165,17 @@ class ImageDetailActivity : AppCompatActivity() {
         }
         b.root.addView(infoCard, androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams(-1, -1))
         infoCard.addView(b.bottomSheet, android.widget.FrameLayout.LayoutParams(-1, -1))
+        portraitInteractionParams = LinearLayout.LayoutParams(b.detailInteractionPanel.layoutParams as LinearLayout.LayoutParams)
+        portraitAuthorParams = LinearLayout.LayoutParams(b.detailAuthorPanel.layoutParams as LinearLayout.LayoutParams)
+        compactStatistics = DetailStatisticsView(this)
+        b.bottomSheet.addView(compactStatistics, 3, LinearLayout.LayoutParams(-1, -2))
         compactSummary = android.widget.TextView(this).apply {
-            textSize = 14f; setPadding(dp(16), dp(12), dp(16), dp(12))
+            textSize = 14f; setPadding(dp(16), dp(8), dp(16), dp(12))
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            maxLines = 5
             setOnClickListener { infoCard.snap(DetailInfoState.EXPANDED) }
         }
-        b.bottomSheet.addView(compactSummary, 3, android.widget.LinearLayout.LayoutParams(-1, -2))
+        b.bottomSheet.addView(compactSummary, 4, LinearLayout.LayoutParams(-1, 0, 1f))
         b.sheetHandle.layoutParams = b.sheetHandle.layoutParams.apply { width = -1; height = dp(48) }
         b.sheetHandle.contentDescription = "向左拖动展开信息，向右拖动收起"
         b.sheetHandle.setOnClickListener { infoCard.snap(if (infoCard.progress >= .5f) DetailInfoState.COMPACT else DetailInfoState.EXPANDED) }
@@ -296,6 +305,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun bindInitial() {
         val requestedId = image.id
         val bindingGeneration = ++imageBindingGeneration
+        compactStatistics.bind(null, loading = true)
         val bindingStartedAt = android.os.SystemClock.elapsedRealtime()
         spoilerRevealed = false
         commentsJob?.cancel()
@@ -400,6 +410,7 @@ class ImageDetailActivity : AppCompatActivity() {
         b.sheetHandle.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         if (::infoCard.isInitialized) GlassWidgetStyle.apply(infoCard, Ui2DesignSystem.Shape.large, palette, GlassWidgetStyle.MaterialRole.READING)
         if (::compactSummary.isInitialized) compactSummary.setTextColor(palette.glassText)
+        if (::compactStatistics.isInitialized) compactStatistics.applyColor(palette.glassText)
         b.btnShare.imageTintList = ColorStateList.valueOf(palette.onSurface)
         b.btnMore.imageTintList = ColorStateList.valueOf(palette.onSurface)
         b.detailUploaderAvatar.imageTintList = ColorStateList.valueOf(palette.glassText)
@@ -498,27 +509,9 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailInteractionPanel.visibility = if (expandedInfo) View.VISIBLE else View.GONE
         b.detailDivider.visibility = View.GONE
         compactSummary.visibility = if (infoCard.progress < .5f) View.VISIBLE else View.GONE
+        compactStatistics.visibility = compactSummary.visibility
         b.detailDescription.maxLines = if (infoCard.progress >= .5f) Int.MAX_VALUE else 3
-        listOf(b.detailAuthorPanel, b.detailInteractionPanel).forEach { island ->
-            val lp = island.layoutParams as LinearLayout.LayoutParams
-            // In landscape the interaction island is content-sized inside the
-            // information card.  It must not reserve a second full-width
-            // column beside the media; portrait keeps the existing full-width
-            // reading layout.
-            val desiredWidth = if (wide && island === b.detailInteractionPanel) {
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            } else LinearLayout.LayoutParams.MATCH_PARENT
-            if (lp.width != desiredWidth) { lp.width = desiredWidth; island.layoutParams = lp }
-            if (island === b.detailInteractionPanel) {
-                (island.getChildAt(0)?.layoutParams as? LinearLayout.LayoutParams)?.let { child ->
-                    val childWidth = if (wide) LinearLayout.LayoutParams.WRAP_CONTENT else LinearLayout.LayoutParams.MATCH_PARENT
-                    if (child.width != childWidth) {
-                        child.width = childWidth
-                        island.getChildAt(0).layoutParams = child
-                    }
-                }
-            }
-        }
+        placeDetailActions(wide)
         if (b.detailContent.layoutParams.width != -1) b.detailContent.layoutParams = b.detailContent.layoutParams.apply { this.width = -1 }
         val header = b.detailTopIsland.layoutParams as androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams
         val headerWidth = minOf(dp(240), available)
@@ -526,6 +519,42 @@ class ImageDetailActivity : AppCompatActivity() {
             header.width = headerWidth; header.topMargin = (bars?.top ?: 0) + dp(8)
             header.gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
             header.leftMargin = 0; header.rightMargin = 0; b.detailTopIsland.layoutParams = header
+        }
+    }
+
+    private fun placeDetailActions(wide: Boolean) {
+        val panel = b.detailInteractionPanel
+        val author = b.detailAuthorPanel
+        if (wide) {
+            if (panel.parent !== b.detailContent) {
+                (panel.parent as android.view.ViewGroup).removeView(panel)
+                b.detailContent.addView(panel, 0, LinearLayout.LayoutParams(portraitInteractionParams).apply {
+                    width = LinearLayout.LayoutParams.MATCH_PARENT
+                    leftMargin = 0; rightMargin = 0; marginStart = 0; marginEnd = 0
+                    topMargin = 0
+                })
+            }
+            if (author.parent !== b.detailContent) {
+                (author.parent as android.view.ViewGroup).removeView(author)
+                b.detailContent.addView(author, 1, LinearLayout.LayoutParams(portraitAuthorParams).apply {
+                    width = LinearLayout.LayoutParams.MATCH_PARENT
+                    leftMargin = 0; rightMargin = 0; marginStart = 0; marginEnd = 0
+                })
+            }
+        } else {
+            if (panel.parent !== b.bottomSheet || author.parent !== b.bottomSheet) {
+                (panel.parent as android.view.ViewGroup).removeView(panel)
+                (author.parent as android.view.ViewGroup).removeView(author)
+                b.bottomSheet.addView(author, 1, LinearLayout.LayoutParams(portraitAuthorParams))
+                b.bottomSheet.addView(panel, 2, LinearLayout.LayoutParams(portraitInteractionParams))
+            }
+        }
+        if (panel.layoutParams.width != LinearLayout.LayoutParams.MATCH_PARENT) {
+            panel.layoutParams = panel.layoutParams.apply { width = LinearLayout.LayoutParams.MATCH_PARENT }
+        }
+        val row = panel.getChildAt(0)
+        if (row.layoutParams.width != LinearLayout.LayoutParams.MATCH_PARENT) {
+            row.layoutParams = row.layoutParams.apply { width = LinearLayout.LayoutParams.MATCH_PARENT }
         }
     }
 
@@ -806,6 +835,10 @@ class ImageDetailActivity : AppCompatActivity() {
                     return@launch
                 }
                 val item = JSONObject(json).getJSONObject("image")
+                fun statistic(key: String): Int? = (item.opt(key) as? Number)?.toInt()?.takeIf { it >= 0 }
+                compactStatistics.bind(DetailStatistics(
+                    statistic("upvotes"), statistic("faves"), statistic("comment_count")
+                ))
                 val mime = item.optString("mime_type").takeIf(String::isNotBlank) ?: image.mimeType
                 val title = item.takeUnless { it.isNull("name") }?.optString("name").orEmpty()
                 val uploader = item.takeUnless { it.isNull("uploader") }?.optString("uploader")?.takeIf(String::isNotBlank)
@@ -867,6 +900,7 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun showDetailLoadFailure() {
+        compactStatistics.bind(null)
         b.detailLoadStatus.setText(com.kerybotu.derpibooru.mirror.R.string.detail_retry)
         b.detailLoadStatus.isVisible = true
         b.detailLoadStatus.isEnabled = true
