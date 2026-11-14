@@ -583,6 +583,7 @@ class ImageDetailActivity : AppCompatActivity() {
         var lastFocusY = 0f
         val scaleGesture = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                if (isSpoilerVisible()) return false
                 draggingMedia = false
                 lastFocusX = detector.focusX
                 lastFocusY = detector.focusY
@@ -616,6 +617,13 @@ class ImageDetailActivity : AppCompatActivity() {
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (isSpoilerVisible()) {
+                    val media = if (b.detailVideoPlayer.visibility == View.VISIBLE) b.detailVideoPlayer else b.detailImage
+                    SpoilerCover.reveal(b.detailSpoilerCover, media) {
+                        spoilerRevealed = true
+                    }
+                    return true
+                }
                 if (!isImageZoomed()) openLargePreview()
                 return true
             }
@@ -627,7 +635,7 @@ class ImageDetailActivity : AppCompatActivity() {
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                if (b.detailImage.visibility != View.VISIBLE) return false
+                if (isSpoilerVisible() || b.detailImage.visibility != View.VISIBLE) return false
                 val current = currentImageScale()
                 val target = if (current > baseScale * 1.2f) baseScale else (baseScale * 2.5f).coerceAtMost(maxScale)
                 imageMatrix.postScale(target / current, target / current, e.x, e.y)
@@ -642,6 +650,12 @@ class ImageDetailActivity : AppCompatActivity() {
                 distanceX: Float,
                 distanceY: Float
             ): Boolean {
+                if (isSpoilerVisible()) {
+                    // Keep horizontal movement available for the existing
+                    // gallery transition, but never pan the obscured artwork.
+                    return downEvent != null &&
+                        kotlin.math.abs(currentEvent.x - downEvent.x) > kotlin.math.abs(currentEvent.y - downEvent.y)
+                }
                 if (isImageZoomed()) {
                     imageMatrix.postTranslate(-distanceX, -distanceY)
                     clampImageMatrix()
@@ -674,7 +688,7 @@ class ImageDetailActivity : AppCompatActivity() {
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) ignoreTransitionGesture = true
                 true
             } else {
-            if (view === b.detailImage) scaleGesture.onTouchEvent(event)
+            if (view === b.detailImage && !isSpoilerVisible()) scaleGesture.onTouchEvent(event)
             if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
                 // A pinch owns this stream before ScaleGestureDetector reaches
                 // its minimum span. Cancel pending single-finger long presses.
@@ -780,6 +794,8 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun isImageZoomed() = b.detailImage.visibility == View.VISIBLE && currentImageScale() > baseScale * 1.05f
+
+    private fun isSpoilerVisible() = ::b.isInitialized && b.detailSpoilerCover.visibility == View.VISIBLE
 
     private fun fitImageToScreen(width: Int, height: Int) {
         if (width <= 0 || height <= 0 || b.detailImage.width <= 0 || b.detailImage.height <= 0) return

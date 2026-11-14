@@ -44,7 +44,11 @@ object SpoilerCover {
         overlay.isClickable = false
         overlay.isFocusable = false
         overlay.setBackgroundColor(ColorUtils.setAlphaComponent(palette.surface, 218))
-        overlay.setOnClickListener(if (interactive) View.OnClickListener { } else null)
+        // The cover is visual only.  A clickable full-screen cover consumes the
+        // ACTION_DOWN stream and prevents the detail media view from receiving
+        // horizontal paging gestures.  Reveal taps are handled by the explicit
+        // button, or by the detail gesture owner for the full-cover tap target.
+        overlay.setOnClickListener(null)
         obscure(contentView, true)
 
         val content = LinearLayout(context).apply {
@@ -80,17 +84,23 @@ object SpoilerCover {
         overlay.addView(content, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
 
         reveal.setOnClickListener {
-            overlay.animate()
-                .alpha(0f)
-                .setDuration(180L)
-                .withEndAction {
-                    overlay.visibility = View.GONE
-                    overlay.alpha = 1f
-                    obscure(contentView, false)
-                    onRevealed()
-                }
-                .start()
+            reveal(overlay, contentView, onRevealed)
         }
+    }
+
+    /** Reveals a currently bound cover while keeping the visual transition intact. */
+    fun reveal(overlay: FrameLayout, contentView: View, onRevealed: () -> Unit = {}) {
+        if (overlay.visibility != View.VISIBLE) return
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(180L)
+            .withEndAction {
+                overlay.visibility = View.GONE
+                overlay.alpha = 1f
+                obscure(contentView, false)
+                onRevealed()
+            }
+            .start()
     }
 
     private fun obscure(view: View, enabled: Boolean) {
