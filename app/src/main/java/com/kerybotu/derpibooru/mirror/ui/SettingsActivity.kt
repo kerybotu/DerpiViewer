@@ -459,6 +459,11 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun glassSpinner() = Spinner(this).apply {
         background = roundedBackground(PaletteManager.colors(this@SettingsActivity).glassSurface, PaletteManager.colors(this@SettingsActivity).glassBorder, 16f)
+        setSpinnerPopupBackground(roundedBackground(
+            PaletteManager.colors(this@SettingsActivity).glassSurfaceElevated,
+            PaletteManager.colors(this@SettingsActivity).glassBorder,
+            16f
+        ))
         setPadding(dp(12), 0, dp(8), 0)
     }
 
@@ -634,18 +639,30 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun spinnerAdapter(items: List<String>): ArrayAdapter<String> =
-        object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
-            init { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        object : ArrayAdapter<String>(this, 0, items) {
+            private fun row(
+                position: Int,
+                convertView: View?,
+                dropdown: Boolean
+            ): View {
+                val row = (convertView as? TextView) ?: TextView(this@SettingsActivity)
+                val colors = PaletteManager.colors(this@SettingsActivity)
+                row.text = getItem(position).orEmpty()
+                row.setTextColor(colors.glassText)
+                row.setBackgroundColor(Color.TRANSPARENT)
+                row.gravity = Gravity.CENTER_VERTICAL
+                row.setSingleLine(true)
+                row.textSize = 14f
+                row.minHeight = dp(if (dropdown) 48 else 0)
+                row.setPadding(dp(if (dropdown) 16 else 0), 0, dp(12), 0)
+                return row
+            }
 
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
-                super.getView(position, convertView, parent).apply {
-                    (this as? TextView)?.setTextColor(PaletteManager.colors(this@SettingsActivity).glassText)
-                }
+                row(position, convertView, dropdown = false)
 
             override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
-                super.getDropDownView(position, convertView, parent).apply {
-                    (this as? TextView)?.setTextColor(PaletteManager.colors(this@SettingsActivity).glassText)
-                }
+                row(position, convertView, dropdown = true)
         }
 
     private fun bindActions() {
@@ -788,6 +805,7 @@ class SettingsActivity : AppCompatActivity() {
         updateSpinnerPalette(nodeBenchmarkInterval, colors)
         updateSpinnerPalette(spinnerSpoilerMode, colors)
         (updateFrequency.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
+        (nodeBenchmarkInterval.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
         (spinnerSpoilerMode.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
         applyTextPalette(contentColumn, colors)
         updateGlassRendering()
@@ -829,6 +847,15 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun updateSpinnerPalette(spinner: Spinner, colors: PaletteDefinitions.Scheme) {
         spinner.background = roundedBackground(colors.glassSurface, colors.glassBorder, 16f)
+        spinner.setSpinnerPopupBackground(roundedBackground(colors.glassSurfaceElevated, colors.glassBorder, 16f))
+    }
+
+    /** Android's platform Spinner exposes this only on some implementations. */
+    private fun Spinner.setSpinnerPopupBackground(drawable: android.graphics.drawable.Drawable) {
+        runCatching {
+            javaClass.getMethod("setPopupBackgroundDrawable", android.graphics.drawable.Drawable::class.java)
+                .invoke(this, drawable)
+        }
     }
 
     private fun roundedBackground(fill: Int, stroke: Int, radiusDp: Float) = GradientDrawable().apply {
