@@ -5,6 +5,7 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.os.Build
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.FrameLayout
@@ -25,6 +26,7 @@ object SpoilerCover {
         interactive: Boolean = true,
         showRevealButton: Boolean = interactive,
         showLabel: Boolean = interactive,
+        touchThrough: Boolean = false,
         onRevealed: () -> Unit = {}
     ) {
         overlay.animate().cancel()
@@ -49,6 +51,23 @@ object SpoilerCover {
         // horizontal paging gestures.  Reveal taps are handled by the explicit
         // button, or by the detail gesture owner for the full-cover tap target.
         overlay.setOnClickListener(null)
+        overlay.setOnTouchListener(if (touchThrough) View.OnTouchListener { _, event ->
+            val sourceLocation = IntArray(2)
+            val targetLocation = IntArray(2)
+            overlay.getLocationOnScreen(sourceLocation)
+            contentView.getLocationOnScreen(targetLocation)
+            val forwarded = MotionEvent.obtain(event)
+            forwarded.offsetLocation(
+                (sourceLocation[0] - targetLocation[0]).toFloat(),
+                (sourceLocation[1] - targetLocation[1]).toFloat()
+            )
+            try {
+                contentView.dispatchTouchEvent(forwarded)
+            } finally {
+                forwarded.recycle()
+            }
+            true
+        } else null)
         obscure(contentView, true)
 
         val content = LinearLayout(context).apply {
@@ -83,8 +102,16 @@ object SpoilerCover {
         }
         overlay.addView(content, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
 
-        reveal.setOnClickListener {
-            reveal(overlay, contentView, onRevealed)
+        if (!touchThrough && showRevealButton) {
+            reveal.setOnClickListener {
+                reveal(overlay, contentView, onRevealed)
+            }
+        } else {
+            // The detail media view owns this gesture stream for paging and
+            // single-tap reveal. Keep the visual affordance without capturing
+            // ACTION_DOWN in a child Button.
+            reveal.isClickable = false
+            reveal.isFocusable = false
         }
     }
 

@@ -78,6 +78,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private var tagRequestGeneration = 0
     private var commentsJob: Job? = null
     private var commentsRequestGeneration = 0
+    private val commentTranslations = mutableMapOf<Comment, CommentTranslation>()
     private var descriptionOriginal = ""
     private var descriptionTranslation: String? = null
     private var dragStartX = 0f
@@ -1059,6 +1060,7 @@ class ImageDetailActivity : AppCompatActivity() {
         commentsJob?.cancel()
         val requestGeneration = ++commentsRequestGeneration
         val requestedId = image.id
+        commentTranslations.clear()
         commentsJob = scope.launch {
             try {
                 val query = java.net.URLEncoder.encode("image_id:$requestedId", "UTF-8")
@@ -1078,7 +1080,9 @@ class ImageDetailActivity : AppCompatActivity() {
                 for (index in 0 until comments.length()) {
                     val comment = comments.optJSONObject(index)?.let(Comment::fromJson) ?: continue
                     val card = GlassCommentCard(this@ImageDetailActivity)
-                    card.bind(comment, null, { }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
+                    card.bind(comment, commentTranslations[comment], {
+                        toggleCommentTranslation(comment, card, requestGeneration, requestedId)
+                    }, { imageId -> startActivity(Intent(this@ImageDetailActivity, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
                     b.detailCommentsPreview.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
                 }
             } catch (cancel: CancellationException) {
@@ -1089,6 +1093,40 @@ class ImageDetailActivity : AppCompatActivity() {
                     b.detailCommentsStatus.text = "评论暂时无法加载"
                     b.detailCommentsStatus.visibility = View.VISIBLE
                 }
+            }
+        }
+    }
+
+    private fun toggleCommentTranslation(comment: Comment, card: GlassCommentCard, requestGeneration: Int, requestedId: Int) {
+        val state = commentTranslations.getOrPut(comment) { CommentTranslation() }
+        if (state.loading) return
+        val bindCard = {
+            card.bind(comment, state, {
+                toggleCommentTranslation(comment, card, requestGeneration, requestedId)
+            }, { imageId -> startActivity(Intent(this, ImageDetailActivity::class.java).putExtra("image_id", imageId)) })
+        }
+        if (state.text != null) {
+            state.showTranslation = !state.showTranslation
+            bindCard()
+            return
+        }
+        state.loading = true
+        bindCard()
+        scope.launch {
+            try {
+                NiuTransService.translate(comment.body).onSuccess {
+                    if (commentsRequestGeneration == requestGeneration && image.id == requestedId && !isFinishing && !isDestroyed) {
+                        state.text = it
+                        state.showTranslation = true
+                    }
+                }.onFailure {
+                    if (commentsRequestGeneration == requestGeneration && image.id == requestedId && !isFinishing && !isDestroyed) {
+                        Toast.makeText(this@ImageDetailActivity, "翻译失败", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } finally {
+                state.loading = false
+                if (commentsRequestGeneration == requestGeneration && image.id == requestedId && !isFinishing && !isDestroyed) bindCard()
             }
         }
     }
@@ -1158,7 +1196,7 @@ class ImageDetailActivity : AppCompatActivity() {
             b.detailVideoPlayer.visibility = View.VISIBLE
             previewPlayer?.release()
             previewPlayer = MediaPreviewPlayer(this, b.detailVideoPlayer).also { it.load(url) }
-            SpoilerCover.bind(b.detailSpoilerCover, b.detailVideoPlayer, image.spoilered, spoilerRevealed) {
+            SpoilerCover.bind(b.detailSpoilerCover, b.detailVideoPlayer, image.spoilered, spoilerRevealed, interactive = true, touchThrough = true) {
                 spoilerRevealed = true
             }
         } else {
@@ -1184,7 +1222,7 @@ class ImageDetailActivity : AppCompatActivity() {
                     }
                 }
             }
-            SpoilerCover.bind(b.detailSpoilerCover, b.detailImage, image.spoilered, spoilerRevealed) {
+            SpoilerCover.bind(b.detailSpoilerCover, b.detailImage, image.spoilered, spoilerRevealed, interactive = true, touchThrough = true) {
                 spoilerRevealed = true
             }
         }
