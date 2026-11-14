@@ -188,6 +188,19 @@ class ImageDetailActivity : AppCompatActivity() {
         b.detailLoadStatus.setOnClickListener { loadDetails() }
         b.btnExpandDescription.setOnClickListener { toggleDescription() }
         b.btnTranslateDescription.setOnClickListener { toggleDescriptionTranslation() }
+        b.btnTranslateDescription.setOnTouchListener { view, event ->
+            // DetailInfoCard spans the full window and intercepts horizontal
+            // movement for its expand/collapse gesture. Keep this button's
+            // touch stream with the button so a small sideways finger drift
+            // cannot cancel its click and start moving the card instead.
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            false
+        }
         b.detailCommentsCount.setOnClickListener { infoCard.snap(DetailInfoState.EXPANDED) }
         b.detailFaves.setOnClickListener {
             val store = LocalFavoritesStore(this)
