@@ -1,6 +1,8 @@
 package com.kerybotu.derpibooru.mirror.ui
 
 import android.content.ClipData
+import android.content.Intent
+import android.content.Intent
 import android.content.ClipboardManager
 import android.graphics.Color
 import android.graphics.Rect
@@ -261,7 +263,13 @@ class SettingsActivity : AppCompatActivity() {
         accountLogout = actionButton("清除本地凭据")
         accountCookiePolicy = actionButton("管理登录状态保存")
         actions.addView(accountLogin, wrapButtonParams())
+        actions.addView(actionButton("登录凭据备份与恢复").apply {
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, CredentialBackupActivity::class.java)) }
+        }, wrapButtonParams())
         actions.addView(accountCookiePolicy, wrapButtonParams())
+        actions.addView(actionButton("登录凭据备份与恢复").apply {
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, CredentialBackupActivity::class.java)) }
+        }, wrapButtonParams())
         actions.addView(accountLogout, wrapButtonParams())
         sectionContent(section).addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         addSection(section)

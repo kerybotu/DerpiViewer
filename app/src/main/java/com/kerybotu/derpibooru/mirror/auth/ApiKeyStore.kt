@@ -40,6 +40,24 @@ object ApiKeyStore {
     }.getOrNull()
 
     fun clear(context: Context) = prefs(context).edit().remove(KEY_CIPHERTEXT).remove(KEY_IV).remove(KEY_USER_ID).apply()
+    /** Synchronous managed write used by backup transactions; never changes Cookie state. */
+    internal fun replaceForBackup(context: Context, apiKey: String): Boolean {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, getOrCreateKey()) }
+        val encrypted = cipher.doFinal(apiKey.toByteArray(Charsets.UTF_8))
+        return prefs(context).edit().putString(KEY_CIPHERTEXT, Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP)).remove(KEY_USER_ID).commit()
+    }
+
+    internal class BackupCheckpoint internal constructor(internal val values: Map<String, Any?>)
+    internal fun backupCheckpoint(context: Context) = BackupCheckpoint(prefs(context).all.toMap())
+    internal fun restoreBackupCheckpoint(context: Context, checkpoint: BackupCheckpoint): Boolean {
+        val edit = prefs(context).edit().clear()
+        checkpoint.values.forEach { (key, value) -> when (value) {
+            is String -> edit.putString(key, value)
+            is Long -> edit.putLong(key, value)
+        } }
+        return edit.commit()
+    }
     fun saveUserId(context: Context, id: Long) = prefs(context).edit().putLong(KEY_USER_ID, id).apply()
     fun getUserId(context: Context): Long? = prefs(context).getLong(KEY_USER_ID, -1L).takeIf { it > 0L }
     fun isLoggedIn(context: Context): Boolean = !get(context).isNullOrBlank()

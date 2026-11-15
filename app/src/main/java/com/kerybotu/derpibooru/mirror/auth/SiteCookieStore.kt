@@ -35,6 +35,63 @@ internal object SiteCookieStore {
 
     enum class Result { SAVED, CLEARED, NOT_AUTHORIZED, INVALID_SNAPSHOT, STORAGE_ERROR }
 
+    /** Full attributes are available only for imported records, never inferred from Cookie headers. */
+    internal fun readBackupCookies(context: Context, origin: String): List<BackupCookie>? {
+        val normalized = normalizeOrigin(origin) ?: return null
+        val header = read(context, normalized) ?: return null
+        val data = preferences(context).getString("backup_records_" + hash(normalized), null) ?: return null
+        return runCatching {
+            val parts = data.split(':')
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+                init(Cipher.DECRYPT_MODE, getOrCreateKey(normalized), GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)))
+                updateAAD((normalized + "|backup-records-v1").toByteArray())
+            }
+            val plain = cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP))
+            try {
+                val cookies = com.google.gson.Gson().fromJson(String(plain), Array<BackupCookie>::class.java).toList()
+                if (cookies.joinToString("; ") { "${it.name}=${it.value}" } != header) null
+                else cookies.filter { it.expiresAt == null || it.expiresAt > System.currentTimeMillis() }
+            } finally { plain.fill(0) }
+        }.getOrNull()
+    }
+
+    /** Both encrypted header and full attributes commit together, using the existing origin key. */
+    internal fun replaceForBackup(context: Context, origin: String, cookies: List<BackupCookie>): Boolean {
+        val normalized = normalizeOrigin(origin) ?: return false
+        val keys = keysFor(normalized)
+        fun encrypt(plain: ByteArray, aad: String): Pair<String, String> = try {
+            Cipher.getInstance("AES/GCM/NoPadding").apply {
+                init(Cipher.ENCRYPT_MODE, getOrCreateKey(normalized)); updateAAD(aad.toByteArray())
+            }.let { Base64.encodeToString(it.doFinal(plain), Base64.NO_WRAP) to Base64.encodeToString(it.iv, Base64.NO_WRAP) }
+        } finally { plain.fill(0) }
+        val header = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+        require(isValidCookieHeader(header))
+        val encrypted = encrypt(header.toByteArray(), normalized)
+        val records = encrypt(com.google.gson.Gson().toJson(cookies).toByteArray(), normalized + "|backup-records-v1")
+        return preferences(context).edit().putString(keys.ciphertext, encrypted.first).putString(keys.iv, encrypted.second)
+            .putString("backup_records_" + hash(normalized), records.second + ":" + records.first)
+            .putString(keys.state, "granted").putLong(KEY_UPDATED_PREFIX + hash(normalized), System.currentTimeMillis())
+            .remove(KEY_AUTH_STATE_PREFIX + hash(normalized)).commit()
+    }
+
+    internal class BackupCheckpoint internal constructor(internal val values: Map<String, Any?>)
+    internal fun backupCheckpoint(context: Context, origin: String): BackupCheckpoint {
+        val normalized = requireNotNull(normalizeOrigin(origin))
+        val keys = keysFor(normalized)
+        val names = setOf(keys.state, keys.ciphertext, keys.iv, KEY_UPDATED_PREFIX + hash(normalized),
+            KEY_AUTH_STATE_PREFIX + hash(normalized), "backup_records_" + hash(normalized))
+        return BackupCheckpoint(names.associateWith { preferences(context).all[it] })
+    }
+    internal fun restoreBackupCheckpoint(context: Context, checkpoint: BackupCheckpoint): Boolean {
+        val edit = preferences(context).edit()
+        checkpoint.values.forEach { (key, value) -> when (value) {
+            is String -> edit.putString(key, value)
+            is Long -> edit.putLong(key, value)
+            else -> edit.remove(key)
+        } }
+        return edit.commit()
+    }
+
     internal fun applyConsentEvent(context: Context, event: CookiePersistenceConsentEvent?, snapshot: OfficialSiteCookieSnapshot?): Result = when (event) {
         is CookiePersistenceConsentEvent.Granted -> if (snapshot == null) Result.INVALID_SNAPSHOT else persistSnapshot(context, snapshot, true)
         CookiePersistenceConsentEvent.Declined -> decline(context, snapshot?.sourceOrigin ?: OFFICIAL_ORIGIN)
@@ -59,6 +116,26 @@ internal object SiteCookieStore {
     internal fun syncFromWebView(context: Context, manager: CookieManager, origin: String = OFFICIAL_ORIGIN): Result {
         val normalized = normalizeOrigin(origin) ?: return Result.INVALID_SNAPSHOT
         if (!hasConsent(context, normalized)) return Result.NOT_AUTHORIZED
+        // Keep imported attributes through ordinary response-cookie refreshes. A
+        // Cookie header alone cannot represent path-specific or host-only scope.
+        val records = readBackupCookies(context, normalized)
+        if (records != null && androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.GET_COOKIE_INFO)) {
+            return runCatching {
+                val base = okhttp3.HttpUrl.Builder().scheme("https").host(URI(normalized).host).build()
+                val updated = (records.map { it.path } + "/").distinct().flatMap { path ->
+                    val url = base.newBuilder().encodedPath(path).build()
+                    androidx.webkit.CookieManagerCompat.getCookieInfo(manager, url.toString()).map { BackupCookie.fromWebView(url, it) }
+                }.filter { it.domain == base.host && !BackupCookie.isChallenge(it.name) }
+                    .distinctBy { Triple(it.name, it.domain, it.path) }
+                if (updated.isEmpty()) {
+                    persistSnapshot(context, OfficialSiteCookieSnapshot("", normalized), false)
+                } else {
+                    CredentialBackupCodec.validate(EncryptedExportPayload(exportedAt = System.currentTimeMillis(), origin = normalized,
+                        includesCookies = true, includesApiKey = false, cookies = updated, apiKey = null))
+                    if (replaceForBackup(context, normalized, updated)) Result.SAVED else Result.STORAGE_ERROR
+                }
+            }.getOrDefault(Result.STORAGE_ERROR)
+        }
         val header = runCatching { manager.getCookie(normalized).orEmpty() }.getOrNull() ?: return Result.INVALID_SNAPSHOT
         return syncSnapshot(context, OfficialSiteCookieSnapshot(header, normalized))
     }
@@ -121,12 +198,18 @@ internal object SiteCookieStore {
         if (!hasConsent(context, normalized)) return false
         val keys = keysFor(normalized)
         return preferences(context).edit().remove(keys.ciphertext).remove(keys.iv)
+            .remove("backup_records_" + hash(normalized))
             .remove(KEY_UPDATED_PREFIX + hash(normalized))
             .putString(KEY_AUTH_STATE_PREFIX + hash(normalized), "rejected").commit()
     }
 
-    internal fun clearWebViewOrigin(manager: CookieManager, origin: String) {
+    internal fun clearWebViewOrigin(manager: CookieManager, origin: String, context: Context? = null) {
         val normalized = normalizeOrigin(origin) ?: return
+        if (context != null) readBackupCookies(context, normalized)?.forEach { record ->
+            manager.setCookie(normalized + record.path.removePrefix("/"),
+                BackupCookie(record.name, "", record.domain, record.path, record.secure,
+                    record.httpOnly, record.hostOnly, 0L).cookie().toString())
+        }
         val names = runCatching { manager.getCookie(normalized).orEmpty() }.getOrNull().orEmpty().split(';')
             .mapNotNull { it.trim().substringBefore('=').takeIf { name -> name.isNotBlank() } }
         names.forEach { name -> manager.setCookie(normalized, "$name=; Path=/; Max-Age=0; Secure") }
@@ -143,6 +226,7 @@ internal object SiteCookieStore {
             editor.clear()
         } else {
             editor.remove(keys!!.state).remove(keys.ciphertext).remove(keys.iv).remove(KEY_UPDATED_PREFIX + hash(normalized)).remove(KEY_AUTH_STATE_PREFIX + hash(normalized))
+            editor.remove("backup_records_" + hash(normalized))
             if (normalized == OFFICIAL_ORIGIN) editor.remove(KEY_CONSENT).remove(KEY_CIPHERTEXT).remove(KEY_IV).remove(LEGACY_KEY_CIPHERTEXT).remove(LEGACY_KEY_IV)
         }
         val deleted = runCatching {
@@ -168,6 +252,7 @@ internal object SiteCookieStore {
         if (!isValidCookieHeader(header)) return invalidateResult(context, origin)
         val keys = keysFor(origin)
         val editor = preferences(context).edit().remove(keys.ciphertext).remove(keys.iv)
+            .remove("backup_records_" + hash(origin))
             .putString(keys.state, if (grantConsent || hasConsent(context, origin)) "granted" else "declined")
             .putLong(KEY_UPDATED_PREFIX + hash(origin), System.currentTimeMillis())
             .remove(KEY_AUTH_STATE_PREFIX + hash(origin))

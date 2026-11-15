@@ -36,6 +36,22 @@ class SharedCookieJar(private val context: Context? = null) : CookieJar {
         val webViewCookies = header?.split(';')?.mapNotNull { Cookie.parse(url, it.trim()) }.orEmpty()
         val appContext = context ?: return webViewCookies
         if (url.isHttps.not()) return webViewCookies
+        SiteCookieStore.readBackupCookies(appContext, "https://${url.host}/")?.let { records ->
+            // Imported records retain Path, Domain, Secure, HttpOnly and expiry.
+            // WebView remains the live source after its own updates invalidate this snapshot.
+            val latest = runCatching {
+                if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.GET_COOKIE_INFO))
+                    androidx.webkit.CookieManagerCompat.getCookieInfo(manager, url.toString()).mapNotNull { Cookie.parse(url, it) }
+                else emptyList()
+            }.getOrDefault(emptyList()).associateBy { Triple(it.name, it.domain, it.path) }
+            val scoped = records.map { record ->
+                com.kerybotu.derpibooru.mirror.auth.BackupCookie(record.name,
+                    latest[Triple(record.name, record.domain, record.path)]?.value ?: record.value,
+                    record.domain, record.path, record.secure, record.httpOnly, record.hostOnly, record.expiresAt).cookie()
+            }.filter { it.matches(url) }
+            val importedNames = records.mapTo(mutableSetOf()) { it.name }
+            return webViewCookies.filter { it.name !in importedNames } + scoped
+        }
         val persistedHeader = SiteCookieStore.read(appContext, "https://${url.host}/") ?: return webViewCookies
         val currentNames = webViewCookies.mapTo(mutableSetOf()) { it.name }
         val persisted = persistedHeader.split(';').mapNotNull { part ->
