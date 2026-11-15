@@ -67,6 +67,40 @@ object SpoilerCover {
                 forwarded.recycle()
             }
             true
+        } else if (showRevealButton) View.OnTouchListener { view, event ->
+            // A non-clickable overlay still receives the stream because it is
+            // the topmost child. Forward only body taps to the card; the
+            // reveal Button keeps ownership of taps inside its own bounds.
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                val revealChild = (view as? FrameLayout)?.let { frame ->
+                    (0 until frame.childCount).asSequence()
+                        .map { frame.getChildAt(it) }
+                        .flatMap { child ->
+                            if (child is android.view.ViewGroup) (0 until child.childCount).asSequence().map { child.getChildAt(it) }
+                            else emptySequence()
+                        }
+                        .filterIsInstance<Button>()
+                        .firstOrNull { it.visibility == View.VISIBLE }
+                }
+                val hitReveal = revealChild?.let { button ->
+                    val location = IntArray(2)
+                    button.getLocationOnScreen(location)
+                    val x = event.rawX - location[0]
+                    val y = event.rawY - location[1]
+                    x >= 0f && y >= 0f && x < button.width && y < button.height
+                } == true
+                if (!hitReveal) {
+                    var parent = view.parent
+                    while (parent is View) {
+                        if (parent.isClickable) {
+                            parent.performClick()
+                            break
+                        }
+                        parent = parent.parent
+                    }
+                }
+            }
+            false
         } else null)
         obscure(contentView, true)
 
