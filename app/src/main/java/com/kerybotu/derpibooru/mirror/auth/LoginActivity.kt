@@ -3,26 +3,38 @@ package com.kerybotu.derpibooru.mirror.auth
 import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.os.Bundle
+import android.graphics.Bitmap
+import android.net.Uri
+import android.util.Log
 import android.text.InputType
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
 import android.webkit.CookieManager
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewCompat
+import androidx.webkit.ScriptHandler
 import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.databinding.ActivityLoginBinding
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.lifecycle.lifecycleScope
+import org.json.JSONObject
+import org.json.JSONTokener
+import java.util.UUID
 
 class LoginActivity : AppCompatActivity() {
     companion object {
@@ -33,32 +45,73 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var accountSettingsUrl: String
     private var loginSucceeded = false
     private var settingsPageReady = false
-    private var successPromptShown = false
     private var cookiePromptShown = false
+    private lateinit var loginOrigin: String
+    private lateinit var observerScript: String
+    private var observerHandle: ScriptHandler? = null
+    private var webLoginActive = false
+    private var pageGeneration = 0
+    private lateinit var observerFlow: String
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityLoginBinding.inflate(layoutInflater)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(binding.root)
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            WindowInsetsCompat.CONSUMED
+        }
+        ViewCompat.requestApplyInsets(binding.root)
 
         val origin = "https://${AppSettings.getTargetDomain(this)}"
+        loginOrigin = origin
+        observerFlow = savedInstanceState?.getString("observerFlow") ?: UUID.randomUUID().toString()
+        observerScript = LoginDomObserver.script(origin, observerFlow)
+        loginSucceeded = savedInstanceState?.getBoolean("loginSucceeded") ?: false
+        cookiePromptShown = savedInstanceState?.getBoolean("cookiePromptShown") ?: false
+        if (loginSucceeded && !SiteCookieStore.hasDecision(applicationContext, "$origin/")) {
+            // A configuration change dismisses an unanswered dialog; keep that decision reachable.
+            cookiePromptShown = false
+        }
         accountSettingsUrl = "$origin/registrations/edit"
         binding.loginWebview.settings.javaScriptEnabled = true
         binding.loginWebview.settings.domStorageEnabled = true
         binding.loginWebview.settings.loadsImagesAutomatically = true
         binding.loginWebview.addJavascriptInterface(ApiKeyBridge(), "AndroidApiKeyBridge")
+        binding.loginWebview.addJavascriptInterface(LoginObserverBridge(), "AndroidLoginObserver")
+        if (!loginSucceeded && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            observerHandle = WebViewCompat.addDocumentStartJavaScript(binding.loginWebview, observerScript, setOf(origin))
+        }
+        binding.loginWebview.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                installLoginObserver(view)
+            }
+        }
         updatePrimaryAction()
 
         binding.loginWebview.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                pageGeneration++
+                settingsPageReady = false
+                updatePrimaryAction()
+            }
+
+            override fun onPageCommitVisible(view: WebView, url: String) {
+                installLoginObserver(view)
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
                 val origin = "https://${AppSettings.getTargetDomain(this@LoginActivity)}/"
                 if (SiteCookieStore.hasConsent(applicationContext, origin)) {
                     SiteCookieStore.syncFromWebView(applicationContext, CookieManager.getInstance(), origin)
                 }
-                settingsPageReady = url.contains("/registrations/edit")
-                if (settingsPageReady) prepareSettingsPage(view) else detectLoginSuccess(view)
+                settingsPageReady = isLoginOrigin(url) && Uri.parse(url).path == "/registrations/edit"
+                if (settingsPageReady) prepareSettingsPage(view)
                 updatePrimaryAction()
             }
         }
@@ -69,6 +122,15 @@ class LoginActivity : AppCompatActivity() {
             }
         }
         binding.loginClose.setOnClickListener { cancelLogin() }
+        val webState = savedInstanceState?.getBundle("webState")
+        if (webState != null) {
+            webLoginActive = true
+            if (binding.loginWebview.restoreState(webState) != null) {
+                updatePrimaryAction()
+                if (loginSucceeded && !cookiePromptShown) showCookiePersistencePrompt()
+                return
+            }
+        }
         val manualRequested = intent.getBooleanExtra(EXTRA_MANUAL_KEY, false)
         val webRequested = intent.getBooleanExtra(EXTRA_WEB_LOGIN, false)
         if (manualRequested) {
@@ -86,14 +148,46 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    private fun detectLoginSuccess(webView: WebView) {
-        if (loginSucceeded || successPromptShown) return
-        webView.evaluateJavascript("!!document.querySelector('.flash.flash--success')") { result ->
-            if (result == "true" && !isFinishing) {
+    private fun isLoginOrigin(url: String?): Boolean = runCatching {
+        val uri = Uri.parse(url ?: return false)
+        val expected = Uri.parse(loginOrigin)
+        uri.scheme == "https" && uri.host == expected.host &&
+            (if (uri.port == -1) 443 else uri.port) == (if (expected.port == -1) 443 else expected.port)
+    }.getOrDefault(false)
+
+    private fun installLoginObserver(view: WebView) {
+        if (webLoginActive && !loginSucceeded && isLoginOrigin(view.url)) {
+            view.evaluateJavascript(observerScript, null)
+        }
+    }
+
+    private inner class LoginObserverBridge {
+        @JavascriptInterface
+        fun changed(documentToken: String?) {
+            if (documentToken == null || documentToken.length > 160) return
+            runOnUiThread { verifyLoginEvidence(documentToken) }
+        }
+    }
+
+    private fun verifyLoginEvidence(token: String) {
+        if (!webLoginActive || loginSucceeded || isFinishing || isDestroyed || !isLoginOrigin(binding.loginWebview.url)) return
+        val generation = pageGeneration
+        binding.loginWebview.evaluateJavascript(
+            "window.__dvLoginWatch && window.__dvLoginWatch.verify(${JSONObject.quote(token)})"
+        ) { result ->
+            if (!webLoginActive || loginSucceeded || generation != pageGeneration || !isLoginOrigin(binding.loginWebview.url) || isFinishing || isDestroyed) return@evaluateJavascript
+            val evidence = runCatching { JSONObject(JSONTokener(result).nextValue() as String) }.getOrNull()
+            if (evidence?.optBoolean("valid") == true) {
                 loginSucceeded = true
-                successPromptShown = true
+                observerHandle?.remove()
+                observerHandle = null
                 updatePrimaryAction()
+                Log.d("LoginDetection", "event=verified_dom_success dispatch_ms=${evidence.optLong("elapsedMs")}")
+                binding.loginWebview.evaluateJavascript("window.__dvLoginWatch && window.__dvLoginWatch.stop()", null)
                 showCookiePersistencePrompt()
+            } else {
+                binding.loginWebview.evaluateJavascript(
+                    "window.__dvLoginWatch && window.__dvLoginWatch.resume(${JSONObject.quote(token)})", null)
             }
         }
     }
@@ -169,7 +263,7 @@ class LoginActivity : AppCompatActivity() {
         binding.loginAccountSettings.isEnabled = loginSucceeded || settingsPageReady
         binding.loginAccountSettings.text = when {
             settingsPageReady -> "手动粘贴 API Key"
-            loginSucceeded -> "打开账户设置"
+            loginSucceeded -> "已登录成功"
             else -> "等待登录成功"
         }
     }
@@ -239,6 +333,8 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun cancelLogin() {
+        webLoginActive = false
+        binding.loginWebview.evaluateJavascript("window.__dvLoginWatch && window.__dvLoginWatch.stop()", null)
         setResult(RESULT_CANCELED)
         finish()
     }
@@ -253,6 +349,7 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun startWebLogin(origin: String) {
+        webLoginActive = true
         // Ensure the WebView uses the same optimized-IP local proxy as API traffic.
         lifecycleScope.launch(Dispatchers.Main) {
             if (!NetworkManager.isReady()) runCatching { NetworkManager.init(applicationContext) }
@@ -262,6 +359,11 @@ class LoginActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        webLoginActive = false
+        pageGeneration++
+        observerHandle?.remove()
+        binding.loginWebview.evaluateJavascript("window.__dvLoginWatch && window.__dvLoginWatch.stop()", null)
+        binding.loginWebview.removeJavascriptInterface("AndroidLoginObserver")
         binding.loginWebview.removeJavascriptInterface("AndroidApiKeyBridge")
         binding.loginWebview.stopLoading()
         binding.loginWebview.destroy()
@@ -269,5 +371,16 @@ class LoginActivity : AppCompatActivity() {
             ProxyController.getInstance().clearProxyOverride(ContextCompat.getMainExecutor(this)) { }
         }
         super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("observerFlow", observerFlow)
+        outState.putBoolean("loginSucceeded", loginSucceeded)
+        outState.putBoolean("cookiePromptShown", cookiePromptShown)
+        if (webLoginActive) {
+            val state = Bundle()
+            if (binding.loginWebview.saveState(state) != null) outState.putBundle("webState", state)
+        }
+        super.onSaveInstanceState(outState)
     }
 }
