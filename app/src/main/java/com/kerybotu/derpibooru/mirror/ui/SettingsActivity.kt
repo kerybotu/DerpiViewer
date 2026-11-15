@@ -1026,8 +1026,8 @@ class SettingsActivity : AppCompatActivity() {
             .setPositiveButton("清除") { _, _ ->
                 ApiKeyStore.clear(this)
                 val origin = "https://${AppSettings.getTargetDomain(this)}/"
+                SiteCookieStore.clearWebViewOrigin(CookieManager.getInstance(), origin, this)
                 SiteCookieStore.clear(this, origin)
-                SiteCookieStore.clearWebViewOrigin(CookieManager.getInstance(), origin)
                 NetworkManager.shutdown()
                 updateAccountStatus()
                 Toast.makeText(this, "本地凭据已清除", Toast.LENGTH_SHORT).show()

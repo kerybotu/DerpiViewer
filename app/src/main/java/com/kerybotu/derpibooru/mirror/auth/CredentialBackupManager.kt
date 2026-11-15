@@ -19,7 +19,7 @@ import kotlin.coroutines.resume
 /** All secrets remain in memory; only the codec output may be given to a document provider. */
 internal class CredentialBackupManager(
     private val context: Context,
-    private val saveKey: (Context, String) -> Boolean = ApiKeyStore::replaceForBackup
+    private val saveKey: (Context, String, String) -> Boolean = { ctx, key, origin -> ApiKeyStore.replaceForBackup(ctx, key, origin) }
 ) {
     companion object { private val imports = Mutex() }
     fun currentOrigin() = CredentialBackupCodec.origin("https://${AppSettings.getTargetDomain(context)}/")
@@ -86,7 +86,7 @@ internal class CredentialBackupManager(
                     withContext(Dispatchers.Main) { CookieManager.getInstance().flush() }
                     check(SiteCookieStore.replaceForBackup(context, origin, payload.cookies))
                 }
-                if (payload.includesApiKey) check(saveKey(context, payload.apiKey!!))
+                if (payload.includesApiKey) check(saveKey(context, payload.apiKey!!, origin))
                 check(currentOrigin() == origin)
                 true
             } catch (_: Exception) {

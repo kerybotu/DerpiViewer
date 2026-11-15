@@ -124,12 +124,16 @@ class CredentialBackupDeviceTest {
             assertEquals("/api/", scoped.path)
             assertTrue(manager.restore(payload(key = "synthetic-key-two")))
             assertEquals("synthetic-two", jar.loadForRequest((origin + "api/test").toHttpUrl()).single { it.name == "backup_test_session" }.value)
+            AppSettings.setSelectedSite(context, AppSettings.Site.DERPIBOORU)
+            assertNull("API keys from a custom host must not leak to the official host", ApiKeyStore.get(context))
+            AppSettings.setCustomSite(context, "backup-test.example")
+            assertEquals("synthetic-key-two", ApiKeyStore.get(context))
             val wrongSite = EncryptedExportPayload(exportedAt = System.currentTimeMillis(), origin = "https://other.example/",
                 includesCookies = false, includesApiKey = true, cookies = null, apiKey = "must-not-be-imported")
             try { manager.restore(wrongSite); fail("Cross-site must fail") } catch (_: IllegalStateException) { }
             assertEquals("synthetic-key-two", ApiKeyStore.get(context))
             // Fail the second store after Cookie writes to exercise real compensation.
-            val failing = CredentialBackupManager(context) { _, _ -> false }
+            val failing = CredentialBackupManager(context) { _, _, _ -> false }
             assertFalse(failing.restore(payload(listOf(cookie("must-roll-back")), "must-not-be-saved")))
             assertEquals("synthetic-key-two", ApiKeyStore.get(context))
             assertEquals("synthetic-two", jar.loadForRequest((origin + "api/test").toHttpUrl()).single { it.name == "backup_test_session" }.value)

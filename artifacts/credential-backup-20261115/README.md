@@ -15,6 +15,7 @@ Cookie 通过 AndroidX WebKit `GET_COOKIE_INFO` 读取 Domain、Path、Secure、
 
 - `CredentialBackupCodecTest` 3 项通过：三种选择组合、不同 Salt/Nonce、错误密码、密文/元数据篡改、截断/大小/嵌套限制、Cookie 域名/挑战/过期检查、密码强度规则。
 - `CredentialBackupDeviceTest#selectiveRestoreScopeAndNativeCookieAttributes` 通过：合成 Cookie 的 Path/Secure/HttpOnly/host-only、选择性恢复、跨站拒绝以及 API Key 写入失败后的回滚。
+- API Key 使用 origin 派生存储槽并由独立 Keystore alias 加密；旧全局 Key 只在首次使用时迁移到当时选定源站。不同站点不共享 API Key。
 - `CredentialBackupDeviceTest#independentlyEncryptedFixtureIsPortable` 通过：Python 独立实现解密 Android 文件，Python 重新生成 Salt/Nonce 的文件再由 Android 解密。
 - `CredentialBackupDeviceTest#exportAndImportThroughSystemDocumentsWithResponsivePasswordUi` 通过：真实 Android DocumentsUI 保存、重新打开、输入密码、确认页和恢复。关键界面截图见 `backup-export-strong.png` 和 `backup-import-confirm.png`。
 
