@@ -10,6 +10,7 @@ internal object VideoSourcePolicy {
             .mapNotNull { representations[it]?.takeIf(String::isNotBlank) }.distinct()
         return buildList {
             representations["mp4"]?.takeIf(String::isNotBlank)?.let(::add)
+            representations["webm"]?.takeIf(String::isNotBlank)?.let(::add)
             originals.mapNotNullTo(this, ::verifiedMp4Candidate)
             addAll(originals)
         }.distinct()

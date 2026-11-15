@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.kerybotu.derpibooru.mirror.ui.VideoSourcePolicyTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-11-15T03:56:24.201Z" hostname="DESKTOP-VEDLTLS" time="0.009">
+  <properties/>
+  <testcase name="seekPreservesIntentAndLastGestureWins" classname="com.kerybotu.derpibooru.mirror.ui.VideoSourcePolicyTest" time="0.001"/>
+  <testcase name="highResolutionUsesBoundedMp4BeforeOriginal" classname="com.kerybotu.derpibooru.mirror.ui.VideoSourcePolicyTest" time="0.002"/>
+  <testcase name="explicitApiMp4DoesNotNeedAnInventedRule" classname="com.kerybotu.derpibooru.mirror.ui.VideoSourcePolicyTest" time="0.002"/>
+  <testcase name="verifiedCdnMappingPreservesEscapedQuery" classname="com.kerybotu.derpibooru.mirror.ui.VideoSourcePolicyTest" time="0.001"/>
+  <testcase name="videoRepresentationsAreNotInventedAsGifPreviews" classname="com.kerybotu.derpibooru.mirror.ui.VideoSourcePolicyTest" time="0.001"/>
+  <testcase name="htmlAndJsonAreRejectedAsMedia" classname="com.kerybotu.derpibooru.mirror.ui.VideoSourcePolicyTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

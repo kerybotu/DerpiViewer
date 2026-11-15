@@ -953,6 +953,7 @@ class MainActivity : AppCompatActivity() {
         val visible = true
         val source = when (embeddedScreenId) {
             R.id.tab_home -> homeBackdrop
+            R.id.tab_video_feed -> embeddedVideo?.glassBackdropSource ?: embeddedBackdrop
             else -> embeddedBackdrop
         }
         binding.glassBottomNavigation.visibility = if (visible) View.VISIBLE else View.GONE

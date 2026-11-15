@@ -19,7 +19,6 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
-import okhttp3.Call
 import java.util.concurrent.Future
 import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
@@ -48,9 +47,7 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
 
     private fun upstreamFactory(purpose: String): DefaultDataSource.Factory {
         // Resolve on every HTTP call, never retain the proxy from player creation.
-        val calls = Call.Factory { request ->
-            (NetworkManager.videoHttpClient() ?: error("媒体网络尚未就绪")).newCall(request)
-        }
+        val calls = MediaHttpDiagnostics.calls(purpose)
         val httpFactory = OkHttpDataSource.Factory(calls)
             .setContentTypePredicate { VideoSourcePolicy.acceptsContentType(it) }
             .setTransferListener(bandwidthMeter)
@@ -95,6 +92,9 @@ class VideoPlayerPool(context: Context, private val poolSize: Int = 1) {
             }
 
             override fun onPlayerError(eventTime: AnalyticsListener.EventTime, error: PlaybackException) {
+                Log.w(TAG, "playback_error state=${player.playbackState} code=${error.errorCodeName} " +
+                    "media=${player.currentMediaItem?.mediaId} config=${NetworkManager.configurationVersion.value} " +
+                    "causes=${generateSequence<Throwable>(error) { it.cause }.take(6).joinToString(">") { it.javaClass.simpleName }}")
                 ownerOf(player)?.let { position ->
                     player.currentMediaItem?.localConfiguration?.uri?.toString()?.let { url ->
                         onPlaybackError?.invoke(position, url, error)

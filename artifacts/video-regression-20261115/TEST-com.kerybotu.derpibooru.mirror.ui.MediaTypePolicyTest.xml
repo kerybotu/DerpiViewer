@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.kerybotu.derpibooru.mirror.ui.MediaTypePolicyTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-15T03:56:23.945Z" hostname="DESKTOP-VEDLTLS" time="0.209">
+  <properties/>
+  <testcase name="apiWebmRemainsAvailableWhenAdvertisedMp4IsMissing" classname="com.kerybotu.derpibooru.mirror.ui.MediaTypePolicyTest" time="0.072"/>
+  <testcase name="metadataClassifiesVideoAndKeepsOriginalGifDistinct" classname="com.kerybotu.derpibooru.mirror.ui.MediaTypePolicyTest" time="0.002"/>
+  <testcase name="diagnosticUrlNeverContainsCredentialsQueriesOrFragments" classname="com.kerybotu.derpibooru.mirror.ui.MediaTypePolicyTest" time="0.123"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

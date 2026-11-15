@@ -136,6 +136,10 @@ class VideoFeedController(
                 if (fallback != null && shouldTryAlternative(error)) {
                     post.url = fallback
                     retryPlayback(position, post, automatic = true)
+                } else if (post.mimeType == "image/gif" && httpStatus in setOf(404, 410)) {
+                    post.useOriginalAnimation = true
+                    playerPool.releaseNonCurrent(-1)
+                    attachOriginalAnimation(position, post, canAutoPlay())
                 } else
                 if (isTransientNetworkError(error) && transientRetryCounts.getOrDefault(post.id, 0) < MAX_TRANSIENT_RETRIES) {
                     val attempt = transientRetryCounts.getOrDefault(post.id, 0) + 1
@@ -262,8 +266,8 @@ class VideoFeedController(
         return buildList {
             for (index in 0 until images.length()) {
                 val item = images.optJSONObject(index) ?: continue
-                val mime = item.optString("mime_type").lowercase()
-                if (mime != "video/webm" && mime != "video/mp4" && mime != "image/gif") continue
+                val mime = MediaTypePolicy.normalize(item.optString("mime_type")) ?: continue
+                if (!MediaTypePolicy.isVideo(mime) && !MediaTypePolicy.isGif(mime)) continue
                 val reps = item.optJSONObject("representations")
                 val sources = VideoSourcePolicy.candidates(
                     reps?.keys()?.asSequence()?.associateWith { reps.optString(it) }.orEmpty(),
@@ -315,6 +319,10 @@ class VideoFeedController(
     }
 
     private fun attachPlayer(position: Int, post: VideoPost, play: Boolean) {
+        if (post.useOriginalAnimation) {
+            attachOriginalAnimation(position, post, play)
+            return
+        }
         val changed = playerPool.get(position)?.currentMediaItem?.localConfiguration?.uri?.toString() != post.url
         if (changed) prepareStartedAt[position] = SystemClock.elapsedRealtime()
         Log.d(TAG, "prepare imageId=${post.id} source=${if (post.url.substringBefore('?').endsWith(".mp4")) "mp4" else "original"} config=$appliedNetworkVersion changed=$changed")
@@ -330,6 +338,40 @@ class VideoFeedController(
         // retry for a holder that became attached between setMediaItem and
         // prepare (ViewPager2 can do that during a layout pass).
         bindPlayerView(position, post, player, play, attempt = 0)
+    }
+
+    private fun attachOriginalAnimation(position: Int, post: VideoPost, play: Boolean) {
+        if (!active || position != currentPosition) return
+        val holder = pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder ?: return
+        if (holder.boundId != post.id) return
+        val binding = holder.binding
+        binding.videoPlayer.player = null
+        binding.videoPreview.visibility = View.VISIBLE
+        binding.videoPlaybackError.visibility = View.GONE
+        binding.videoPreviewLoading.visibility = View.VISIBLE
+        binding.videoPlayProgress.isEnabled = false
+        binding.videoPlayProgress.progress = 0
+        binding.videoBufferProgress.progress = 0
+        boundPosition = position
+        holder.imageRequests.asGif().load(post.originalUrl)
+            .listener(object : com.bumptech.glide.request.RequestListener<com.bumptech.glide.load.resource.gif.GifDrawable> {
+                override fun onLoadFailed(error: com.bumptech.glide.load.engine.GlideException?, model: Any?, target: com.bumptech.glide.request.target.Target<com.bumptech.glide.load.resource.gif.GifDrawable>, first: Boolean): Boolean {
+                    if (holder.boundId == post.id) {
+                        binding.videoPreviewLoading.visibility = View.GONE
+                        binding.videoPlaybackError.visibility = View.VISIBLE
+                        binding.videoPlaybackErrorText.text = "原始动画暂时无法加载"
+                    }
+                    return false
+                }
+                override fun onResourceReady(resource: com.bumptech.glide.load.resource.gif.GifDrawable, model: Any, target: com.bumptech.glide.request.target.Target<com.bumptech.glide.load.resource.gif.GifDrawable>, source: com.bumptech.glide.load.DataSource, first: Boolean): Boolean {
+                    if (holder.boundId == post.id && position == currentPosition) {
+                        binding.videoPreviewLoading.visibility = View.GONE
+                        binding.videoPreview.setImageDrawable(resource)
+                        if (active && play) resource.start() else resource.stop()
+                    }
+                    return true
+                }
+            }).into(binding.videoPreview)
     }
 
     private fun bindPlayerView(position: Int, post: VideoPost, player: Player, play: Boolean, attempt: Int) {
@@ -348,6 +390,7 @@ class VideoFeedController(
             return
         }
         val attached = holder.binding.videoPlayer
+        holder.binding.videoPlayProgress.isEnabled = true
         if (attached.player !== player) {
             holder.previewState.bind(post.id)
             holder.seekState.cancel()
@@ -539,6 +582,13 @@ class VideoFeedController(
 
     override fun onToggle(position: Int) {
         val post = adapter.item(position) ?: return
+        if (post.useOriginalAnimation) {
+            val holder = pagerRecycler.findViewHolderForAdapterPosition(position) as? VideoFeedAdapter.Holder
+            (holder?.binding?.videoPreview?.drawable as? android.graphics.drawable.Animatable)?.let {
+                if (it.isRunning) it.stop() else it.start()
+            }
+            return
+        }
         val player = playerPool.prepare(position, post.url, post.id)
         player.playWhenReady = !player.playWhenReady
         savedPlayback[post.id] = player.currentPosition to player.playWhenReady
@@ -641,6 +691,7 @@ class VideoFeedController(
         for (index in 0 until pagerRecycler.childCount) {
             val holder = pagerRecycler.getChildViewHolder(pagerRecycler.getChildAt(index)) as? VideoFeedAdapter.Holder ?: continue
             holder.binding.videoPlayer.player = null
+            (holder.binding.videoPreview.drawable as? android.graphics.drawable.Animatable)?.stop()
             holder.seekState.cancel()
             holder.boundId?.let { holder.previewState.bind(it) }
             holder.binding.videoPreview.visibility = View.VISIBLE
@@ -656,6 +707,10 @@ class VideoFeedController(
             retryHandler.removeCallbacksAndMessages(null)
             playerPool.cancelPrefetch()
             playerPool.pauseAll()
+            for (index in 0 until pagerRecycler.childCount) {
+                val holder = pagerRecycler.getChildViewHolder(pagerRecycler.getChildAt(index)) as? VideoFeedAdapter.Holder ?: continue
+                (holder.binding.videoPreview.drawable as? android.graphics.drawable.Animatable)?.stop()
+            }
         } else {
             active = true
             activate(currentPosition, automatic = true)

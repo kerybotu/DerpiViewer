@@ -214,7 +214,6 @@ class ImageDetailActivity : AppCompatActivity() {
                 Toast.makeText(this, "收藏状态更新失败", Toast.LENGTH_SHORT).show()
             }
         }
-        b.detailVideoPlayer.setOnClickListener { openLargePreview() }
         bindInitial()
         setGestures()
         loadDetails()
@@ -340,7 +339,7 @@ class ImageDetailActivity : AppCompatActivity() {
         bindUploaderClick()
         b.detailScore.visibility = View.GONE
         bindTags(image.tags)
-        showPreview(image.mimeType, if (image.mimeType?.startsWith("video/") == true) image.fullUrl ?: image.thumbnailUrl else image.thumbnailUrl)
+        showPreview(image.mimeType, if (MediaTypePolicy.isVideo(image.mimeType)) image.fullUrl ?: image.thumbnailUrl else image.thumbnailUrl)
         b.detailTitle.postOnAnimation {
             if (imageBindingGeneration == bindingGeneration && image.id == requestedId && !isFinishing && !isDestroyed) {
                 CrashDiagnostics.recordEvent(
@@ -693,6 +692,7 @@ class ImageDetailActivity : AppCompatActivity() {
         })
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         val handleTouch: (View, MotionEvent) -> Boolean = { view, event ->
+            val wasDragging = draggingMedia
             if (ignoreTransitionGesture) {
                 if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
                     ignoreTransitionGesture = false
@@ -732,6 +732,12 @@ class ImageDetailActivity : AppCompatActivity() {
                     val dy = event.rawY - dragStartY
                     if (!draggingMedia && event.pointerCount == 1 && !scaleGesture.isInProgress && !isImageZoomed() && kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.15f) {
                         draggingMedia = true
+                        if (view === b.detailVideoPlayer && !isSpoilerVisible()) {
+                            val cancel = MotionEvent.obtain(event)
+                            cancel.action = MotionEvent.ACTION_CANCEL
+                            view.onTouchEvent(cancel)
+                            cancel.recycle()
+                        }
                         view.animate().cancel()
                     }
                     if (draggingMedia && !isImageZoomed()) {
@@ -773,8 +779,8 @@ class ImageDetailActivity : AppCompatActivity() {
                 }
             }
             // Keep tap and long-press behavior while horizontal movement is handled above.
-            if (view !== b.detailImage || (!scaleGesture.isInProgress && event.pointerCount <= 1)) gesture.onTouchEvent(event)
-            true
+            if (view === b.detailImage && !scaleGesture.isInProgress && event.pointerCount <= 1 || isSpoilerVisible()) gesture.onTouchEvent(event)
+            view === b.detailImage || isSpoilerVisible() || wasDragging || draggingMedia
             }
         }
         b.detailImage.setOnTouchListener(View.OnTouchListener { view, event -> handleTouch(view, event) })
@@ -889,7 +895,7 @@ class ImageDetailActivity : AppCompatActivity() {
                 )
                 fullUrl = full
                 imageLoadFailedId = null
-                showPreview(mime, if (mime?.startsWith("video/") == true) fullUrl ?: image.fullUrl ?: image.thumbnailUrl else fullUrl ?: image.fullUrl ?: image.thumbnailUrl)
+                showPreview(mime, if (MediaTypePolicy.isVideo(mime)) fullUrl ?: image.fullUrl ?: image.thumbnailUrl else fullUrl ?: image.fullUrl ?: image.thumbnailUrl)
                 b.detailTitle.text = "#${image.id}"
                 b.detailArtworkTitle.text = title
                 b.detailArtworkTitle.visibility = if (title.isBlank()) View.GONE else View.VISIBLE
@@ -1191,15 +1197,16 @@ class ImageDetailActivity : AppCompatActivity() {
     }
 
     private fun showPreview(mime: String?, url: String?) {
-        if (mime?.lowercase()?.startsWith("video/") == true && url != null) {
+        if (MediaTypePolicy.isVideo(mime) && url != null) {
             b.detailImage.visibility = View.GONE
             b.detailVideoPlayer.visibility = View.VISIBLE
-            previewPlayer?.release()
-            previewPlayer = MediaPreviewPlayer(this, b.detailVideoPlayer).also { it.load(url) }
+            previewPlayer = (previewPlayer ?: MediaPreviewPlayer(this, b.detailVideoPlayer)).also { it.load(url) }
             SpoilerCover.bind(b.detailSpoilerCover, b.detailVideoPlayer, image.spoilered, spoilerRevealed, interactive = true, touchThrough = true) {
                 spoilerRevealed = true
             }
         } else {
+            previewPlayer?.release()
+            previewPlayer = null
             b.detailVideoPlayer.visibility = View.GONE
             b.detailImage.visibility = View.VISIBLE
             matrixDrawable = null
@@ -1242,7 +1249,7 @@ class ImageDetailActivity : AppCompatActivity() {
     private fun showMore() {
         val items = listOf(
             GlassMenuItem("download", com.kerybotu.derpibooru.mirror.R.drawable.ic_download, "下载") { enqueueDownload() },
-            GlassMenuItem("original", com.kerybotu.derpibooru.mirror.R.drawable.ic_image, "查看原图") { fullUrl?.let { url -> startActivity(Intent(this, FullScreenImageActivity::class.java).putExtra("full_url", url).putExtra("image_id", image.id)) } },
+            GlassMenuItem("original", com.kerybotu.derpibooru.mirror.R.drawable.ic_image, "查看原图") { openLargePreview() },
             GlassMenuItem("copy", com.kerybotu.derpibooru.mirror.R.drawable.ic_bookmark, "复制链接") { copyImageLink() }
         )
         GlassMenuCard(this, items, b.btnMore).show()

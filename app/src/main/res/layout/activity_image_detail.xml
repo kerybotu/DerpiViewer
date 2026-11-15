@@ -2,7 +2,7 @@
 <androidx.coordinatorlayout.widget.CoordinatorLayout android:id="@+id/detail_root" xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:background="?attr/colorSurface">
     <FrameLayout android:id="@+id/detail_backdrop" android:layout_width="match_parent" android:layout_height="match_parent" android:background="?attr/colorSurface">
     <ImageView android:id="@+id/detail_image" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="fitCenter" android:contentDescription="图片" />
-    <androidx.media3.ui.PlayerView android:id="@+id/detail_video_player" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" android:background="?attr/colorSurface" />
+    <androidx.media3.ui.PlayerView android:id="@+id/detail_video_player" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" android:background="?attr/colorSurface" app:surface_type="texture_view" app:show_buffering="when_playing" />
     <FrameLayout android:id="@+id/detail_spoiler_cover" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" />
     </FrameLayout>
     <com.kerybotu.derpibooru.mirror.ui.IslandGlassView

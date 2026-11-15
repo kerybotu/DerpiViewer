@@ -36,7 +36,8 @@ data class VideoPost(
     var downvotes: Int,
     val commentCount: Int,
     val sources: List<String> = listOf(url),
-    val originalUrl: String = url
+    val originalUrl: String = url,
+    var useOriginalAnimation: Boolean = false
 )
 
 @SuppressLint("UnsafeOptInUsageError")

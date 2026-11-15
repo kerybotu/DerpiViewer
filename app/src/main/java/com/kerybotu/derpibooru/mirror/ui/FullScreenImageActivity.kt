@@ -66,9 +66,9 @@ class FullScreenImageActivity : AppCompatActivity() {
         val thumbnailUrl = intent.getStringExtra("thumbnail_url")
         val fullUrl = intent.getStringExtra("full_url")
         val imageId = intent.getIntExtra("image_id", -1)
-        mimeType = intent.getStringExtra("mime_type")
+        mimeType = MediaTypePolicy.normalize(intent.getStringExtra("mime_type"))
 
-        val isVideo = mimeType?.lowercase()?.startsWith("video/") == true
+        val isVideo = MediaTypePolicy.isVideo(mimeType)
         if (!isVideo && thumbnailUrl != null) {
             loadPreviewImage(thumbnailUrl)
         } else if (!isVideo) {
@@ -123,9 +123,9 @@ class FullScreenImageActivity : AppCompatActivity() {
     }
 
     private fun loadFullImage(thumbnailUrl: String?, fullUrl: String?, imageId: Int) {
-        if (mimeType?.lowercase()?.startsWith("video/") == true && fullUrl != null) {
+        if (MediaTypePolicy.isVideo(mimeType) && fullUrl != null) {
             loadVideo(fullUrl)
-        } else if (fullUrl != null) {
+        } else if (fullUrl != null && (!mimeType.isNullOrBlank() || imageId <= 0)) {
             // 已提供完整 URL，直接加载，并显示转圈
             showLoading()
             loadImageWithGlide(fullUrl) {
@@ -145,7 +145,7 @@ class FullScreenImageActivity : AppCompatActivity() {
                 }
                 if (fetched != null) {
                     mimeType = fetched.second ?: mimeType
-                    if (mimeType?.lowercase()?.startsWith("video/") == true) {
+                    if (MediaTypePolicy.isVideo(mimeType)) {
                         loadVideo(fetched.first)
                     } else loadImageWithGlide(fetched.first) {
                         hideLoading()
@@ -197,7 +197,6 @@ class FullScreenImageActivity : AppCompatActivity() {
                 .asGif()
                 .load(url)
                 .placeholder(previous)
-                .dontAnimate()
                 .into(object : CustomViewTarget<ImageView, GifDrawable>(imageView) {
                     override fun onLoadFailed(errorDrawable: Drawable?) = onComplete()
                     override fun onResourceCleared(placeholder: Drawable?) = Unit
@@ -266,7 +265,7 @@ class FullScreenImageActivity : AppCompatActivity() {
             })
     }
 
-    private fun isGif(): Boolean = mimeType.equals("image/gif", ignoreCase = true)
+    private fun isGif(): Boolean = MediaTypePolicy.isGif(mimeType)
 
     private fun showLoading() {
         progressBar.visibility = View.VISIBLE
