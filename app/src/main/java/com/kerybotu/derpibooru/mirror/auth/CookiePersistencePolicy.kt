@@ -15,8 +15,8 @@ internal object CookiePersistenceConsentEvents {
 
 /** Single feature gate for persisted site sessions and native interactions. */
 object CookiePersistencePolicy {
-    const val CONSENT_UI_ENABLED = false
-    const val NATIVE_INTERACTIONS_ENABLED = false
+    const val CONSENT_UI_ENABLED = true
+    const val NATIVE_INTERACTIONS_ENABLED = true
 
     private const val OFFICIAL_HOST = "derpibooru.org"
 
@@ -29,6 +29,14 @@ object CookiePersistencePolicy {
             uri.rawQuery == null &&
             uri.rawFragment == null &&
             (uri.path.isNullOrEmpty() || uri.path == "/")
+    }
+
+    /** Cookie persistence is isolated by exact HTTPS origin; custom HTTPS sites are allowed. */
+    fun isPersistableOrigin(origin: String): Boolean {
+        val uri = runCatching { URI(origin.trim()) }.getOrNull() ?: return false
+        return uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() &&
+            uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
+            (uri.port == -1 || uri.port == 443) && (uri.path.isNullOrEmpty() || uri.path == "/")
     }
 
     fun canUsePersistedCookie(consentGranted: Boolean, hasStoredCookie: Boolean): Boolean =

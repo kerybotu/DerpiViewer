@@ -3,6 +3,7 @@ package com.kerybotu.derpibooru.mirror.auth
 import android.webkit.CookieManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -147,12 +148,47 @@ class SiteCookieStoreInstrumentedTest {
 
         val result = SiteCookieStore.syncSnapshot(
             context,
-            OfficialSiteCookieSnapshot("session=other-value", "https://derpibooru.org.example/")
+            OfficialSiteCookieSnapshot("session=other-value", "http://derpibooru.org/")
         )
 
         assertEquals(SiteCookieStore.Result.INVALID_SNAPSHOT, result)
         assertFalse(SiteCookieStore.hasConsent(context))
         assertNull(SiteCookieStore.read(context))
+    }
+
+    @Test
+    fun snapshotsAndConsentAreIsolatedByOrigin() {
+        val first = "https://first-cookie-test.invalid/"
+        val second = "https://second-cookie-test.invalid/"
+        assertEquals(SiteCookieStore.Result.SAVED, SiteCookieStore.applyConsentEvent(
+            context,
+            CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
+            OfficialSiteCookieSnapshot("session=first-synthetic", first)
+        ))
+
+        assertEquals("session=first-synthetic", SiteCookieStore.read(context, first))
+        assertNull(SiteCookieStore.read(context, second))
+        assertFalse(SiteCookieStore.hasConsent(context, second))
+        assertEquals(SiteCookieStore.Result.CLEARED, SiteCookieStore.decline(context, first))
+        assertFalse(SiteCookieStore.hasConsent(context, first))
+        assertNull(SiteCookieStore.read(context, first))
+    }
+
+    @Test
+    fun nativeCookieJarRestoresOnlyMatchingOriginSnapshot() {
+        val origin = "https://native-cookie-test.invalid/"
+        assertEquals(SiteCookieStore.Result.SAVED, SiteCookieStore.applyConsentEvent(
+            context,
+            CookiePersistenceConsentEvents.acceptedAfterExplicitUserChoice(),
+            OfficialSiteCookieSnapshot("session=native-synthetic", origin)
+        ))
+
+        val url = "https://native-cookie-test.invalid/api/v1/json".toHttpUrl()
+        val requestCookies = com.kerybotu.derpibooru.mirror.network.SharedCookieJar(context).loadForRequest(url)
+        assertTrue(requestCookies.any { it.name == "session" && it.value == "native-synthetic" && it.httpOnly })
+        assertTrue(com.kerybotu.derpibooru.mirror.network.SharedCookieJar(context)
+            .loadForRequest("https://other-cookie-test.invalid/".toHttpUrl())
+            .none { it.value == "native-synthetic" })
     }
 
     private fun preferences() = context.getSharedPreferences(SiteCookieStore.PREFERENCES_NAME, 0)

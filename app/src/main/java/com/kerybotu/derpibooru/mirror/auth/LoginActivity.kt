@@ -34,6 +34,7 @@ class LoginActivity : AppCompatActivity() {
     private var loginSucceeded = false
     private var settingsPageReady = false
     private var successPromptShown = false
+    private var cookiePromptShown = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +53,10 @@ class LoginActivity : AppCompatActivity() {
         binding.loginWebview.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
+                val origin = "https://${AppSettings.getTargetDomain(this@LoginActivity)}/"
+                if (SiteCookieStore.hasConsent(applicationContext, origin)) {
+                    SiteCookieStore.syncFromWebView(applicationContext, CookieManager.getInstance(), origin)
+                }
                 settingsPageReady = url.contains("/registrations/edit")
                 if (settingsPageReady) prepareSettingsPage(view) else detectLoginSuccess(view)
                 updatePrimaryAction()
@@ -88,16 +93,45 @@ class LoginActivity : AppCompatActivity() {
                 loginSucceeded = true
                 successPromptShown = true
                 updatePrimaryAction()
-                AlertDialog.Builder(this)
-                    .setTitle("登录成功")
-                    .setMessage("接下来请打开账户设置，复制网站显示的 API Key，并粘贴回 DerpiViewer。")
-                    .setNegativeButton("取消登录") { _, _ -> cancelLogin() }
-                    .setPositiveButton("打开账户设置") { _, _ ->
-                        binding.loginWebview.loadUrl(accountSettingsUrl)
-                    }
-                    .show()
+                showCookiePersistencePrompt()
             }
         }
+    }
+
+    private fun showCookiePersistencePrompt() {
+        if (cookiePromptShown || !CookiePersistencePolicy.CONSENT_UI_ENABLED) return
+        cookiePromptShown = true
+        val origin = "https://${AppSettings.getTargetDomain(this)}/"
+        if (SiteCookieStore.hasDecision(applicationContext, origin)) {
+            if (SiteCookieStore.hasConsent(applicationContext, origin)) {
+                val result = SiteCookieStore.syncFromWebView(applicationContext, CookieManager.getInstance(), origin)
+                if (result != SiteCookieStore.Result.SAVED) Toast.makeText(this, "登录状态已更新，但当前 Cookie 无法持久化", Toast.LENGTH_SHORT).show()
+            }
+            openAccountSettingsPrompt()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("保存登录状态？")
+            .setMessage("保存当前站点的登录 Cookie 后，后续点赞、踩、收藏等账号功能可以复用登录状态。Cookie 会使用本机安全存储加密保存；拒绝不会退出当前网页登录会话。")
+            .setNegativeButton("暂不保存") { _, _ ->
+                SiteCookieStore.decline(applicationContext, origin)
+                openAccountSettingsPrompt()
+            }
+            .setPositiveButton("安全保存") { _, _ ->
+                val result = SiteCookieStore.grantFromWebView(applicationContext, CookieManager.getInstance(), origin)
+                Toast.makeText(this, if (result == SiteCookieStore.Result.SAVED) "登录状态已加密保存" else "当前站点 Cookie 无法保存", Toast.LENGTH_SHORT).show()
+                openAccountSettingsPrompt()
+            }
+            .show()
+    }
+
+    private fun openAccountSettingsPrompt() {
+        AlertDialog.Builder(this)
+            .setTitle("登录成功")
+            .setMessage("是否打开账户设置查看 API Key？API Key 与登录 Cookie 独立管理。")
+            .setNegativeButton("稍后") { _, _ -> }
+            .setPositiveButton("打开账户设置") { _, _ -> binding.loginWebview.loadUrl(accountSettingsUrl) }
+            .show()
     }
 
     private fun prepareSettingsPage(webView: WebView) {
@@ -205,8 +239,6 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun cancelLogin() {
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().flush()
         setResult(RESULT_CANCELED)
         finish()
     }

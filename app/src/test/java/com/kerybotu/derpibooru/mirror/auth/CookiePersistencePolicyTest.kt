@@ -51,11 +51,26 @@ class CookiePersistencePolicyTest {
     }
 
     @Test
-    fun persistedCookieCannotEnableInteractionsInThisBuild() {
-        assertFalse(CookiePersistencePolicy.CONSENT_UI_ENABLED)
-        assertFalse(CookiePersistencePolicy.NATIVE_INTERACTIONS_ENABLED)
-        assertFalse(CookiePersistencePolicy.canUsePersistedCookie(consentGranted = true, hasStoredCookie = true))
+    fun persistedCookieCanBeUsedOnlyAfterExplicitConsentAndSnapshot() {
+        assertTrue(CookiePersistencePolicy.CONSENT_UI_ENABLED)
+        assertTrue(CookiePersistencePolicy.NATIVE_INTERACTIONS_ENABLED)
+        assertTrue(CookiePersistencePolicy.canUsePersistedCookie(consentGranted = true, hasStoredCookie = true))
         assertFalse(CookiePersistencePolicy.canUsePersistedCookie(consentGranted = false, hasStoredCookie = true))
         assertFalse(CookiePersistencePolicy.canUsePersistedCookie(consentGranted = true, hasStoredCookie = false))
+    }
+
+    @Test
+    fun arbitraryHttpsOriginsAreValidatedWithoutAllowingUnsafeComponents() {
+        assertTrue(CookiePersistencePolicy.isPersistableOrigin("https://trixiebooru.org/"))
+        assertFalse(CookiePersistencePolicy.isPersistableOrigin("http://trixiebooru.org/"))
+        assertFalse(CookiePersistencePolicy.isPersistableOrigin("https://trixiebooru.org/?next=x"))
+    }
+
+    @Test
+    fun persistedSnapshotHasBoundedLifetimeAndRejectsClockRollback() {
+        val now = 2_000_000_000_000L
+        assertTrue(SiteCookieStore.isSnapshotFresh(now - 1_000L, now))
+        assertFalse(SiteCookieStore.isSnapshotFresh(now - 15L * 24 * 60 * 60 * 1000, now))
+        assertFalse(SiteCookieStore.isSnapshotFresh(now + 1_000L, now))
     }
 }

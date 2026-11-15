@@ -7,6 +7,7 @@ import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.IpOptimizer
 import com.kerybotu.derpibooru.mirror.LocalProxyServer
 import com.kerybotu.derpibooru.mirror.auth.ApiKeyStore
+import com.kerybotu.derpibooru.mirror.auth.SiteCookieStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -43,6 +44,7 @@ object NetworkManager {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     @Volatile private var activeUserAgent: String = HTTP_USER_AGENT
+    @Volatile private var appContext: Context? = null
     private var localProxyServer: LocalProxyServer? = null
     private var okHttpClient: OkHttpClient? = null
     @Volatile private var mediaHttpClient: OkHttpClient? = null
@@ -95,6 +97,7 @@ object NetworkManager {
         onOptimizationProgress: ((domain: String, tested: Int, total: Int) -> Unit)? = null
     ) = initializationMutex.withLock {
         if (isReady() && !forceRefresh && !rebuildClient) return@withLock
+        appContext = context.applicationContext
         val startedAtVersion = revision.value
         var pendingProxy: LocalProxyServer? = null
         var pendingRoutes = emptyMap<String, String>()
@@ -115,7 +118,7 @@ object NetworkManager {
             )
             val builder = OkHttpClient.Builder()
                 .eventListenerFactory { routeListener(context.applicationContext) }
-                .cookieJar(SharedCookieJar())
+                .cookieJar(SharedCookieJar(context.applicationContext))
                 .addInterceptor { chain ->
                     chain.proceed(chain.request().newBuilder().header("User-Agent", userAgent).build())
                 }
@@ -246,6 +249,17 @@ object NetworkManager {
                         return ApiRequestResult(null, failure)
                     }
                     val code = it.code
+                    val app = appContext
+                    if (code == 401 && app != null && it.request.url.isHttps &&
+                        it.request.url.host.equals(AppSettings.getTargetDomain(app), ignoreCase = true) &&
+                        SiteCookieStore.requestContainsPersistedCookie(
+                            app,
+                            "https://${it.request.url.host}/",
+                            it.request.header("Cookie")
+                        )
+                    ) {
+                        SiteCookieStore.noteAuthenticationRejected(app, "https://${it.request.url.host}/")
+                    }
                     if (operation == "site:filters") {
                         Log.d(TAG, "FilterSearch response requestId=$requestId attempt=$attempt status=$code finalUrl=${safeDiagnosticUrl(it.request.url.toString())} contentType=${it.header("Content-Type").orEmpty()} cookies=${SharedCookieJar.cookieNames(it.request.url.toString()).joinToString(",").ifBlank { "none" }}")
                     }

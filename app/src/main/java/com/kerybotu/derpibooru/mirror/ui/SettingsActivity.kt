@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import com.kerybotu.derpibooru.mirror.auth.SiteCookieStore
 import android.webkit.WebView
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -77,6 +78,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var accountStatus: TextView
     private lateinit var accountLogin: LiquidGlassButton
     private lateinit var accountLogout: LiquidGlassButton
+    private lateinit var accountCookiePolicy: LiquidGlassButton
     private lateinit var paletteGroup: GlassSegmentedControl
     private lateinit var siteGroup: GlassSegmentedControl
     private lateinit var accentSwatches: ResponsiveWrapLayout
@@ -257,7 +259,9 @@ class SettingsActivity : AppCompatActivity() {
         val actions = ResponsiveWrapLayout(this)
         accountLogin = actionButton("登录并导入 Key")
         accountLogout = actionButton("清除本地凭据")
+        accountCookiePolicy = actionButton("管理登录状态保存")
         actions.addView(accountLogin, wrapButtonParams())
+        actions.addView(accountCookiePolicy, wrapButtonParams())
         actions.addView(accountLogout, wrapButtonParams())
         sectionContent(section).addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         addSection(section)
@@ -675,6 +679,7 @@ class SettingsActivity : AppCompatActivity() {
                 }.show()
         }
         accountLogout.setOnClickListener { confirmClearCredentials() }
+        accountCookiePolicy.setOnClickListener { manageCookiePersistence() }
         paletteGroup.setSelectionListener { _, id ->
             if (paletteUpdating) return@setSelectionListener
             val palette = when (id) {
@@ -728,8 +733,8 @@ class SettingsActivity : AppCompatActivity() {
             networkStatus.text = "CDN 直连设置已保存，网络客户端将在下次请求前重建"
         }
         siteGroup.setSelectionListener { _, id -> when (id) {
-            siteGroup.getChildAt(0).id -> AppSettings.setSelectedSite(this, AppSettings.Site.DERPIBOORU)
-            siteGroup.getChildAt(1).id -> AppSettings.setSelectedSite(this, AppSettings.Site.TRIXIEBOORU)
+            siteGroup.getChildAt(0).id -> { AppSettings.setSelectedSite(this, AppSettings.Site.DERPIBOORU); NetworkManager.shutdown(); updateAccountStatus() }
+            siteGroup.getChildAt(1).id -> { AppSettings.setSelectedSite(this, AppSettings.Site.TRIXIEBOORU); NetworkManager.shutdown(); updateAccountStatus() }
             siteGroup.getChildAt(2).id -> saveCustomDomain()
         } }
         saveNetwork.setOnClickListener { saveNetwork() }
@@ -867,8 +872,34 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun updateAccountStatus() {
         val loggedIn = ApiKeyStore.isLoggedIn(this)
-        accountStatus.text = if (loggedIn) "已登录 · API Key：${ApiKeyStore.masked(this)}" else "未登录。登录仅通过 Derpibooru 官方页面完成。"
-        accountLogout.isEnabled = loggedIn
+        val origin = "https://${AppSettings.getTargetDomain(this)}/"
+        val cookieStatus = when {
+            SiteCookieStore.hasStoredCookie(this, origin) -> "登录 Cookie：已加密保存"
+            SiteCookieStore.isAuthenticationExpired(this, origin) -> "登录 Cookie：站点已拒绝，请重新登录"
+            SiteCookieStore.hasConsent(this, origin) -> "登录 Cookie：已授权，当前无可恢复快照"
+            else -> "登录 Cookie：未保存"
+        }
+        accountStatus.text = if (loggedIn) "已登录 · API Key：${ApiKeyStore.masked(this)}\n$cookieStatus" else "未登录。登录仅通过站点官方页面完成。\n$cookieStatus"
+        accountLogout.isEnabled = loggedIn || SiteCookieStore.hasConsent(this, origin) || SiteCookieStore.hasStoredCookie(this, origin)
+    }
+
+    private fun manageCookiePersistence() {
+        val origin = "https://${AppSettings.getTargetDomain(this)}/"
+        val authorized = SiteCookieStore.hasConsent(this, origin)
+        AlertDialog.Builder(this)
+            .setTitle("登录状态保存")
+            .setMessage("当前站点：${AppSettings.getTargetDomain(this)}\n\nCookie 使用本机 Android Keystore 加密；撤销授权会删除该站点快照，但不会退出当前网页登录会话。")
+            .setNegativeButton("关闭", null)
+            .setNeutralButton(if (authorized) "撤销保存授权" else "保存当前登录状态") { _, _ ->
+                if (authorized) {
+                    SiteCookieStore.decline(this, origin)
+                    Toast.makeText(this, "已撤销并删除本站点 Cookie 快照", Toast.LENGTH_SHORT).show()
+                } else {
+                    val result = SiteCookieStore.grantFromWebView(this, CookieManager.getInstance(), origin)
+                    Toast.makeText(this, if (result == SiteCookieStore.Result.SAVED) "登录状态已加密保存" else "当前站点没有可保存的登录 Cookie", Toast.LENGTH_SHORT).show()
+                }
+                updateAccountStatus()
+            }.show()
     }
 
     private fun updateAntiEmbarrassmentFilterLabel() {
@@ -903,7 +934,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun saveCustomDomain() {
-        if (!AppSettings.setCustomSite(this, customDomain.text.toString())) networkStatus.text = "自定义域名格式无效"
+        val oldOrigin = "https://${AppSettings.getTargetDomain(this)}/"
+        if (!AppSettings.setCustomSite(this, customDomain.text.toString())) {
+            networkStatus.text = "自定义域名格式无效"
+            return
+        }
+        val newOrigin = "https://${AppSettings.getTargetDomain(this)}/"
+        if (oldOrigin != newOrigin) NetworkManager.shutdown()
+        updateAccountStatus()
     }
 
     private fun saveNetwork() {
@@ -979,8 +1017,10 @@ class SettingsActivity : AppCompatActivity() {
             .setNegativeButton("取消", null)
             .setPositiveButton("清除") { _, _ ->
                 ApiKeyStore.clear(this)
-                CookieManager.getInstance().removeAllCookies(null)
-                CookieManager.getInstance().flush()
+                val origin = "https://${AppSettings.getTargetDomain(this)}/"
+                SiteCookieStore.clear(this, origin)
+                SiteCookieStore.clearWebViewOrigin(CookieManager.getInstance(), origin)
+                NetworkManager.shutdown()
                 updateAccountStatus()
                 Toast.makeText(this, "本地凭据已清除", Toast.LENGTH_SHORT).show()
             }
