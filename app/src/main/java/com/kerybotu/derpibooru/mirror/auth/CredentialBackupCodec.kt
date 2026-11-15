@@ -60,12 +60,15 @@ internal class BackupCookie(
 }
 
 internal object BackupPasswordPolicy {
+    data class Assessment(val score: Int, val message: String, val meetsMinimum: Boolean)
+
     fun valid(password: CharSequence): Boolean = password.length in 8..1024 &&
         password.any { it in 'a'..'z' || it in 'A'..'Z' } && password.any { it in '0'..'9' }
 
     fun strength(password: CharSequence): Int {
         val value = password.toString()
         val lower = value.lowercase()
+        if (value.isEmpty()) return 0
         if (!valid(value) || listOf("password", "qwerty", "123456", "letmein", "abc123", "welcome")
                 .any(lower::contains) || value.toSet().size < 5 || Regex("(.{1,4})\\1{2,}").containsMatchIn(value)) return 0
         val kinds = listOf(value.any(Char::isLowerCase), value.any(Char::isUpperCase),
@@ -76,6 +79,24 @@ internal object BackupPasswordPolicy {
             value.length >= 12 && kinds >= 2 -> 1
             else -> 0
         }
+    }
+
+    fun assess(password: CharSequence): Assessment {
+        val score = strength(password)
+        val value = password.toString()
+        val missing = buildList {
+            if (value.length < 8) add("至少 8 个字符")
+            if (value.none { it in 'a'..'z' || it in 'A'..'Z' }) add("英文字母")
+            if (value.none { it.isDigit() }) add("数字")
+        }
+        return Assessment(score, when {
+            value.isEmpty() -> "输入备份密码"
+            missing.isNotEmpty() -> "还需要：${missing.joinToString("、")}"
+            score == 0 -> "弱 · 避免常见词和重复模式"
+            score == 1 -> "中 · 可以加入大小写或符号"
+            score == 2 -> "强 · 较好的密码"
+            else -> "很强 · 推荐"
+        }, valid(value))
     }
 }
 

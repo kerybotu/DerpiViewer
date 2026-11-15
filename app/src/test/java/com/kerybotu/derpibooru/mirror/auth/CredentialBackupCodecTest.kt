@@ -63,4 +63,20 @@ class CredentialBackupCodecTest {
         assertEquals(0, BackupPasswordPolicy.strength("a1a1a1a1a1a1a1a1"))
         assertEquals(3, BackupPasswordPolicy.strength("River9!Mountains#Cloud2026"))
     }
+
+    @Test fun passwordAssessmentTracksInputAndClear() {
+        assertEquals("输入备份密码", BackupPasswordPolicy.assess("").message)
+        assertFalse(BackupPasswordPolicy.assess("short").meetsMinimum)
+        assertFalse(BackupPasswordPolicy.assess("abcdefgh").meetsMinimum)
+        assertFalse(BackupPasswordPolicy.assess("12345678").meetsMinimum)
+        assertEquals(0, BackupPasswordPolicy.assess("Password123456789!").score)
+        assertTrue(BackupPasswordPolicy.assess("abcd1234").meetsMinimum)
+        assertEquals(3, BackupPasswordPolicy.assess("River9!Mountains#Cloud2026").score)
+        assertEquals(0, BackupPasswordPolicy.assess("a1a1a1a1a1a1a1a1").score)
+        assertTrue(BackupPasswordPolicy.assess("Correct-Horse7-Battery!Cloud").score >= 2)
+        val edited = StringBuilder("abcd1234")
+        assertTrue(BackupPasswordPolicy.assess(edited).meetsMinimum)
+        edited.clear()
+        assertEquals("输入备份密码", BackupPasswordPolicy.assess(edited).message)
+    }
 }

@@ -15,6 +15,7 @@ import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
 import com.kerybotu.derpibooru.mirror.PaletteManager
 import com.kerybotu.derpibooru.mirror.auth.*
+import com.example.liquidglass.LiquidGlassView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -83,7 +84,7 @@ class CredentialBackupActivity : AppCompatActivity() {
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(32), dp(24), dp(32))
-            setBackgroundColor(colors.mediaSurface)
+            setBackgroundColor(colors.surface)
         }
         val scroll = ScrollView(this).apply { isFillViewport = true; addView(content) }
         setContentView(scroll)
@@ -91,8 +92,8 @@ class CredentialBackupActivity : AppCompatActivity() {
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom); insets
         }
-        button("返回") { if (title == "登录凭据备份与恢复") finish() else home() }
-        label(title, 22f)
+        button("‹  返回") { if (title == "登录凭据备份与恢复") finish() else home() }
+        label(title, 26f).apply { setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(0, dp(8), 0, dp(4)) }
         status = label("")
         status.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
     }
@@ -104,12 +105,28 @@ class CredentialBackupActivity : AppCompatActivity() {
     private fun button(value: String, action: () -> Unit): Button = Button(this).apply {
         text = value; isAllCaps = false; minHeight = dp(48)
         content.addView(this, LinearLayout.LayoutParams(-1, -2))
+        PaletteManager.styleButton(this)
         setOnClickListener { if (!busy) action() }
     }
     private fun option(value: String, selected: Boolean = true): CheckBox = CheckBox(this).apply {
         text = value; isChecked = selected; minHeight = dp(48)
         setTextColor(PaletteManager.colors(this@CredentialBackupActivity).glassText)
         content.addView(this)
+    }
+    private fun glassSection(title: String): LinearLayout {
+        val glass = LiquidGlassView(this).apply {
+            GlassWidgetStyle.applyMaterial(this, PaletteManager.colors(this@CredentialBackupActivity))
+            setPadding(dp(16), dp(8), dp(16), dp(12))
+        }
+        val inner = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        glass.addView(inner, FrameLayout.LayoutParams(-1, -2))
+        content.addView(glass, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(8), 0, dp(8)) })
+        inner.addView(TextView(this).apply {
+            text = title; textSize = 16f; setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(PaletteManager.colors(this@CredentialBackupActivity).glassText)
+            setPadding(0, dp(4), 0, dp(6))
+        })
+        return inner
     }
     private fun password(hintText: String): EditText = EditText(this).apply {
         hint = hintText; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -132,26 +149,37 @@ class CredentialBackupActivity : AppCompatActivity() {
     private fun home(message: String = "") {
         document?.fill(0); document = null
         layout("登录凭据备份与恢复")
-        label("当前站点：${manager.currentOrigin()}\n备份文件使用你设置的密码加密，可在其他设备恢复。密码无法找回，请使用更长且不易猜测的密码。")
+        label("当前站点：${manager.currentOrigin()}\n凭据只在你明确确认后读写。备份文件使用密码加密，可在其他设备恢复；密码无法找回。")
+        val actions = glassSection("安全备份")
+        val previous = content
+        content = actions
         button("导出登录凭据") { exportForm() }
         button("导入登录凭据") {
             openDocument.launch(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
             })
         }
+        content = previous
         status.text = message
     }
 
     private fun exportForm() {
         layout("导出登录凭据")
-        label("仅导出当前站点的会话 Cookie。导出 Cookie 不会更改现有保存授权。API Key 是当前应用保存的 Key，请确认它属于此站点。")
+        label("选择要备份的当前站点凭据。加密文件不包含明文密码或凭据。")
+        val selection = glassSection("备份内容")
+        val previous = content; content = selection
         val cookies = option("Cookie")
+        label("网站会话和安全属性")
         val key = option("API Key")
-        label("至少 8 个字符，包含英文字母和数字。建议 14 位以上并混合大小写与符号，避免常见密码和重复模式。")
-        val first = password("备份密码")
-        val second = password("再次输入密码")
+        label("当前站点的接口密钥")
+        content = previous
+        val security = glassSection("设置备份密码")
+        content = security
+        label("至少 8 个字符，含英文字母和数字。建议使用 14 位以上、包含大小写和符号且不重复的密码。")
+        val first = password("备份密码"); val second = password("确认备份密码")
         showPasswords(first, second)
-        val strength = label("弱 · 不建议使用")
+        val strength = label("输入备份密码").apply { setPadding(0, dp(8), 0, dp(4)) }
+        content = previous
         val submit = button("加密并选择保存位置") {
             val selectedCookies = cookies.isChecked; val selectedKey = key.isChecked
             val pass = CharArray(first.length()) { first.text[it] }
@@ -169,9 +197,15 @@ class CredentialBackupActivity : AppCompatActivity() {
             }
         }
         fun update() {
-            val score = BackupPasswordPolicy.strength(first.text)
-            strength.text = arrayOf("弱 · 不建议使用", "中 · 可以改进", "强 · 较好的密码", "很强 · 推荐")[score]
-            strength.setTextColor(intArrayOf(Color.rgb(210, 55, 55), Color.rgb(210, 125, 0), Color.rgb(45, 155, 65), Color.rgb(20, 115, 55))[score])
+            val assessment = BackupPasswordPolicy.assess(first.text)
+            strength.text = assessment.message
+            val palette = PaletteManager.colors(this@CredentialBackupActivity)
+            strength.setTextColor(when (assessment.score) {
+                0 -> palette.muted
+                1 -> palette.glassSecondaryText
+                2 -> palette.primary
+                else -> palette.glassActionText
+            })
             submit.isEnabled = !busy && (cookies.isChecked || key.isChecked) &&
                 BackupPasswordPolicy.valid(first.text) && first.text.toString() == second.text.toString()
         }
