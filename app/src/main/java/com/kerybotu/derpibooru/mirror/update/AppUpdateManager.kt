@@ -15,9 +15,22 @@ import java.io.FileInputStream
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
+import java.security.KeyStore
+import java.security.SecureRandom
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.TrustManager
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
+import javax.net.ssl.SSLException
 
 data class AppUpdateInfo(val version: String, val urls: List<String>, val message: List<String>)
 
@@ -58,7 +71,7 @@ object AppUpdateManager {
         markChecked(context)
 
         val body = try {
-            fetchText(MANIFEST_URL)
+            fetchText(context, MANIFEST_URL)
         } catch (e: Exception) {
             return@withContext UpdateCheckResult.Failed(formatCheckError(e))
         }
@@ -94,15 +107,15 @@ object AppUpdateManager {
         var failure: Exception? = null
         info.urls.distinct().forEachIndexed { index, source ->
             onProgress(if (index == 0) "连接主下载源…" else "主下载源失败，切换备用下载源…")
-            try { downloadFrom(source, target, onProgress); return@withContext target } catch (e: Exception) {
-                failure = e; target.delete(); onProgress("下载源${index + 1}失败：${e.message ?: "网络错误"}")
+            try { downloadFrom(context, source, target, onProgress); return@withContext target } catch (e: Exception) {
+                failure = e; target.delete(); onProgress("下载源${index + 1}失败：${formatDownloadError(source, e)}")
             }
         }
         throw failure ?: IllegalStateException("没有可用的 APK 下载地址")
     }
 
-    private fun downloadFrom(source: String, target: File, progress: (String) -> Unit) {
-        val connection = open(source)
+    private fun downloadFrom(context: Context, source: String, target: File, progress: (String) -> Unit) {
+        val connection = open(context, source)
         if (connection.responseCode !in 200..299) error("HTTP ${connection.responseCode}")
         val length = connection.contentLengthLong
         val supportsRanges = connection.getHeaderField("Accept-Ranges").equals("bytes", true)
@@ -118,7 +131,7 @@ object AppUpdateManager {
             }
         } }
         connection.disconnect()
-        if (switched) { progress("2 秒平均速度低于 1 MB/s，服务器支持分段下载，切换为 4 线程…"); downloadRanges(source, target, length, progress) }
+        if (switched) { progress("2 秒平均速度低于 1 MB/s，服务器支持分段下载，切换为 4 线程…"); downloadRanges(context, source, target, length, progress) }
         if (length > 0 && target.length() != length) error("APK 下载不完整")
         FileInputStream(target).use { input ->
             val signature = ByteArray(2)
@@ -126,12 +139,12 @@ object AppUpdateManager {
         }
     }
 
-    private fun downloadRanges(source: String, target: File, length: Long, progress: (String) -> Unit) {
+    private fun downloadRanges(context: Context, source: String, target: File, length: Long, progress: (String) -> Unit) {
         target.delete(); RandomAccessFile(target, "rw").use { it.setLength(length) }
         val done = AtomicLong(0); val began = System.currentTimeMillis(); val executor = Executors.newFixedThreadPool(4)
         try {
             val tasks = (0 until 4).map { part -> executor.submit {
-                val start = length * part / 4; val end = length * (part + 1) / 4 - 1; val c = open(source)
+                val start = length * part / 4; val end = length * (part + 1) / 4 - 1; val c = open(context, source)
                 c.setRequestProperty("Range", "bytes=$start-$end")
                 try {
                     if (c.responseCode != HttpURLConnection.HTTP_PARTIAL) error("服务器拒绝分段下载")
@@ -151,10 +164,22 @@ object AppUpdateManager {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         context.startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "application/vnd.android.package-archive"); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION) })
     }
-    private fun open(url: String) = (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 10_000; readTimeout = 20_000; requestMethod = "GET" }
-    private fun fetchText(url: String): String {
+    private fun open(context: Context, url: String) = (URL(url).openConnection() as HttpURLConnection).apply {
+        if (this is HttpsURLConnection) {
+            // Android 7's platform trust store predates the ISRG Root X1 chain
+            // currently served by GitHub Pages. Keep normal chain and hostname
+            // validation, adding only this public CA as an update-client anchor.
+            sslSocketFactory = UpdateTls.socketFactory(context)
+            hostnameVerifier = HttpsURLConnection.getDefaultHostnameVerifier()
+        }
+        connectTimeout = 10_000
+        readTimeout = 20_000
+        instanceFollowRedirects = true
+        requestMethod = "GET"
+    }
+    private fun fetchText(context: Context, url: String): String {
         val connection = try {
-            open(url)
+            open(context, url)
         } catch (e: Exception) {
             throw IOException("无法连接更新服务器", e)
         }
@@ -172,11 +197,26 @@ object AppUpdateManager {
     }
 
     private fun formatCheckError(error: Exception): String {
-        val detail = error.message?.takeIf { it.isNotBlank() }
+        val root = generateSequence(error as Throwable?) { it.cause }.last()
+        val detail = root.message?.takeIf { it.isNotBlank() }
         return when {
             detail?.contains("HTTP") == true -> "更新检查失败：$detail"
+            root is UnknownHostException -> "更新检查失败（DNS）：无法解析更新服务器"
+            root is SocketTimeoutException -> "更新检查失败（连接超时）：${detail ?: "请求超时"}"
+            root is SSLException || root is java.security.cert.CertificateException ->
+                "更新检查失败（TLS 证书校验）：${detail ?: "证书链验证失败"}"
             detail != null -> "更新检查失败：$detail"
             else -> "更新检查失败：网络请求异常，请检查网络连接"
+        }
+    }
+    private fun formatDownloadError(source: String, error: Exception): String {
+        val root = generateSequence(error as Throwable?) { it.cause }.last()
+        val host = runCatching { URL(source).host }.getOrDefault("未知主机")
+        return when {
+            root is SSLException || root is java.security.cert.CertificateException -> "TLS 证书校验失败（$host）"
+            root is UnknownHostException -> "DNS 解析失败（$host）"
+            root is SocketTimeoutException -> "连接超时（$host）"
+            else -> root.message ?: "网络错误（$host）"
         }
     }
     private fun JSONArray.strings() = List(length()) { optString(it) }.filter { it.isNotBlank() }
@@ -200,5 +240,57 @@ object AppUpdateManager {
             if (difference != 0) return difference
         }
         return 0
+    }
+}
+
+/** TLS setup scoped to the update client; it never changes the app's global trust policy. */
+private object UpdateTls {
+    @Volatile private var cached: SSLSocketFactory? = null
+
+    fun socketFactory(context: Context): SSLSocketFactory = cached ?: synchronized(this) {
+        cached ?: build(context.applicationContext).also { cached = it }
+    }
+
+    private fun build(context: Context): SSLSocketFactory {
+        val system = trustManager(null)
+        val bundledStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+            load(null)
+            context.resources.openRawResource(com.kerybotu.derpibooru.mirror.R.raw.isrg_root_x1).use { input ->
+                val certificate = CertificateFactory.getInstance("X.509").generateCertificate(input)
+                setCertificateEntry("isrg-root-x1", certificate)
+            }
+        }
+        val bundled = trustManager(bundledStore)
+        val composite = CompositeTrustManager(system, bundled)
+        return SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(composite), SecureRandom())
+        }.socketFactory
+    }
+
+    private fun trustManager(store: KeyStore?): X509TrustManager {
+        val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+        factory.init(store)
+        return factory.trustManagers.filterIsInstance<X509TrustManager>().single()
+    }
+
+    private class CompositeTrustManager(
+        private val system: X509TrustManager,
+        private val bundled: X509TrustManager
+    ) : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) =
+            system.checkClientTrusted(chain, authType)
+
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+            try {
+                system.checkServerTrusted(chain, authType)
+            } catch (_: java.security.cert.CertificateException) {
+                bundled.checkServerTrusted(chain, authType)
+            }
+        }
+
+        override fun getAcceptedIssuers(): Array<X509Certificate> =
+            (system.acceptedIssuers.asList() + bundled.acceptedIssuers.asList())
+                .distinctBy { it.subjectX500Principal.name + it.serialNumber }
+                .toTypedArray()
     }
 }
