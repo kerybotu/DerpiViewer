@@ -31,6 +31,8 @@ import com.kerybotu.derpibooru.mirror.model.ImageGalleryNavigation
 import com.kerybotu.derpibooru.mirror.model.Image
 import com.kerybotu.derpibooru.mirror.model.GalleryImagePreview
 import com.kerybotu.derpibooru.mirror.model.Comment
+import com.kerybotu.derpibooru.mirror.model.Filter
+import com.kerybotu.derpibooru.mirror.model.QuickTagBlocker
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
 import com.kerybotu.derpibooru.mirror.dict.TagDictionary
 import com.kerybotu.derpibooru.mirror.dict.TagEntry
@@ -41,6 +43,7 @@ import com.kerybotu.derpibooru.mirror.favorites.LocalFavoritesStore
 import com.kerybotu.derpibooru.mirror.history.WatchHistoryStore
 import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuCard
 import com.kerybotu.derpibooru.mirror.ui.menu.GlassMenuItem
+import com.google.android.material.snackbar.Snackbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
@@ -403,8 +406,86 @@ class ImageDetailActivity : AppCompatActivity() {
                 startActivity(Intent(this@ImageDetailActivity, SearchActivity::class.java)
                     .putExtra(SearchActivity.EXTRA_INITIAL_QUERY, apiTag))
             }
+            setOnLongClickListener {
+                showTagMenu(this, apiTag)
+                true
+            }
             }) }
         }
+    }
+
+    private fun showTagMenu(anchor: View, tag: String) {
+        val current = currentEditableFilter()
+        val blocked = current?.let { QuickTagBlocker.isBlocked(it, tag) } == true
+        GlassMenuCard(this, listOf(
+            GlassMenuItem("details", R.drawable.ic_search, "查看标签详情") {
+                startActivity(Intent(this, SearchActivity::class.java)
+                    .putExtra(SearchActivity.EXTRA_INITIAL_QUERY, tag))
+            },
+            GlassMenuItem("copy", R.drawable.ic_bookmark, "复制标签") { copyTag(tag) },
+            GlassMenuItem("block", R.drawable.ic_filter, if (blocked) "取消屏蔽" else "屏蔽此标签") {
+                if (current == null) {
+                    chooseEditableFilter(anchor, tag)
+                } else {
+                    updateTagBlock(current, tag, !blocked)
+                }
+            }
+        ), anchor).show()
+    }
+
+    private fun chooseEditableFilter(anchor: View, tag: String) {
+        val localFilters = FilterStore.getLocalFilters(this)
+        if (localFilters.isEmpty()) {
+            Toast.makeText(this, "当前过滤器不可编辑，请先创建本地过滤器", Toast.LENGTH_LONG).show()
+            startActivity(Intent(this, FilterActivity::class.java))
+            return
+        }
+        GlassMenuCard(this, localFilters.map { filter ->
+            GlassMenuItem("filter_${filter.id}", R.drawable.ic_filter, filter.name) {
+                updateTagBlock(filter, tag, !QuickTagBlocker.isBlocked(filter, tag))
+            }
+        }, anchor).show()
+    }
+
+    private fun currentEditableFilter(): Filter? {
+        val id = AppSettings.getCurrentLocalFilterId(this) ?: return null
+        return FilterStore.getLocalFilters(this).firstOrNull { it.id == id }
+            ?.takeIf { it.isLocal }
+    }
+
+    private fun copyTag(tag: String) {
+        getSystemService(ClipboardManager::class.java)
+            .setPrimaryClip(ClipData.newPlainText("标签", tag))
+        Toast.makeText(this, "标签已复制", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateTagBlock(filter: Filter, tag: String, blocked: Boolean) {
+        val updated = QuickTagBlocker.withBlockedTag(filter, tag, blocked)
+        if (updated == null) {
+            Toast.makeText(this, "标签无效，无法更新过滤器", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val previousQuery = filter.localQuery
+        FilterStore.saveLocalFilter(this, updated)
+        val saved = FilterStore.getLocalFilters(this).firstOrNull { it.id == filter.id }
+        if (saved?.localQuery != updated.localQuery) {
+            Toast.makeText(this, "过滤器保存失败，请重试", Toast.LENGTH_LONG).show()
+            return
+        }
+        AppSettings.setCurrentLocalFilter(this, updated.id, updated.name, updated.localQuery.orEmpty())
+        val message = if (blocked) "已屏蔽标签：$tag" else "已取消屏蔽：$tag"
+        Snackbar.make(b.root, message, Snackbar.LENGTH_LONG)
+            .setAction("撤销") {
+                val restored = updated.copy(localQuery = previousQuery)
+                FilterStore.saveLocalFilter(this, restored)
+                val persisted = FilterStore.getLocalFilters(this).firstOrNull { it.id == filter.id }
+                if (persisted?.localQuery == previousQuery) {
+                    AppSettings.setCurrentLocalFilter(this, restored.id, restored.name, previousQuery.orEmpty())
+                    Toast.makeText(this, "已撤销标签规则变更", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "撤销失败，请在过滤器编辑页恢复", Toast.LENGTH_LONG).show()
+                }
+            }.show()
     }
 
     private fun applyPalette() {
