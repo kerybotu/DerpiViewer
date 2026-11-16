@@ -33,6 +33,21 @@ class AnubisEnvironmentPolicyTest {
     }
 
     @Test
+    fun webViewUsesSharedNetworkUserAgentOnlyAfterNetworkInitialization() {
+        val providerUa = "Android WebView provider UA"
+        val networkUa = "Shared versionless UA"
+
+        assertEquals(
+            providerUa,
+            AnubisEnvironmentPolicy.sharedWebViewUserAgent(providerUa, networkReady = false, networkUserAgent = networkUa)
+        )
+        assertEquals(
+            networkUa,
+            AnubisEnvironmentPolicy.sharedWebViewUserAgent(providerUa, networkReady = true, networkUserAgent = networkUa)
+        )
+    }
+
+    @Test
     fun recognizesAnubisAuthCookieWithoutTreatingVerificationCookieAsClearance() {
         assertTrue(AnubisEnvironmentPolicy.isAuthCookieName("techaro.lol-anubis-auth-6b097436"))
         assertTrue(AnubisEnvironmentPolicy.isAuthCookieName("techaro.lol-anubis"))

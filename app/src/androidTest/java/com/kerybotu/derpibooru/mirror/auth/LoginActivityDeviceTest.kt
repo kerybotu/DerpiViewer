@@ -178,7 +178,9 @@ class LoginActivityDeviceTest {
                         val button = activity.findViewById<Button>(R.id.login_account_settings)
                         val a = IntArray(2); val b = IntArray(2)
                         web.getLocationOnScreen(a); button.getLocationOnScreen(b)
-                        val bars = web.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                        val bars = androidx.core.view.ViewCompat.getRootWindowInsets(web)?.getInsets(
+                            androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                                androidx.core.view.WindowInsetsCompat.Type.displayCutout())
                         valid = bars != null && a[1] >= bars.top && a[0] >= bars.left && a[1] + web.height <= b[1]
                     }
                     valid

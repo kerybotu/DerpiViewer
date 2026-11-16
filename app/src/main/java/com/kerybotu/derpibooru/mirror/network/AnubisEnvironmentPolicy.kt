@@ -7,6 +7,12 @@ internal object AnubisEnvironmentPolicy {
     fun versionlessUserAgent(runtimeUserAgent: String): String =
         chromeVersionToken.replace(runtimeUserAgent, "")
 
+    fun sharedWebViewUserAgent(
+        providerUserAgent: String,
+        networkReady: Boolean,
+        networkUserAgent: String
+    ): String = if (networkReady) networkUserAgent else providerUserAgent
+
     fun isAuthCookieName(name: String): Boolean {
         val normalized = name.lowercase()
         return normalized == "techaro.lol-anubis" ||

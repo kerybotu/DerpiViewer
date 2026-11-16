@@ -29,6 +29,7 @@ import androidx.webkit.ScriptHandler
 import com.kerybotu.derpibooru.mirror.AppSettings
 import com.kerybotu.derpibooru.mirror.databinding.ActivityLoginBinding
 import com.kerybotu.derpibooru.mirror.network.NetworkManager
+import com.kerybotu.derpibooru.mirror.network.AnubisWebViewEnvironment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.lifecycle.lifecycleScope
@@ -106,6 +107,7 @@ class LoginActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
+                logAnubisPageState(view)
                 val origin = "https://${AppSettings.getTargetDomain(this@LoginActivity)}/"
                 if (SiteCookieStore.hasConsent(applicationContext, origin)) {
                     SiteCookieStore.syncFromWebView(applicationContext, CookieManager.getInstance(), origin)
@@ -125,11 +127,24 @@ class LoginActivity : AppCompatActivity() {
         val webState = savedInstanceState?.getBundle("webState")
         if (webState != null) {
             webLoginActive = true
-            if (binding.loginWebview.restoreState(webState) != null) {
-                updatePrimaryAction()
-                if (loginSucceeded && !cookiePromptShown) showCookiePersistencePrompt()
-                return
+            // A restored WebView can immediately resume navigation from restoreState().
+            // Resolve the runtime UA and proxy first so this path has the same
+            // pre-navigation environment as a fresh login or challenge page.
+            lifecycleScope.launch(Dispatchers.Main) {
+                if (!NetworkManager.isReady()) runCatching { NetworkManager.init(applicationContext) }
+                if (isFinishing || isDestroyed) return@launch
+                AnubisWebViewEnvironment.configure(binding.loginWebview)
+                configureWebViewProxy {
+                    if (isFinishing || isDestroyed) return@configureWebViewProxy
+                    if (binding.loginWebview.restoreState(webState) != null) {
+                        updatePrimaryAction()
+                        if (loginSucceeded && !cookiePromptShown) showCookiePersistencePrompt()
+                    } else {
+                        startWebLogin(origin)
+                    }
+                }
             }
+            return
         }
         val manualRequested = intent.getBooleanExtra(EXTRA_MANUAL_KEY, false)
         val webRequested = intent.getBooleanExtra(EXTRA_WEB_LOGIN, false)
@@ -145,6 +160,29 @@ class LoginActivity : AppCompatActivity() {
                 }
                 .setOnCancelListener { cancelLogin() }
                 .show()
+        }
+    }
+
+    private fun logAnubisPageState(view: WebView) {
+        if (isFinishing || isDestroyed) return
+        val generation = pageGeneration
+        val pageHost = view.url?.let { Uri.parse(it).host } ?: return
+        val expectedUa = JSONObject.quote(view.settings.userAgentString)
+        view.evaluateJavascript(
+            """(function(){
+                var node=document.getElementById('anubis_challenge');
+                var difficulty=null;
+                try { var d=JSON.parse((node||{}).textContent||'{}');
+                    if(d.rules && Number.isFinite(Number(d.rules.difficulty))) difficulty=Number(d.rules.difficulty);
+                } catch(e) {}
+                return JSON.stringify({challenge:!!node,difficulty:difficulty,
+                    navigatorMatchesSettings:navigator.userAgent===$expectedUa,
+                    userAgentDataApi:typeof navigator.userAgentData});
+            })()""".trimIndent()
+        ) { state ->
+            if (!isFinishing && !isDestroyed && generation == pageGeneration) {
+                Log.i("AnubisEnvironment", "event=login_page_probe host=$pageHost state=$state")
+            }
         }
     }
 
@@ -339,13 +377,18 @@ class LoginActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun configureWebViewProxy() {
-        val port = NetworkManager.localProxyPort() ?: return
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) return
+    private fun configureWebViewProxy(onReady: () -> Unit) {
+        val port = NetworkManager.localProxyPort()
+        if (port == null || !WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+            onReady()
+            return
+        }
         ProxyController.getInstance().setProxyOverride(
             ProxyConfig.Builder().addProxyRule("http://127.0.0.1:$port").build(),
             ContextCompat.getMainExecutor(this)
-        ) { }
+        ) {
+            if (!isFinishing && !isDestroyed) onReady()
+        }
     }
 
     private fun startWebLogin(origin: String) {
@@ -353,8 +396,11 @@ class LoginActivity : AppCompatActivity() {
         // Ensure the WebView uses the same optimized-IP local proxy as API traffic.
         lifecycleScope.launch(Dispatchers.Main) {
             if (!NetworkManager.isReady()) runCatching { NetworkManager.init(applicationContext) }
-            configureWebViewProxy()
-            binding.loginWebview.loadUrl("$origin/sessions/new")
+            AnubisWebViewEnvironment.configure(binding.loginWebview)
+            configureWebViewProxy {
+                if (isFinishing || isDestroyed || !webLoginActive) return@configureWebViewProxy
+                binding.loginWebview.loadUrl("$origin/sessions/new")
+            }
         }
     }
 
