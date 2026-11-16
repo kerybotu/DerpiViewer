@@ -27,8 +27,18 @@ android {
     }
 
     buildTypes {
+        debug {
+            // The Android 7 test emulator is x86/x86_64. Keep debug APKs
+            // installable there while retaining ARM variants for devices.
+            ndk {
+                abiFilters += listOf("x86", "x86_64", "armeabi-v7a", "arm64-v8a")
+            }
+        }
         release {
             isMinifyEnabled = false
+            ndk {
+                abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
