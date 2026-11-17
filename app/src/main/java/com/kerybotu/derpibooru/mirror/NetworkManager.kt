@@ -232,7 +232,10 @@ object NetworkManager {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", activeUserAgent)
-                .header("Accept", if (operation == "site:filters") "text/html,application/xhtml+xml" else "application/json")
+                .header(
+                    "Accept",
+                    if (operation.startsWith("site:")) "text/html,application/xhtml+xml" else "application/json"
+                )
                 .build()
             val requestStartedAt = System.nanoTime() / 1_000_000L
             try {
