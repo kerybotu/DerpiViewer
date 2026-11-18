@@ -1,6 +1,6 @@
 # DerpiViewer
 
-基于 Derpibooru 官方 JSON API 的原生 Android 客户端，支持 Derpibooru / Trixiebooru 浏览、搜索、视频流、翻译、本地收藏和网络优化。
+基于 `Derpibooru` 官方 JSON API 的原生 Android 客户端，支持 Derpibooru / Trixiebooru 浏览、搜索、视频流、翻译、本地收藏和网络优化。
 
 当前应用版本：`2.0.0`
 
